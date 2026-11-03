@@ -1,0 +1,12 @@
+[project]
+name = "recipe-library"
+version = "0.5.0"
+description = "Recipe library with MealMaster import and scaling"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+gui = ["PySide6>=6.5"]
+
+[tool.setuptools]
+packages = ["recipelib"]

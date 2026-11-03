@@ -1,0 +1,43 @@
+"""Human-readable text for ingredients, yields, and whole recipes."""
+from __future__ import annotations
+
+from .models import Ingredient, Recipe
+from .units import display_unit, format_quantity
+
+
+def format_ingredient(ing: Ingredient) -> str:
+    parts = []
+    if ing.quantity is not None:
+        parts.append(format_quantity(ing.quantity))
+    elif ing.raw_quantity:
+        parts.append(ing.raw_quantity)
+    if ing.unit:
+        parts.append(display_unit(ing.unit, ing.quantity))
+    parts.append(ing.item)
+    return " ".join(p for p in parts if p)
+
+
+def format_yield(recipe: Recipe) -> str:
+    if recipe.yield_quantity is not None:
+        return f"{format_quantity(recipe.yield_quantity)} {recipe.yield_unit}".strip()
+    return recipe.yield_raw
+
+
+def recipe_to_text(recipe: Recipe) -> str:
+    lines = [recipe.title, "=" * len(recipe.title)]
+    if recipe.categories:
+        lines.append("Categories: " + ", ".join(recipe.categories))
+    y = format_yield(recipe)
+    if y:
+        lines.append("Yield: " + y)
+    lines.append("")
+    group = None
+    for ing in recipe.ingredients:
+        if ing.group != group:
+            group = ing.group
+            if group:
+                lines.extend(["", f"{group}:"])
+        lines.append("  " + format_ingredient(ing))
+    if recipe.directions:
+        lines.extend(["", recipe.directions])
+    return "\n".join(lines)

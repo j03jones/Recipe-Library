@@ -1,0 +1,74 @@
+# Recipe Library
+
+A cross-platform recipe manager (Linux first, then Windows and macOS) that imports
+MealMaster recipe files, lets you add and edit recipes, and scales them.
+
+## Status
+
+- [x] Core: MealMaster parser, SQLite library with search, scaling engine
+- [x] Parser hardened against ~5,500 real recipes (11 archive files, all start/end markers matched)
+- [x] Command-line front end for trying the core
+- [x] GUI (PySide6): searchable library, recipe view with scaling, import dialog, add/edit form
+- [ ] Linux packaging, then Windows and macOS builds
+
+## Run the GUI
+
+    python3 -m venv .venv && source .venv/bin/activate && pip install PySide6   # once
+    python3 -m recipelib.gui                      # opens ~/.local/share/recipe-library/recipes.db
+    python3 -m recipelib.gui --db /tmp/test.db    # or any library file you choose
+
+## Build a standalone app (Linux)
+
+    source .venv/bin/activate
+    ./build_linux.sh
+    dist/RecipeLibrary/RecipeLibrary
+
+The whole `dist/RecipeLibrary` folder is the app; copy or zip it as a unit. PyInstaller cannot
+cross-compile, so Windows and macOS builds must be made on those systems.
+
+## Automatic builds (GitHub Actions)
+
+Every push to `main` runs the tests and builds Linux, Windows and macOS versions
+(Actions tab > the run > Artifacts). To publish a release with downloadable files:
+
+    git tag v0.5.0
+    git push origin v0.5.0
+
+The apps are unsigned, so Windows SmartScreen and macOS Gatekeeper will warn on first launch.
+
+## Try the core (no dependencies beyond Python 3.9+)
+
+    python3 -m unittest discover -s tests -t .
+    python3 -m recipelib --db /tmp/test.db import samples/sample.mmf
+    python3 -m recipelib --db /tmp/test.db list
+    python3 -m recipelib --db /tmp/test.db scale 3 --servings 16
+
+The real database defaults to `~/.local/share/recipe-library/recipes.db` on Linux.
+
+## Layout
+
+    recipelib/mealmaster.py   MealMaster parser
+    recipelib/scaling.py      scaling by factor or target servings
+    recipelib/db.py           SQLite storage, search, duplicate-aware import
+    recipelib/units.py        unit names, fraction parsing/formatting
+    recipelib/formatting.py   text rendering of ingredients and recipes
+    tests/                    unit tests (unittest)
+    samples/sample.mmf        small hand-made MealMaster sample
+
+## What the parser handles (seen in real archives)
+
+- Start markers `MMMMM----- Recipe via Meal-Master`, `---------- Recipe via Meal-Master`,
+  and `----- Now You're Cooking! ... [Meal-Master Export Format]`; end markers `MMMMM` and `-----`
+- Group headings (`-----FILLING-----`, `MMMMM-----GLAZE-----`)
+- Two ingredients per line (right-hand field starts at column 41)
+- Wrapped items: `- more words`, `-- more words`, and mid-word `-xyz` continuations
+- Unit codes, including the nonstandard `x`/`ea` (no unit), `ga` (gallon), `pg` (package)
+- Mixed text encodings (UTF-8, then Windows-1252, then Latin-1) and CRLF line endings
+
+## Known limits
+
+- MealMaster itself dropped a character where it wrapped some long items (e.g. "temp" became
+  "t" + "-mp"), so those words come out misspelled ("tmp"). The lost letter can't be recovered.
+- Older exports wrap long right-hand items onto a plain line with no dash; those fragments
+  (e.g. "Into eighths") become separate ingredient lines instead of being merged.
+- Ranges like "2-3" are kept as text and are not scaled.
