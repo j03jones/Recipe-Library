@@ -38,6 +38,8 @@ def main() -> int:
     src.add_argument("--db", help="a Recipe Library database file")
     src.add_argument("--mmf", nargs="+", help="MealMaster files")
     ap.add_argument("--out", default=str(Path(__file__).resolve().parent.parent / "web" / "data" / "recipes.json"))
+    ap.add_argument("--drop-near-duplicates", choices=["high", "likely", "possible"],
+                    help="also drop near-duplicate recipes of this confidence or better (keeps the best copy)")
     args = ap.parse_args()
 
     recipes = []
@@ -49,7 +51,7 @@ def main() -> int:
         for path in args.mmf:
             recipes.extend(parse_file(path).recipes)
 
-    seen, rows = set(), []
+    seen, rows, kept = set(), [], []
     for r in recipes:
         if not r.tags:  # not tidied yet: keep the old labels as tags and file under the groups
             categories.apply(r)
@@ -58,7 +60,20 @@ def main() -> int:
             continue
         seen.add(h)
         rows.append(recipe_to_row(r))
+        kept.append(r)
     rows.sort(key=lambda row: row[1].lower())
+
+    if args.drop_near_duplicates:
+        from recipelib import duplicates
+        for n, r in enumerate(kept, 1):
+            r.id = n
+        cutoff = duplicates.LEVELS.index(args.drop_near_duplicates)
+        drop = set()
+        for g in duplicates.find_duplicate_groups(kept):
+            if duplicates.LEVELS.index(g.level) <= cutoff:
+                drop.update(g.ids[1:])
+        rows = [recipe_to_row(r) for r in kept if r.id not in drop]
+        print(f"Dropped {len(drop):,} near-duplicates ({args.drop_near_duplicates} or better)")
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

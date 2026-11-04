@@ -14,13 +14,14 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from .. import categories as category_rules
+from .. import duplicates
 from ..db import RecipeDB
 from ..formatting import recipe_to_text
 from ..mealmaster import parse_file
 from ..models import Recipe
 from ..render import recipe_to_html
 from ..scaling import scale_recipe
-from .dialogs import RecipeEditor
+from .dialogs import DuplicatesDialog, RecipeEditor
 
 FILE_FILTER = "MealMaster files (*.mmf *.mm *.txt);;All files (*)"
 
@@ -168,6 +169,8 @@ class MainWindow(QMainWindow):
         tools_menu = self.menuBar().addMenu("&Tools")
         tools_menu.addAction(action("&Tidy categories...", self.tidy_categories))
         tools_menu.addAction(action("&Restore original categories...", self.restore_categories))
+        tools_menu.addSeparator()
+        tools_menu.addAction(action("Find &duplicate recipes...", self.find_duplicates))
 
         edit_menu = self.menuBar().addMenu("&Search")
         edit_menu.addAction(action("&Find", self.focus_search, "Ctrl+F"))
@@ -469,6 +472,26 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
         if answer == QMessageBox.StandardButton.Yes:
             self._run_category_change(lambda: self.db.restore_original_categories(), "Original categories restored")
+
+    def find_duplicates(self) -> None:
+        if self.db.count() < 2:
+            QMessageBox.information(self, "Find duplicates", "There aren't enough recipes to compare yet.")
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            groups = duplicates.scan(self.db)
+        finally:
+            QApplication.restoreOverrideCursor()
+        if not groups:
+            QMessageBox.information(self, "Find duplicates", "No duplicate or near-duplicate recipes found.")
+            return
+        backup = self.db.backup()   # safety copy before anything can be removed
+        dlg = DuplicatesDialog(self.db, groups, self)
+        dlg.exec()
+        if dlg.changed:
+            self.reload_categories()
+            self.reload_list()
+            self.statusBar().showMessage("Duplicates removed" + (f". Backup saved to {backup}" if backup else ""), 8000)
 
     def _run_category_change(self, change, done_message: str) -> None:
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)

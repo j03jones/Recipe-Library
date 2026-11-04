@@ -45,6 +45,22 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Find duplicate recipes
+
+Exact copies are skipped when you import. For near-duplicates (retitled or translated copies,
+"&" vs "and", the same ingredients with reworded directions) use **Tools > Find duplicate recipes...**.
+Groups are ranked *Same recipe*, *Probably the same recipe*, *Possibly the same recipe*; pick the copy
+to keep and the others are merged into it (their categories and tags are added to the keeper).
+A backup of your library is saved first, nothing is removed until you confirm, and "These are
+different recipes" stops a group being flagged again.
+
+From the command line:
+
+    python -m recipelib duplicates                 # report only
+    python -m recipelib duplicates --remove high   # merge the high-confidence groups (asks first, backs up)
+
+For the phone app, `python tools/export_web.py --db <file> --drop-near-duplicates high` leaves them out.
+
 ## Phone web app (offline)
 
 `web/` is an installable web app (PWA) that runs on Android and iPhone, with the whole recipe
