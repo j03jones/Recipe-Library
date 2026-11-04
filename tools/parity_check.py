@@ -22,7 +22,7 @@ FACTORS = ["1/2", "2", "3/2", "3", "1/3", "4", "5/4", "7/3"]
 def load():
     data = json.loads((root / "web" / "data" / "recipes.json").read_text(encoding="utf-8"))
     out = []
-    for rid, title, cats, yq, yu, yr, ings, dirs in data["recipes"]:
+    for rid, title, cats, yq, yu, yr, ings, dirs, *_tags in data["recipes"]:
         out.append((rid, Recipe(
             title=title, categories=cats, directions=dirs,
             yield_quantity=Fraction(yq) if yq else None, yield_unit=yu, yield_raw=yr,

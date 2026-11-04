@@ -26,6 +26,25 @@ MealMaster recipe files, lets you add and edit recipes, and scales them.
 The whole `dist/RecipeLibrary` folder is the app; copy or zip it as a unit. PyInstaller cannot
 cross-compile, so Windows and macOS builds must be made on those systems.
 
+## Tidy categories
+
+Imported MealMaster files come with hundreds of inconsistent labels (this library had 297). The
+app can file every recipe under about 36 tidy groups instead (Desserts, Soups & Stews, Beef,
+Italian, Light & Special Diets, ...), shown in sections in the category list. Your original labels
+are never lost: they are kept as searchable tags and shown on each recipe.
+
+    python3 -m recipelib --db <library.db> regroup --preview   # show the groups and counts, change nothing
+    python3 -m recipelib --db <library.db> regroup             # apply (a backup copy is made first)
+    python3 -m recipelib --db <library.db> regroup --restore   # put the original categories back
+
+In the desktop app use Tools > Tidy categories / Restore original categories. New imports are
+filed under the groups automatically once a library has been tidied.
+
+The groups and the label-to-group mapping live in `recipelib/category_data.py`; edit that file to
+rename groups or move a label, then run `regroup` again (it re-derives groups from the saved
+original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
+phone app. Regrouping replaces categories you assigned by hand.
+
 ## Phone web app (offline)
 
 `web/` is an installable web app (PWA) that runs on Android and iPhone, with the whole recipe

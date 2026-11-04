@@ -14,12 +14,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from recipelib import categories  # noqa: E402
 from recipelib.db import RecipeDB, content_hash  # noqa: E402
 from recipelib.mealmaster import parse_file  # noqa: E402
 
 
 def recipe_to_row(r) -> list:
-    """[id, title, categories, yield_qty, yield_unit, yield_raw, ingredients, directions]
+    """[id, title, categories, yield_qty, yield_unit, yield_raw, ingredients, directions, tags]
     id is a stable fingerprint of the content, so edits made on a phone stay attached to the
     right recipe even when the library is re-exported. ingredient = [qty ("9/4" or ""),
     raw_qty, unit, item, group]."""
@@ -28,7 +29,7 @@ def recipe_to_row(r) -> list:
         for i in r.ingredients
     ]
     yq = str(r.yield_quantity) if r.yield_quantity is not None else ""
-    return [content_hash(r)[:10], r.title, r.categories, yq, r.yield_unit, r.yield_raw, ings, r.directions]
+    return [content_hash(r)[:10], r.title, categories.in_display_order(r.categories), yq, r.yield_unit, r.yield_raw, ings, r.directions, list(r.tags)]
 
 
 def main() -> int:
@@ -50,6 +51,8 @@ def main() -> int:
 
     seen, rows = set(), []
     for r in recipes:
+        if not r.tags:  # not tidied yet: keep the old labels as tags and file under the groups
+            categories.apply(r)
         h = content_hash(r)
         if h in seen:
             continue

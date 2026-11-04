@@ -41,6 +41,7 @@ class RecipeEditor(QDialog):
     def __init__(self, parent=None, recipe: Optional[Recipe] = None):
         super().__init__(parent)
         self._recipe_id = recipe.id if recipe is not None else None
+        self._tags = list(recipe.tags) if recipe is not None else []
         self.setWindowTitle("Edit recipe" if self._recipe_id else "New recipe")
         self.resize(760, 680)
 
@@ -169,6 +170,7 @@ class RecipeEditor(QDialog):
             ingredients,
             self.directions_edit.toPlainText(),
             recipe_id=self._recipe_id,
+            tags=self._tags,
         )
 
     def accept(self) -> None:

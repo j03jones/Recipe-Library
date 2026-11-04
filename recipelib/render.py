@@ -15,6 +15,8 @@ def recipe_to_html(recipe: Recipe) -> str:
     y = format_yield(recipe)
     if y:
         meta.append("<b>Yield:</b> " + escape(y))
+    if recipe.tags:
+        meta.append('<span style="color:#777"><b>Original labels:</b> ' + escape(", ".join(recipe.tags)) + "</span>")
     if meta:
         parts.append("<p>" + "<br>".join(meta) + "</p>")
 

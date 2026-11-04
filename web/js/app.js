@@ -4,6 +4,7 @@ import {
 } from './units.js';
 import { fromRecord, fromRow, toRecord } from './model.js';
 import * as store from './store.js';
+import { SECTIONS } from './groups.js';
 
 const $app = document.getElementById('app');
 const $toast = document.getElementById('toast');
@@ -73,7 +74,7 @@ function rebuild() {
   lib.all = [...map.values()].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
   const cats = new Map();
   for (const r of lib.all) {
-    r._hay = [r.title, r.categories.join(' '), r.ings.map((i) => i.item).join(' '), r.dir].join('\n').toLowerCase();
+    r._hay = [r.title, r.categories.join(' '), (r.tags || []).join(' '), r.ings.map((i) => i.item).join(' '), r.dir].join('\n').toLowerCase();
     r._title = r.title.toLowerCase();
     for (const c of r.categories) {
       const k = c.toLowerCase();
@@ -125,9 +126,18 @@ function viewList() {
     type: 'search', class: 'full', placeholder: 'Search recipes or ingredients',
     value: listState.q, enterkeyhint: 'search', autocomplete: 'off', autocapitalize: 'off', 'aria-label': 'Search recipes',
   });
+  const counts = new Map(lib.cats.map((c) => [c.name, c.n]));
+  const known = new Set(SECTIONS.flatMap(([, groups]) => groups));
+  const sections = SECTIONS.map(([name, groups]) => [name, groups.filter((g) => counts.has(g)).map((g) => [g, counts.get(g)])]);
+  const extra = lib.cats.filter((c) => !known.has(c.name)).map((c) => [c.name, c.n]);
+  if (extra.length) {
+    const other = sections.find(([name]) => name === 'Other');
+    if (other) other[1].push(...extra); else sections.push(['Other', extra]);
+  }
   const select = h('select', { class: 'full', 'aria-label': 'Category' },
     h('option', { value: '' }, `All categories (${lib.all.length.toLocaleString()})`),
-    lib.cats.map((c) => h('option', { value: c.name, selected: c.name === listState.cat }, `${c.name} (${c.n})`)));
+    sections.filter(([, rows]) => rows.length).map(([name, rows]) =>
+      h('optgroup', { label: name }, rows.map(([g, n]) => h('option', { value: g, selected: g === listState.cat }, `${g} (${n})`)))));
   select.value = listState.cat;
   const count = h('p', { class: 'count muted small' });
   const ul = h('ul', { class: 'list' });
@@ -240,6 +250,7 @@ function viewRecipe(id) {
   fill($app, 
     h('h1', null, r.title),
     r.categories.length > 0 && h('p', { class: 'muted small' }, r.categories.join(', ')),
+    r.tags && r.tags.length > 0 && h('p', { class: 'muted small' }, 'Original labels: ', r.tags.join(', ')),
     h('section', { class: 'card scale', 'aria-label': 'Scale this recipe' },
       h('strong', null, 'Scale'),
       h('div', { class: 'row' }, quick, h('label', { class: 'row' }, factorIn, ' ×')),
@@ -261,7 +272,7 @@ function viewRecipe(id) {
 function viewEdit(id, template) {
   const existing = id ? lib.byId.get(id) : null;
   if (id && !existing) return viewMissing();
-  const r = existing || template || { title: '', categories: [], yq: null, yu: '', yr: '', dir: '', ings: [], source: 'mine' };
+  const r = existing || template || { title: '', categories: [], tags: [], yq: null, yu: '', yr: '', dir: '', ings: [], source: 'mine' };
 
   const title = h('input', { class: 'full', value: r.title, autocomplete: 'off', 'aria-label': 'Title' });
   const cats = h('input', { class: 'full', value: r.categories.join(', '), placeholder: 'e.g. Soups, Main dish', 'aria-label': 'Categories' });
@@ -296,7 +307,7 @@ function viewEdit(id, template) {
     const [yq, yu] = text ? parseYield(text) : [null, ''];
     const recipe = {
       id: existing ? existing.id : `u-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-      title: title.value.trim(), categories: splitCategories(cats.value), yq, yu, yr: text,
+      title: title.value.trim(), categories: splitCategories(cats.value), tags: (existing || template || {}).tags || [], yq, yu, yr: text,
       dir: dir.value.trim(), ings,
     };
     await saveRecord(toRecord(recipe));

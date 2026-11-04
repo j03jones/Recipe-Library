@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__
+from .. import categories as category_rules
 from ..db import RecipeDB
 from ..formatting import recipe_to_text
 from ..mealmaster import parse_file
@@ -47,6 +48,8 @@ class MainWindow(QMainWindow):
 
         self.reload_categories()
         self.reload_list()
+        if self.db.count() and not self.db.is_grouped() and not self.settings.value("tidyOffered", False, type=bool):
+            QTimer.singleShot(300, self._offer_tidy)
 
     # ------------------------------------------------------------------- UI
 
@@ -162,6 +165,10 @@ class MainWindow(QMainWindow):
         recipe_menu.addAction(action("Copy as &text", self.copy_text, "Ctrl+Shift+C"))
         recipe_menu.addAction(action("&Save scaled copy...", self.save_scaled_copy))
 
+        tools_menu = self.menuBar().addMenu("&Tools")
+        tools_menu.addAction(action("&Tidy categories...", self.tidy_categories))
+        tools_menu.addAction(action("&Restore original categories...", self.restore_categories))
+
         edit_menu = self.menuBar().addMenu("&Search")
         edit_menu.addAction(action("&Find", self.focus_search, "Ctrl+F"))
 
@@ -192,14 +199,20 @@ class MainWindow(QMainWindow):
 
     def reload_categories(self) -> None:
         previous = self.category_combo.currentData()
-        self.category_combo.blockSignals(True)
-        self.category_combo.clear()
-        self.category_combo.addItem(f"All categories ({self.db.count():,})", None)
-        for name, count in self.db.list_categories():
-            self.category_combo.addItem(f"{name} ({count})", name)
-        index = self.category_combo.findData(previous) if previous else 0
-        self.category_combo.setCurrentIndex(max(index, 0))
-        self.category_combo.blockSignals(False)
+        combo = self.category_combo
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(f"All categories ({self.db.count():,})", None)
+        for section, rows in category_rules.sectioned(dict(self.db.list_categories())):
+            combo.addItem(section.upper(), None)  # heading: shown greyed out, not selectable
+            item = combo.model().item(combo.count() - 1)
+            if item is not None:
+                item.setEnabled(False)
+            for name, count in rows:
+                combo.addItem(f"    {name} ({count})", name)
+        index = combo.findData(previous) if previous else 0
+        combo.setCurrentIndex(max(index, 0))
+        combo.blockSignals(False)
 
     def reload_list(self, select_id: Optional[int] = None) -> None:
         if select_id is None and self.current is not None:
@@ -398,7 +411,8 @@ class MainWindow(QMainWindow):
             QApplication.processEvents()
             return not progress.wasCanceled()
 
-        summary = self.db.import_recipes(recipes, progress=on_progress)
+        summary = self.db.import_recipes(
+            recipes, progress=on_progress, regroup=self.db.is_grouped() or self.db.count() == 0)
         progress.close()
 
         self.reload_categories()
@@ -415,6 +429,60 @@ class MainWindow(QMainWindow):
         if details:
             box.setDetailedText("\n\n".join(details))
         box.exec()
+
+    # ------------------------------------------------------------- categories
+
+    def _offer_tidy(self) -> None:
+        self.settings.setValue("tidyOffered", True)
+        self.tidy_categories(first_time=True)
+
+    def tidy_categories(self, first_time: bool = False) -> None:
+        if not self.db.count():
+            QMessageBox.information(self, "Tidy categories", "There are no recipes yet. Import some first.")
+            return
+        recipes = self.db.light_recipes()
+        old = {category_rules.normalize_tag(t) for r in recipes for t in (r.tags or r.categories)}
+        report = category_rules.report(recipes)
+        groups = report.splitlines()[0].split("->")[1].split("groups")[0].strip()
+        lead = "Your library has a lot of category labels. " if first_time else ""
+        box = QMessageBox(
+            QMessageBox.Icon.Question, "Tidy categories",
+            f"{lead}Replace the {len(old)} category labels with {groups} tidy groups "
+            "(Desserts, Soups & Stews, Beef, Italian, ...)?\n\n"
+            "Your original labels are kept as searchable tags, a backup copy of your library is "
+            "saved first, and you can undo this from Tools > Restore original categories. "
+            "Categories you assigned by hand will be replaced. Open Show Details to preview the groups.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel, self)
+        box.setDetailedText(report)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if box.exec() != QMessageBox.StandardButton.Yes:
+            return
+        self._run_category_change(lambda: self.db.regroup_all(), "Categories tidied")
+
+    def restore_categories(self) -> None:
+        if not self.db.is_grouped():
+            QMessageBox.information(self, "Restore categories", "The categories haven't been tidied, so there is nothing to restore.")
+            return
+        answer = QMessageBox.question(
+            self, "Restore original categories",
+            "Put every recipe back under its original category labels?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if answer == QMessageBox.StandardButton.Yes:
+            self._run_category_change(lambda: self.db.restore_original_categories(), "Original categories restored")
+
+    def _run_category_change(self, change, done_message: str) -> None:
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            backup = self.db.backup()
+            change()
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.category_combo.blockSignals(True)
+        self.category_combo.setCurrentIndex(0)
+        self.category_combo.blockSignals(False)
+        self.reload_categories()
+        self.reload_list()
+        self.statusBar().showMessage(done_message + (f". Backup saved to {backup}" if backup else ""), 8000)
 
     def about(self) -> None:
         QMessageBox.about(

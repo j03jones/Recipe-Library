@@ -12,6 +12,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
+from . import categories as category_rules
 from .models import Ingredient, Recipe
 
 SCHEMA = """
@@ -37,6 +38,12 @@ CREATE TABLE IF NOT EXISTS recipe_categories (
     recipe_id   INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
     category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
     PRIMARY KEY (recipe_id, category_id)
+);
+CREATE TABLE IF NOT EXISTS recipe_tags (
+    recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    position  INTEGER NOT NULL,
+    tag       TEXT NOT NULL,
+    PRIMARY KEY (recipe_id, position)
 );
 CREATE TABLE IF NOT EXISTS ingredients (
     id        INTEGER PRIMARY KEY,
@@ -136,7 +143,7 @@ class RecipeDB:
                 recipe.title,
                 " ".join(i.item for i in recipe.ingredients),
                 recipe.directions,
-                " ".join(recipe.categories),
+                " ".join(list(recipe.categories) + list(recipe.tags)),
             ),
         )
 
@@ -146,6 +153,9 @@ class RecipeDB:
         c = self.conn
         c.execute("DELETE FROM ingredients WHERE recipe_id = ?", (recipe_id,))
         c.execute("DELETE FROM recipe_categories WHERE recipe_id = ?", (recipe_id,))
+        c.execute("DELETE FROM recipe_tags WHERE recipe_id = ?", (recipe_id,))
+        for pos, tag in enumerate(recipe.tags):
+            c.execute("INSERT INTO recipe_tags(recipe_id, position, tag) VALUES (?, ?, ?)", (recipe_id, pos, tag))
         for pos, ing in enumerate(recipe.ingredients):
             c.execute(
                 "INSERT INTO ingredients(recipe_id, position, grp, qty, raw_qty, unit, item) "
@@ -244,7 +254,7 @@ class RecipeDB:
         ]
         return Recipe(
             id=row["id"], title=row["title"], ingredients=ings, directions=row["directions"],
-            categories=cats,
+            categories=cats, tags=self._tag_names(recipe_id),
             yield_quantity=Fraction(row["yield_qty"]) if row["yield_qty"] is not None else None,
             yield_unit=row["yield_unit"], yield_raw=row["yield_raw"],
         )
@@ -327,12 +337,14 @@ class RecipeDB:
         return row["id"] if row else None
 
     def import_recipes(
-        self, recipes: Iterable[Recipe], skip_duplicates: bool = True, progress=None
+        self, recipes: Iterable[Recipe], skip_duplicates: bool = True, progress=None,
+        regroup: bool = False,
     ) -> ImportSummary:
         """Add recipes, skipping exact duplicates.
 
-        progress, if given, is called as progress(done, total) after each recipe; returning
-        False from it stops the import early (recipes already added are kept).
+        regroup=True keeps each recipe's own labels as tags and files it under the tidy groups
+        from category_data.py. progress, if given, is called as progress(done, total) after each
+        recipe; returning False from it stops the import early (recipes already added are kept).
         """
         items = list(recipes)
         summary = ImportSummary()
@@ -340,7 +352,105 @@ class RecipeDB:
             if skip_duplicates and self.find_duplicate(r) is not None:
                 summary.skipped_duplicates.append(r.title)
             else:
+                if regroup:
+                    category_rules.apply(r)
                 summary.added.append(self.add_recipe(r))
             if progress is not None and progress(n, len(items)) is False:
                 break
         return summary
+
+    # ------------------------------------------------------- tidy categories
+
+    def _tag_names(self, recipe_id: int) -> List[str]:
+        return [r["tag"] for r in self.conn.execute(
+            "SELECT tag FROM recipe_tags WHERE recipe_id = ? ORDER BY position", (recipe_id,))]
+
+    def _category_names(self, recipe_id: int) -> List[str]:
+        return [r["name"] for r in self.conn.execute(
+            "SELECT c.name FROM categories c JOIN recipe_categories rc ON rc.category_id = c.id "
+            "WHERE rc.recipe_id = ? ORDER BY c.name COLLATE NOCASE", (recipe_id,))]
+
+    def _set_categories(self, recipe_id: int, names: List[str]) -> None:
+        c = self.conn
+        c.execute("DELETE FROM recipe_categories WHERE recipe_id = ?", (recipe_id,))
+        for name in names:
+            c.execute("INSERT OR IGNORE INTO categories(name) VALUES (?)", (name,))
+            row = c.execute("SELECT id FROM categories WHERE name = ?", (name,)).fetchone()
+            # names compare case-insensitively; make sure the stored spelling is the one given
+            c.execute("UPDATE categories SET name = ? WHERE id = ? AND name COLLATE BINARY <> ?",
+                      (name, row["id"], name))
+            c.execute("INSERT OR IGNORE INTO recipe_categories(recipe_id, category_id) VALUES (?, ?)",
+                      (recipe_id, row["id"]))
+
+    def _reindex(self, recipe_id: int) -> None:
+        if not self._has_fts:
+            return
+        row = self.conn.execute("SELECT title, directions FROM recipes WHERE id = ?", (recipe_id,)).fetchone()
+        items = " ".join(r["item"] for r in self.conn.execute(
+            "SELECT item FROM ingredients WHERE recipe_id = ? ORDER BY position", (recipe_id,)))
+        labels = " ".join(self._category_names(recipe_id) + self._tag_names(recipe_id))
+        self.conn.execute("DELETE FROM recipes_fts WHERE rowid = ?", (recipe_id,))
+        self.conn.execute(
+            "INSERT INTO recipes_fts(rowid, title, ingredients, directions, categories) VALUES (?, ?, ?, ?, ?)",
+            (recipe_id, row["title"], items, row["directions"], labels))
+
+    def light_recipes(self) -> List[Recipe]:
+        """Recipes with only title, categories and tags filled in (cheap; used for reports)."""
+        cats: dict = {}
+        for r in self.conn.execute(
+            "SELECT rc.recipe_id, c.name FROM recipe_categories rc JOIN categories c ON c.id = rc.category_id"
+        ):
+            cats.setdefault(r["recipe_id"], []).append(r["name"])
+        tags: dict = {}
+        for r in self.conn.execute("SELECT recipe_id, tag FROM recipe_tags ORDER BY recipe_id, position"):
+            tags.setdefault(r["recipe_id"], []).append(r["tag"])
+        return [Recipe(id=r["id"], title=r["title"], categories=cats.get(r["id"], []), tags=tags.get(r["id"], []))
+                for r in self.conn.execute("SELECT id, title FROM recipes")]
+
+    def is_grouped(self) -> bool:
+        """True once the tidy groups have been applied to (at least some of) the library."""
+        return self.conn.execute("SELECT 1 FROM recipe_tags LIMIT 1").fetchone() is not None
+
+    def regroup_all(self, progress=None) -> int:
+        """File every recipe under the tidy groups. The recipe's current labels are kept as
+        tags the first time (so nothing is lost), and later runs re-derive groups from the tags.
+        Replaces any categories you assigned by hand. Returns the number of recipes updated."""
+        rows = self.conn.execute("SELECT id, title FROM recipes").fetchall()
+        with self.conn:
+            for n, row in enumerate(rows, 1):
+                rid = row["id"]
+                tags = self._tag_names(rid)
+                if not tags:
+                    tags = self._category_names(rid)
+                    for pos, tag in enumerate(tags):
+                        self.conn.execute("INSERT INTO recipe_tags(recipe_id, position, tag) VALUES (?, ?, ?)",
+                                          (rid, pos, tag))
+                self._set_categories(rid, category_rules.groups_for(tags, row["title"]))
+                self._reindex(rid)
+                if progress is not None and progress(n, len(rows)) is False:
+                    break
+            self._prune_categories()
+        return len(rows)
+
+    def restore_original_categories(self) -> int:
+        """Undo regroup_all: put each recipe's original labels back as its categories."""
+        rows = self.conn.execute("SELECT DISTINCT recipe_id FROM recipe_tags").fetchall()
+        with self.conn:
+            for row in rows:
+                rid = row["recipe_id"]
+                self._set_categories(rid, self._tag_names(rid))
+                self._reindex(rid)
+            self._prune_categories()
+        return len(rows)
+
+    def backup(self) -> Optional[str]:
+        """Copy the database file next to itself with a timestamp; returns the new path."""
+        if self.path == ":memory:":
+            return None
+        dest = f"{self.path}.backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        target = sqlite3.connect(dest)
+        try:
+            self.conn.backup(target)
+        finally:
+            target.close()
+        return dest

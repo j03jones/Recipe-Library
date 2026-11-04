@@ -82,6 +82,7 @@ def recipe_from_fields(
     ingredients: Iterable[Optional[Ingredient]],
     directions: str,
     recipe_id: Optional[int] = None,
+    tags: Optional[List[str]] = None,
 ) -> Recipe:
     yq: Optional[Fraction] = None
     yu = ""
@@ -97,4 +98,5 @@ def recipe_from_fields(
         yield_quantity=yq,
         yield_unit=yu,
         yield_raw=yield_text,
+        tags=list(tags or []),
     )

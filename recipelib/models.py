@@ -33,3 +33,4 @@ class Recipe:
     yield_unit: str = ""  # e.g. "servings", "loaf"
     yield_raw: str = ""  # original yield text
     id: Optional[int] = None
+    tags: List[str] = field(default_factory=list)  # original source labels, kept for search
