@@ -67,9 +67,15 @@ For the phone app, `python tools/export_web.py --db <file> --drop-near-duplicate
 library built in and no connection needed after the first visit. It can search, scale, add, edit
 and back up recipes. Your changes are stored on the phone, separately from the built-in library.
 
+Made for use in a kitchen: category chips, a bottom tab bar, starred recipes (kept on the phone and
+included in backups), tap-to-tick ingredients and numbered steps, and a scale bar pinned to the
+bottom of each recipe with a servings stepper. Colours and tile emoji live in `web/style.css` and
+`web/js/ui.js`.
+
     python3 tools/export_web.py --db ~/.local/share/recipe-library/recipes.db   # refresh the built-in recipes
     python3 -m http.server 8000 -d web                                         # try it at http://localhost:8000
     python3 tools/parity_check.py                                              # JS output == Python output
+    python3 tools/e2e_web.py                                                   # click-through test in headless Chromium (needs Playwright)
 
 `tools/export_web.py` also accepts `--mmf file1.mmf file2.mmf ...`. To publish: in the GitHub
 repo, Settings > Pages > Source: "GitHub Actions". Every push to `main` that touches `web/` is
