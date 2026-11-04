@@ -5,7 +5,7 @@ import {
 import { fromRecord, fromRow, toRecord } from './model.js';
 import * as store from './store.js';
 import { SECTIONS } from './groups.js';
-import { addStars, emojiFor, icon, isStarred, starIds, tile, toggleStar } from './ui.js';
+import { addStars, copyText, emojiFor, icon, isStarred, starIds, tile, toggleStar } from './ui.js';
 import * as cloud from './cloud.js';
 import { accountCard, viewAdmin } from './account.js';
 
@@ -454,8 +454,7 @@ function viewRecipe(id) {
 
   const copy = async () => {
     const text = recipeToText(scaleRecipe(r, factor, smart).recipe);
-    try { await navigator.clipboard.writeText(text); toast('Recipe copied'); }
-    catch { toast('Copy is not available here'); }
+    toast(await copyText(text) ? 'Recipe copied' : 'Could not copy on this browser');
   };
   const share = () => navigator.share({ title: r.title, text: recipeToText(scaleRecipe(r, factor, smart).recipe) }).catch(() => {});
   const saveCopy = () => {

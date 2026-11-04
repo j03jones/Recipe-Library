@@ -100,3 +100,22 @@ export function addStars(ids) {
   ids.forEach((id) => typeof id === 'string' && s.add(id));
   save();
 }
+
+/** Copy text. Uses the modern clipboard API, and falls back to the older method that also works on pages
+ *  without https (such as a custom domain whose certificate is still being set up). Returns true on success. */
+export async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch { /* fall through */ }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;font-size:16px';
+  document.body.append(ta);
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  ta.remove();
+  return ok;
+}

@@ -1,3 +1,3 @@
 """Recipe Library core: models, MealMaster parsing, scaling, and storage."""
 
-__version__ = "0.10.1"
+__version__ = "0.10.2"

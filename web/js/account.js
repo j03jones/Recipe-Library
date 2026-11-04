@@ -1,6 +1,7 @@
 // Account card (sign in / create account / restaurant tools) and the admin screen.
 // Receives `ctx` from app.js so it can reuse the app's helpers without importing the whole app.
 import * as cloud from './cloud.js';
+import { copyText } from './ui.js';
 
 const STATUSES = ['inactive', 'trialing', 'active', 'past_due', 'canceled'];
 const STATUS_LABEL = { inactive: 'Not subscribed', trialing: 'Trial', active: 'Active', past_due: 'Payment overdue', canceled: 'Canceled' };
@@ -15,7 +16,7 @@ function codeBox(ctx, code) {
   return h('div', { class: 'codebox' },
     h('strong', { class: 'code' }, code),
     h('button', { type: 'button', onclick: async () => {
-      try { await navigator.clipboard.writeText(shareText(code)); toast('Invite message copied'); } catch { toast('Copy is not available here'); }
+      toast(await copyText(shareText(code)) ? 'Invite message copied' : 'Could not copy. Press and hold the code to copy it.', 3000);
     } }, 'Copy invite message'));
 }
 
