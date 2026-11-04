@@ -16,6 +16,9 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m unittest discover -s tests -t .
+      - name: Web app scaling matches the Python library
+        if: hashFiles('web/data/recipes.json') != ''
+        run: python tools/parity_check.py
 
   build:
     needs: test

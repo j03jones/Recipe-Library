@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Recipe Library</title>
+  <meta name="description" content="Offline recipe library with scaling">
+  <meta name="theme-color" content="#2f6f4e">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Recipes">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="bar">
+    <a class="brand" href="#/">Recipe Library</a>
+    <a class="icon-btn" href="#/new" aria-label="New recipe" title="New recipe">
+      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none"/></svg>
+    </a>
+    <a class="icon-btn" href="#/settings" aria-label="Settings and backup" title="Settings and backup">
+      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/><circle cx="16" cy="7" r="2.4" fill="none" stroke="currentColor" stroke-width="2.2"/><circle cx="8" cy="17" r="2.4" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>
+    </a>
+  </header>
+  <main id="app"><p class="muted pad">Loading…</p></main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <noscript><p class="pad">This app needs JavaScript.</p></noscript>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

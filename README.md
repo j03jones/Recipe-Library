@@ -26,6 +26,25 @@ MealMaster recipe files, lets you add and edit recipes, and scales them.
 The whole `dist/RecipeLibrary` folder is the app; copy or zip it as a unit. PyInstaller cannot
 cross-compile, so Windows and macOS builds must be made on those systems.
 
+## Phone web app (offline)
+
+`web/` is an installable web app (PWA) that runs on Android and iPhone, with the whole recipe
+library built in and no connection needed after the first visit. It can search, scale, add, edit
+and back up recipes. Your changes are stored on the phone, separately from the built-in library.
+
+    python3 tools/export_web.py --db ~/.local/share/recipe-library/recipes.db   # refresh the built-in recipes
+    python3 -m http.server 8000 -d web                                         # try it at http://localhost:8000
+    python3 tools/parity_check.py                                              # JS output == Python output
+
+`tools/export_web.py` also accepts `--mmf file1.mmf file2.mmf ...`. To publish: in the GitHub
+repo, Settings > Pages > Source: "GitHub Actions". Every push to `main` that touches `web/` is
+then deployed to `https://<user>.github.io/<repo>/`. Open that address on each phone while online,
+then use Share > Add to Home Screen (iPhone) or the browser menu > Install app (Android).
+
+Note: GitHub Pages on a free account requires a public repository, which also makes the bundled
+recipes public. Private-repo Pages needs a paid plan. Check that you are comfortable sharing the
+recipe collections before publishing.
+
 ## Automatic builds (GitHub Actions)
 
 Every push to `main` runs the tests and builds Linux, Windows and macOS versions
