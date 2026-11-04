@@ -656,6 +656,9 @@ async function viewSettings() {
   const swReady = 'serviceWorker' in navigator && !!navigator.serviceWorker.controller;
   const persisted = (await navigator.storage?.persisted?.().catch(() => false)) || false;
   const stat = (k, v) => h('div', { class: 'stat' }, h('span', null, k), h('strong', null, v));
+  const appVersion = await (async () => {
+    try { const k = (await caches.keys()).find((x) => x.startsWith('recipelib-')); return k ? k.slice(10) : 'not cached yet'; } catch { return 'unknown'; }
+  })();
 
   const fileIn = h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: importBackup });
 
@@ -715,6 +718,7 @@ async function viewSettings() {
       h('strong', null, 'Status'),
       stat('Recipes in library', lib.all.length.toLocaleString()),
       stat('Works offline', swReady ? 'Yes' : 'Not yet (open once while online)'),
+      stat('App version', appVersion),
       stat('Your changes are saved on this device', store.persistent ? 'Yes' : 'No (private browsing?)'),
       stat('Protected from automatic cleanup', persisted ? 'Yes' : 'No'),
       !persisted && navigator.storage?.persist && h('button', { onclick: async () => { toast((await navigator.storage.persist()) ? 'Done' : 'The browser declined'); viewSettings(); } }, 'Ask the browser to keep my data'),

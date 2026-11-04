@@ -108,9 +108,9 @@ export function accountCard(ctx) {
       (me?.memberships || []).filter((m) => m.restaurant).map((m) => h('div', { class: 'stat' },
         h('span', null, m.restaurant.name, m.member_role === 'owner' ? ' (owner)' : ''),
         h('strong', null, STATUS_LABEL[m.restaurant.subscription_status] || m.restaurant.subscription_status))),
-      me && h('div', { class: 'stat' }, h('span', null, 'Starred recipes sync'), h('strong', null, lib.syncError ? 'Problem' : 'On')),
-      me && lib.syncError && h('p', { class: 'note' }, `Stars are only saved on this device right now: ${lib.syncError}`),
-      me && h('button', { type: 'button', onclick: async () => { toast('Syncing…', 1200); await ctx.refreshCloud(); ctx.rerender(); } }, 'Sync now'),
+      h('div', { class: 'stat' }, h('span', null, 'Starred recipes sync'), h('strong', null, lib.syncError ? 'Problem' : 'On')),
+      lib.syncError && h('p', { class: 'note' }, `Stars are only saved on this device right now: ${lib.syncError}`),
+      h('button', { type: 'button', onclick: async () => { toast('Syncing…', 1200); await ctx.refreshCloud(); ctx.rerender(); } }, 'Sync now'),
       !me && h('p', { class: 'note' }, 'You are signed in, but account details could not be loaded. Connect to the internet to refresh.'),
       owned.length > 0 && h('div', { class: 'stack' },
         owned.map((m) => h('button', { type: 'button', onclick: async () => {
