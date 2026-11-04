@@ -107,6 +107,8 @@ class Fake:
             user["pw"] = body["password"]
             return await ok({"id": user["id"]})
         if path == "/rest/v1/user_data":
+            if getattr(self, "no_table", False):
+                return await ok({"message": "Could not find the table 'public.user_data' in the schema cache"}, 404)
             if req.method == "GET":
                 return await ok([self.user_data[user["id"]]] if user["id"] in self.user_data else [])
             self.tick += 1
@@ -385,6 +387,13 @@ async def run():
         await st.reload()
         await st.wait_for_selector(".empty")
         check("and the first device follows", "0 starred" in await st.inner_text(".count") or await st.locator(".rc").count() == 0)
+
+        fake.no_table = True
+        await dev2.goto(URL + "#/settings")
+        await dev2.reload()
+        await dev2.wait_for_selector("text=Starred recipes sync")
+        check("a missing table is reported in Settings", await dev2.locator("text=Could not find the table").count() == 1)
+        fake.no_table = False
 
         # ---- recipes made while signed out can be moved into the account
         lctx, loc = await new_page(b, fake)

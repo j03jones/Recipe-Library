@@ -65,7 +65,7 @@ const num = (f, places) => trim0(f.toNumber().toFixed(places));
 
 // ------------------------------------------------------------------- library
 
-const lib = { base: [], mine: new Map(), all: [], byId: new Map(), cats: [], cloud: [], me: null, restaurants: [] };
+const lib = { base: [], mine: new Map(), all: [], byId: new Map(), cats: [], cloud: [], me: null, restaurants: [], syncError: '' };
 
 // ---- hosted account data (cached so it still opens offline)
 const CACHE_KEY = 'recipelib.cloudcache';
@@ -105,7 +105,8 @@ async function pushStars() {
   try {
     const row = await cloud.saveStars(starIds());
     writeSync({ uid: lib.me.id, at: row.updated_at, dirty: false });
-  } catch { /* offline: stays marked as unsent and goes out next time */ }
+    lib.syncError = '';
+  } catch (err) { lib.syncError = err.status === 0 ? 'Offline. Will retry.' : err.message; }   // stays marked unsent; goes out next time
 }
 onStarsChange(() => {
   if (!lib.me) return;
@@ -122,7 +123,8 @@ async function syncStars() {
       await pushStars();
     } else if (!row || sync.dirty) await pushStars();     // this device has unsent changes
     else if (row.updated_at !== sync.at) { replaceStars(row.stars); writeSync({ ...sync, at: row.updated_at }); }
-  } catch { /* offline or not set up: stars simply stay on this device */ }
+    if (!lib.syncError || !/\boffline\b/i.test(lib.syncError)) lib.syncError = lib.syncError || '';
+  } catch (err) { lib.syncError = err.status === 0 ? 'Offline. Will retry.' : err.message; }
 }
 
 const restaurantName = (id) => {
