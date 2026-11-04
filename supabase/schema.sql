@@ -340,6 +340,8 @@ drop policy if exists user_data_own on public.user_data;
 create policy user_data_own on public.user_data for all to authenticated
   using (user_id = auth.uid()) with check (user_id = auth.uid());
 revoke all on public.user_data from anon;
+-- Newer Supabase projects do not expose new tables automatically, so say it explicitly.
+grant select, insert, update, delete on public.user_data to authenticated;
 revoke execute on function public.touch_user_data() from public, anon;
 
 -- ----------------------------------------------------------------------------- who may call what

@@ -96,8 +96,8 @@ export function accountCard(ctx) {
       fill(pw, h('form', { class: 'stack', onsubmit: async (e) => {
         e.preventDefault();
         if (a.value.length < 8) { m.textContent = 'Use at least 8 characters.'; return; }
-        try { await cloud.changePassword(a.value); toast('Password changed'); fill(pw); } catch (err) { m.textContent = err.message; }
-      } }, a, h('div', { class: 'row grow' }, h('button', { class: 'primary', type: 'submit' }, 'Save password'), h('button', { type: 'button', onclick: () => fill(pw) }, 'Cancel')), m));
+        try { await cloud.changePassword(a.value); ctx.recovery = false; toast('Password changed'); fill(pw); } catch (err) { m.textContent = err.message; }
+      } }, a, h('div', { class: 'row grow' }, h('button', { class: 'primary', type: 'submit' }, 'Save password'), h('button', { type: 'button', onclick: () => { ctx.recovery = false; fill(pw); } }, 'Cancel')), m));
       a.focus();
     };
 
@@ -110,6 +110,7 @@ export function accountCard(ctx) {
         h('strong', null, STATUS_LABEL[m.restaurant.subscription_status] || m.restaurant.subscription_status))),
       me && h('div', { class: 'stat' }, h('span', null, 'Starred recipes sync'), h('strong', null, lib.syncError ? 'Problem' : 'On')),
       me && lib.syncError && h('p', { class: 'note' }, `Stars are only saved on this device right now: ${lib.syncError}`),
+      me && h('button', { type: 'button', onclick: async () => { toast('Syncing…', 1200); await ctx.refreshCloud(); ctx.rerender(); } }, 'Sync now'),
       !me && h('p', { class: 'note' }, 'You are signed in, but account details could not be loaded. Connect to the internet to refresh.'),
       owned.length > 0 && h('div', { class: 'stack' },
         owned.map((m) => h('button', { type: 'button', onclick: async () => {
@@ -121,7 +122,7 @@ export function accountCard(ctx) {
         h('button', { type: 'button', onclick: changePw }, 'Change password'),
         h('button', { type: 'button', onclick: async () => { await cloud.signOut(); ctx.clearCloud(); toast('Signed out'); ctx.rerender(); } }, 'Sign out')),
       pw);
-    if (ctx.recovery) { ctx.recovery = false; changePw(); }
+    if (ctx.recovery) changePw();      // stays open across re-draws until saved or cancelled
   }
 
   paint();
