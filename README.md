@@ -69,7 +69,7 @@ and back up recipes. Your changes are stored on the phone, separately from the b
 
 Made for use in a kitchen: category chips, a bottom tab bar, starred recipes (kept on the phone and
 included in backups), tap-to-tick ingredients and numbered steps, and a scale bar pinned to the
-bottom of each recipe with a servings stepper. Colours and tile emoji live in `web/style.css` and
+bottom of each recipe with a servings stepper. On a computer it switches to a side menu, a card grid, and a two-column recipe page (scale bar and ingredients stay on screen while you read the method). Esc goes back and / jumps to search. Colours and tile emoji live in `web/style.css` and
 `web/js/ui.js`.
 
     python3 tools/export_web.py --db ~/.local/share/recipe-library/recipes.db   # refresh the built-in recipes

@@ -279,7 +279,8 @@ function viewRecipe(id) {
     disabled: !(r.yq && r.yq.n > 0n), value: r.yq ? num(r.yq, 2) : '',
   });
   const smartIn = h('input', { type: 'checkbox', checked: true, onchange: () => { smart = smartIn.checked; paint(); } });
-  const body = h('div');
+  const ingBox = h('div');
+  const dirBox = h('div');
   const yieldLabel = r.yu || (r.yq ? '' : 'servings');
 
   const presets = [['½×', new Frac(1n, 2n)], ['1×', new Frac(1n)], ['2×', new Frac(2n)], ['3×', new Frac(3n)]]
@@ -317,14 +318,15 @@ function viewRecipe(id) {
     }
     const y = formatYield(s);
     const steps = s.dir ? s.dir.split('\n').filter((l) => l.trim()) : [];
-    fill(body,
+    fill(ingBox,
       h('div', { class: 'facts' },
         y && h('span', null, h('strong', null, 'Makes '), y),
         s.ings.length > 0 && h('span', null, h('strong', null, s.ings.length), s.ings.length === 1 ? ' ingredient' : ' ingredients')),
       s.ings.length > 0 && h('h2', null, 'Ingredients'),
       groups.map((g) => [g.name && h('h3', null, g.name),
         h('ul', { class: 'ing' }, g.items.map((i) => h('li', null,
-          tick([h('span', { class: 'box' }, icon('check', { size: 16 })), h('span', { class: 'what' }, amountSplit(formatIngredient(i)))]))))]),
+          tick([h('span', { class: 'box' }, icon('check', { size: 16 })), h('span', { class: 'what' }, amountSplit(formatIngredient(i)))]))))]));
+    fill(dirBox,
       steps.length > 0 && h('h2', null, 'Method'),
       steps.length > 1
         ? h('ol', { class: 'steps' }, steps.map((l, n) => h('li', null,
@@ -364,14 +366,28 @@ function viewRecipe(id) {
   const [primary, ...rest] = r.categories;
   fill($app,
     h('div', { class: 'topbar' },
-      h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Back', onclick: () => { if (history.length > 1) history.back(); else location.hash = '#/'; } }, icon('back')),
+      h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Back', onclick: () => goBack('#/') }, icon('back')),
       h('span', { class: 'sp' }),
       awakeBtn,
       starButton(r.id),
       h('a', { class: 'icon-btn', href: `#/edit/${r.id}`, 'aria-label': 'Edit recipe', title: 'Edit recipe' }, icon('edit'))),
     h('div', { class: 'rhead' }, tile(r.categories, true), h('h1', null, r.title)),
     r.categories.length > 0 && h('div', { class: 'labels' }, r.categories.map((c) => h('span', { class: 'label' }, c))),
-    body,
+    h('div', { class: 'cols' },
+      h('div', { class: 'side' },
+    h('section', { class: 'dock', 'aria-label': 'Scale this recipe' },
+          h('div', { class: 'seg' }, presets.map(([, b]) => b),
+            h('label', { class: 'mult' }, h('span', { 'aria-hidden': 'true' }, '×'), factorIn)),
+          r.yq
+            ? h('div', { class: 'makes' },
+              h('span', { class: 'lbl' }, 'Makes'),
+              h('button', { class: 'step', type: 'button', 'aria-label': 'Fewer servings', onclick: () => stepServings(-1) }, icon('minus')),
+              servIn,
+              h('button', { class: 'step', type: 'button', 'aria-label': 'More servings', onclick: () => stepServings(1) }, icon('plus')),
+              h('span', { class: 'lbl' }, yieldLabel))
+            : h('p', { class: 'note', style: 'margin:.5rem .3rem .1rem' }, 'No yield is listed, so scale with the multiplier.')),
+        ingBox),
+      dirBox),
     h('section', { class: 'tools stack' },
       h('label', { class: 'check' }, smartIn, 'Smart units (8 Tbsp becomes ½ cup)'),
       h('div', { class: 'row grow' },
@@ -379,18 +395,7 @@ function viewRecipe(id) {
         navigator.share && h('button', { onclick: share }, 'Share'),
         h('button', { onclick: saveCopy }, 'Save scaled copy'),
         h('button', { onclick: () => window.print() }, 'Print')),
-      r.tags && r.tags.length > 0 && h('p', { class: 'muted small' }, 'Original labels: ', r.tags.join(', '))),
-    h('section', { class: 'dock', 'aria-label': 'Scale this recipe' },
-      h('div', { class: 'seg' }, presets.map(([, b]) => b),
-        h('label', { class: 'mult' }, h('span', { 'aria-hidden': 'true' }, '×'), factorIn)),
-      r.yq
-        ? h('div', { class: 'makes' },
-          h('span', { class: 'lbl' }, 'Makes'),
-          h('button', { class: 'step', type: 'button', 'aria-label': 'Fewer servings', onclick: () => stepServings(-1) }, icon('minus')),
-          servIn,
-          h('button', { class: 'step', type: 'button', 'aria-label': 'More servings', onclick: () => stepServings(1) }, icon('plus')),
-          h('span', { class: 'lbl' }, yieldLabel))
-        : h('p', { class: 'note', style: 'margin:.5rem .3rem .1rem' }, 'No yield is listed, so scale with the multiplier.')));
+      r.tags && r.tags.length > 0 && h('p', { class: 'muted small' }, 'Original labels: ', r.tags.join(', '))));
   paint();
   window.scrollTo(0, 0);
 }
@@ -472,7 +477,7 @@ function viewEdit(id, template) {
     h('label', { class: 'field' }, h('span', null, 'Directions'), dir),
     h('div', { class: 'row grow' },
       h('button', { class: 'primary', onclick: save }, 'Save'),
-      h('button', { onclick: () => (template ? route() : history.back()) }, 'Cancel')),
+      h('button', { onclick: () => (template ? route() : goBack(existing ? `#/r/${existing.id}` : '#/')) }, 'Cancel')),
     existing && h('div', { class: 'actions row grow' },
       existing.source === 'edited' && h('button', { onclick: revert }, 'Revert to original'),
       h('button', { class: 'danger', onclick: del }, existing.source === 'mine' ? 'Delete recipe' : 'Remove from library')));
@@ -565,7 +570,26 @@ async function viewSettings() {
 
 // ------------------------------------------------------------------- router
 
+// Back button: browsers differ on history.length (Firefox counts the new-tab page), so the app
+// numbers its own history entries and only calls history.back() when an earlier app page exists.
+let appIndex = 0;
+let stamped = false;
+function stampHistory() {
+  const st = history.state;
+  if (st && typeof st.i === 'number') appIndex = st.i;
+  else {
+    appIndex = stamped ? appIndex + 1 : 0;
+    try { history.replaceState({ i: appIndex }, ''); } catch { /* ignore */ }
+  }
+  stamped = true;
+}
+function goBack(fallback = '#/') {
+  if (appIndex > 0) history.back(); else location.hash = fallback;
+}
+
+
 function route() {
+  stampHistory();
   clearView();
   const hash = location.hash.replace(/^#\/?/, '');
   const [kind, arg] = hash.split('/');
@@ -592,6 +616,13 @@ async function boot() {
     return;
   }
   window.addEventListener('hashchange', route);
+  document.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('dialog[open]')) return;
+    const view = document.body.dataset.view;
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+    if (e.key === 'Escape' && (view === 'recipe' || view === 'edit')) { goBack('#/'); }
+    else if (e.key === '/' && view === 'list' && !typing) { const s = document.querySelector('input[type=search]'); if (s) { e.preventDefault(); s.focus(); } }
+  });
   route();
   registerWorker();
 }
