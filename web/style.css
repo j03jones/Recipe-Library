@@ -318,3 +318,16 @@ dialog .row { justify-content: flex-end; margin-top: 1rem; }
   .tick { border: 0 !important; background: none !important; box-shadow: none !important; }
   .tick .box { display: none; }
 }
+
+/* -------------------------------------------------------------- accounts */
+.seg2 { display: flex; gap: .25rem; padding: .25rem; background: var(--paper); border: 1px solid var(--line); border-radius: 99px; }
+.seg2 button { flex: 1; border: 0; background: transparent; border-radius: 99px; min-height: 2.6rem; }
+.seg2 button[aria-pressed=true] { background: var(--flame); color: #fff; }
+.codebox { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; padding: .7rem; border: 2px dashed var(--line); border-radius: 14px; }
+.codebox .code { font-family: var(--display); font-size: 1.3rem; letter-spacing: .08em; }
+.btnlink { display: inline-flex; align-items: center; justify-content: center; min-height: 2.75rem; padding: 0 1rem; border-radius: 99px; text-decoration: none; border: 1px solid var(--line); }
+.btnlink.primary { background: var(--flame); color: #fff; border-color: var(--flame); }
+.credit { margin: .2rem 0 .8rem; color: var(--muted); font-size: .92rem; }
+.chips.src .chip[aria-pressed=true] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+select { font: inherit; min-height: 2.6rem; border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 0 .6rem; }
+@media print { .credit { display: none; } }

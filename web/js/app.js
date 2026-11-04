@@ -6,6 +6,8 @@ import { fromRecord, fromRow, toRecord } from './model.js';
 import * as store from './store.js';
 import { SECTIONS } from './groups.js';
 import { addStars, emojiFor, icon, isStarred, starIds, tile, toggleStar } from './ui.js';
+import * as cloud from './cloud.js';
+import { accountCard, viewAdmin } from './account.js';
 
 const $app = document.getElementById('app');
 const $toast = document.getElementById('toast');
@@ -63,7 +65,48 @@ const num = (f, places) => trim0(f.toNumber().toFixed(places));
 
 // ------------------------------------------------------------------- library
 
-const lib = { base: [], mine: new Map(), all: [], byId: new Map(), cats: [] };
+const lib = { base: [], mine: new Map(), all: [], byId: new Map(), cats: [], cloud: [], me: null, restaurants: [] };
+
+// ---- hosted account data (cached so it still opens offline)
+const CACHE_KEY = 'recipelib.cloudcache';
+function loadCloudCache() {
+  try {
+    const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+    const u = cloud.currentUser();
+    if (c && u && c.uid === u.id) { lib.me = c.me; lib.cloud = c.rows; }
+  } catch { /* no cache */ }
+}
+function clearCloud() {
+  lib.me = null; lib.cloud = [];
+  try { localStorage.removeItem(CACHE_KEY); } catch { /* ignore */ }
+  rebuild();
+}
+async function refreshCloud() {
+  if (!cloud.isSignedIn()) { clearCloud(); return; }
+  try {
+    const [me, rows] = await Promise.all([cloud.loadMe(), cloud.listRecipes()]);
+    lib.me = me; lib.cloud = rows;
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ uid: me.id, me, rows })); } catch { /* full */ }
+  } catch (err) {
+    if (!cloud.isSignedIn()) clearCloud();      // the session was no longer valid
+    else if (!lib.me) loadCloudCache();         // offline: fall back to what we saved last time
+  }
+  rebuild();
+}
+
+const restaurantName = (id) => {
+  const m = (lib.me?.memberships || []).find((x) => x.restaurant?.id === id);
+  return m?.restaurant.name || lib.restaurants.find((x) => x.id === id)?.name || 'Restaurant';
+};
+/** Where a cloud row shows up in the app. */
+function cloudSource(row) {
+  const mineRow = row.owner_id === lib.me?.id;
+  if (row.scope === 'restaurant') return 'collection';
+  if (row.scope === 'community') return mineRow && row.status !== 'approved' ? 'shared' : 'community';
+  return 'account';
+}
+const SOURCE_GROUP = { base: 'library', edited: 'library', mine: 'mine', account: 'mine', shared: 'mine', community: 'community', collection: 'collection' };
+const canEdit = (r) => !['community', 'collection', 'shared'].includes(r.source) || lib.me?.role === 'admin';
 
 function rebuild() {
   const map = new Map(lib.base.map((r) => [r.id, r]));
@@ -71,8 +114,16 @@ function rebuild() {
     if (rec.deleted) map.delete(rec.id);
     else map.set(rec.id, fromRecord(rec, lib.base.some((b) => b.id === rec.id) ? 'edited' : 'mine'));
   }
+  for (const row of lib.cloud) {
+    if (row.scope === 'private' && row.owner_id !== lib.me?.id) continue;          // admins can read these; the app never lists them
+    const src = cloudSource(row);
+    const r = fromRecord({ ...row.body, id: row.id, title: row.title, categories: row.categories || [] }, src);
+    r.cloud = true; r.row = row;
+    r.hidden = row.scope === 'community' && row.status !== 'approved' && row.owner_id !== lib.me?.id;   // pending items from others live in Admin tools
+    map.set(row.id, r);
+  }
   lib.byId = map;
-  lib.all = [...map.values()].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+  lib.all = [...map.values()].filter((r) => !r.hidden).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
   const cats = new Map();
   for (const r of lib.all) {
     r._hay = [r.title, r.categories.join(' '), (r.tags || []).join(' '), r.ings.map((i) => i.item).join(' '), r.dir].join('\n').toLowerCase();
@@ -97,10 +148,11 @@ async function dropRecord(id) {
   rebuild();
 }
 
-function matches(q, cat) {
+function matches(q, cat, src = '') {
   const tokens = q.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   const out = [];
   for (const r of lib.all) {
+    if (src && SOURCE_GROUP[r.source] !== src) continue;
     if (cat && !r.categories.some((c) => c.toLowerCase() === cat.toLowerCase())) continue;
     if (tokens.every((t) => r._hay.includes(t))) out.push(r);
   }
@@ -113,7 +165,7 @@ function matches(q, cat) {
 
 // -------------------------------------------------------------------- views
 
-const listState = { q: '', sec: -1, cat: '', shown: PAGE, scroll: 0 };
+const listState = { q: '', sec: -1, cat: '', src: '', shown: PAGE, scroll: 0 };
 let onScroll = null;
 let releaseWake = null;
 
@@ -147,6 +199,16 @@ function starButton(id, onChange) {
   });
   paintStar();
   return btn;
+}
+
+function badgeText(r) {
+  switch (r.source) {
+    case 'mine': case 'account': return 'Mine';
+    case 'community': return r.row.owner_id === lib.me?.id ? 'Shared' : 'Community';
+    case 'shared': return r.row.status === 'declined' ? 'Declined' : 'Awaiting approval';
+    case 'collection': return restaurantName(r.row.restaurant_id);
+    default: return 'Edited';
+  }
 }
 
 function viewList(starredOnly = false) {
@@ -188,7 +250,16 @@ function viewList(starredOnly = false) {
       return b;
     }));
 
+  const srcLabels = [['', 'Everything'], ['library', 'Library'], ['mine', 'My recipes'], ['community', 'Community']];
+  if (lib.cloud.some((x) => x.scope === 'restaurant')) srcLabels.push(['collection', 'Restaurant']);
+  const srcButtons = srcLabels.map(([k, label]) => [k, h('button', { class: 'chip', type: 'button', onclick: () => {
+    listState.src = k; listState.shown = PAGE; chipState(); paint();
+  } }, label)]);
+  const srcRow = h('div', { class: 'chips src', role: 'group', 'aria-label': 'Where recipes come from' }, srcButtons.map(([, b]) => b));
+  srcRow.hidden = !lib.me;
+
   function chipState() {
+    for (const [k, b] of srcButtons) b.setAttribute('aria-pressed', String(k === listState.src));
     for (const [i, b] of secButtons) b.setAttribute('aria-pressed', String(i === listState.sec));
     const sec = visible.find(([, , i]) => i === listState.sec);
     groupsRow.hidden = !sec;
@@ -205,13 +276,13 @@ function viewList(starredOnly = false) {
       h('a', { class: 'rc', href: `#/r/${r.id}` },
         tile(r.categories),
         h('span', { class: 'txt' },
-          h('span', { class: 't' }, r.title, r.source !== 'base' && h('span', { class: 'badge' }, r.source === 'mine' ? 'Mine' : 'Edited')),
+          h('span', { class: 't' }, r.title, r.source !== 'base' && h('span', { class: 'badge' }, badgeText(r))),
           h('span', { class: 'c' }, r.categories.length ? r.categories.slice(0, 2).join(', ') : `${r.ings.length} ingredients`))),
       starButton(r.id));
   }
 
   function paint() {
-    let pool = matches(listState.q, listState.cat);
+    let pool = matches(listState.q, listState.cat, lib.me ? listState.src : '');
     if (starredOnly) pool = pool.filter((r) => isStarred(r.id));
     results = pool;
     const shown = results.slice(0, listState.shown);
@@ -222,7 +293,7 @@ function viewList(starredOnly = false) {
     ul.replaceChildren(...shown.map(row));
     more.hidden = shown.length >= results.length;
     if (results.length) { fill(empty); return; }
-    const filtered = listState.q || listState.cat;
+    const filtered = listState.q || listState.cat || (lib.me && listState.src);
     fill(empty, h('div', { class: 'empty' },
       h('span', { class: 'tile big', 'aria-hidden': 'true', 'data-sec': filtered ? 6 : 0 }, filtered ? '🔎' : '⭐'),
       h('h2', null, filtered ? 'Nothing matches' : 'Nothing starred yet'),
@@ -230,7 +301,7 @@ function viewList(starredOnly = false) {
         ? 'Try fewer words, or search by an ingredient like “lemon”.'
         : 'Tap the star on a recipe to keep it here for quick access.'),
       filtered
-        ? h('button', { onclick: () => { listState.q = ''; listState.sec = -1; listState.cat = ''; input.value = ''; chipState(); paint(); } }, 'Clear search and filters')
+        ? h('button', { onclick: () => { listState.q = ''; listState.sec = -1; listState.cat = ''; listState.src = ''; input.value = ''; chipState(); paint(); } }, 'Clear search and filters')
         : h('button', { onclick: () => { location.hash = '#/'; } }, 'Browse recipes')));
   }
 
@@ -245,7 +316,7 @@ function viewList(starredOnly = false) {
       h('h1', null, starredOnly ? 'Starred' : 'What are we cooking?'),
       starredOnly && h('p', { class: 'muted' }, 'Your go-to recipes, saved on this device.')),
     h('div', { class: 'searchbar' }, h('label', { class: 'search' }, icon('search', { size: 22 }), input)),
-    !starredOnly && secRow, !starredOnly && groupsRow, count, ul, empty, more);
+    !starredOnly && srcRow, !starredOnly && secRow, !starredOnly && groupsRow, count, ul, empty, more);
   chipState();
   paint();
   window.scrollTo(0, listState.scroll);
@@ -264,6 +335,36 @@ function tick(kids, extraClass = '') {
   const btn = h('button', { class: `tick ${extraClass}`.trim(), type: 'button', 'aria-pressed': 'false' }, kids);
   btn.addEventListener('click', () => btn.setAttribute('aria-pressed', String(btn.getAttribute('aria-pressed') !== 'true')));
   return btn;
+}
+
+function credit(r) {
+  if (r.source === 'community') return h('p', { class: 'credit' }, r.row.owner_id === lib.me?.id ? 'Shared by you' : `Shared by ${r.row.author_name || 'a chef'}`);
+  if (r.source === 'collection') return h('p', { class: 'credit' }, `From the ${restaurantName(r.row.restaurant_id)} collection`);
+  if (r.source === 'shared') return h('p', { class: 'credit' }, r.row.status === 'declined'
+    ? `Not approved${r.row.review_note ? `: ${r.row.review_note}` : '.'}` : 'Waiting for approval. Only you can see it until then.');
+  return null;
+}
+
+const RIGHTS = 'Share a copy of this recipe with the Community? Everyone signed in will be able to read it and see your name. Only share a recipe that is yours or that you have the right to share. Chef-owned or restaurant recipes should stay private. The administrator reviews every recipe before it appears, and you can withdraw it later.';
+
+/** Share / withdraw buttons for the recipe page. */
+function sharing(r) {
+  if (!lib.me) return null;
+  const out = h('div', { class: 'stack' });
+  const copy = lib.cloud.find((x) => x.scope === 'community' && x.source_recipe_id === r.id && x.owner_id === lib.me.id);
+  const withdraw = (row) => h('button', { onclick: async () => {
+    if (!await confirmDialog('Withdraw this recipe from the Community? Your own copy stays in your account.', 'Withdraw', true)) return;
+    try { await cloud.deleteRecipe(row.id); await refreshCloud(); toast('Withdrawn'); route(); } catch (err) { toast(err.message, 4000); }
+  } }, 'Withdraw from Community');
+  if (r.source === 'account') {
+    if (copy) fill(out, h('p', { class: 'muted small' }, copy.status === 'approved' ? 'A copy of this recipe is in the Community.' : copy.status === 'declined' ? `Not approved${copy.review_note ? `: ${copy.review_note}` : '.'}` : 'A copy is waiting for approval.'), withdraw(copy));
+    else fill(out, h('button', { onclick: async () => {
+      if (!await confirmDialog(RIGHTS, 'Share')) return;
+      try { await cloud.submitToCommunity(r.id); await refreshCloud(); toast('Sent for approval'); route(); } catch (err) { toast(err.message, 4000); }
+    } }, 'Share with the Community'));
+  } else if ((r.source === 'community' || r.source === 'shared') && r.row.owner_id === lib.me.id) fill(out, withdraw(r.row));
+  else return null;
+  return out;
 }
 
 function viewRecipe(id) {
@@ -370,9 +471,10 @@ function viewRecipe(id) {
       h('span', { class: 'sp' }),
       awakeBtn,
       starButton(r.id),
-      h('a', { class: 'icon-btn', href: `#/edit/${r.id}`, 'aria-label': 'Edit recipe', title: 'Edit recipe' }, icon('edit'))),
+      canEdit(r) && h('a', { class: 'icon-btn', href: `#/edit/${r.id}`, 'aria-label': 'Edit recipe', title: 'Edit recipe' }, icon('edit'))),
     h('div', { class: 'rhead' }, tile(r.categories, true), h('h1', null, r.title)),
     r.categories.length > 0 && h('div', { class: 'labels' }, r.categories.map((c) => h('span', { class: 'label' }, c))),
+    credit(r),
     h('div', { class: 'cols' },
       h('div', { class: 'side' },
     h('section', { class: 'dock', 'aria-label': 'Scale this recipe' },
@@ -395,6 +497,7 @@ function viewRecipe(id) {
         navigator.share && h('button', { onclick: share }, 'Share'),
         h('button', { onclick: saveCopy }, 'Save scaled copy'),
         h('button', { onclick: () => window.print() }, 'Print')),
+      sharing(r),
       r.tags && r.tags.length > 0 && h('p', { class: 'muted small' }, 'Original labels: ', r.tags.join(', '))));
   paint();
   window.scrollTo(0, 0);
@@ -404,6 +507,7 @@ function viewEdit(id, template) {
   setView('edit', 'new');
   const existing = id ? lib.byId.get(id) : null;
   if (id && !existing) return viewMissing();
+  if (existing && !canEdit(existing)) { fill($app, h('h1', null, 'Read only'), h('p', { class: 'muted' }, 'This recipe belongs to someone else. Open it and use “Save scaled copy” to make your own version.'), h('p', null, h('a', { href: `#/r/${existing.id}` }, 'Back to the recipe'))); return; }
   const r = existing || template || { title: '', categories: [], tags: [], yq: null, yu: '', yr: '', dir: '', ings: [], source: 'mine' };
 
   const title = h('input', { class: 'full', value: r.title, autocomplete: 'off', 'aria-label': 'Title' });
@@ -442,18 +546,32 @@ function viewEdit(id, template) {
       title: title.value.trim(), categories: splitCategories(cats.value), tags: (existing || template || {}).tags || [], yq, yu, yr: text,
       dir: dir.value.trim(), ings,
     };
-    await saveRecord(toRecord(recipe));
+    const rec = toRecord(recipe);
+    let target = recipe.id;
+    if ((existing && existing.cloud) || (!existing && lib.me && cloud.isSignedIn())) {
+      try {
+        if (existing) await cloud.updateRecipe(existing.id, rec);
+        else target = (await cloud.createRecipe(rec)).id;
+        await refreshCloud();
+      } catch (err) {
+        if (err.status !== 0 || existing) { toast(err.message, 4500); return; }
+        await saveRecord(rec);                                   // offline: keep it on this device
+        toast('You are offline, so this was saved on this device only.', 4500);
+      }
+    } else await saveRecord(rec);
     toast('Saved');
-    location.replace(`${location.pathname}${location.search}#/r/${recipe.id}`);
+    location.replace(`${location.pathname}${location.search}#/r/${target}`);
   }
 
   async function del() {
-    const mine = existing.source === 'mine';
+    const mine = existing.source === 'mine' || existing.cloud;
     const ok = await confirmDialog(
       mine ? `Delete "${existing.title}"?` : `Remove "${existing.title}" from your library? You can restore it later in Settings.`,
       mine ? 'Delete' : 'Remove', true);
     if (!ok) return;
-    if (mine) await dropRecord(existing.id);
+    if (existing.cloud) {
+      try { await cloud.deleteRecipe(existing.id); await refreshCloud(); } catch (err) { toast(err.message, 4500); return; }
+    } else if (mine) await dropRecord(existing.id);
     else await saveRecord({ id: existing.id, deleted: true });
     toast('Removed');
     location.replace(`${location.pathname}${location.search}#/`);
@@ -480,7 +598,7 @@ function viewEdit(id, template) {
       h('button', { onclick: () => (template ? route() : goBack(existing ? `#/r/${existing.id}` : '#/')) }, 'Cancel')),
     existing && h('div', { class: 'actions row grow' },
       existing.source === 'edited' && h('button', { onclick: revert }, 'Revert to original'),
-      h('button', { class: 'danger', onclick: del }, existing.source === 'mine' ? 'Delete recipe' : 'Remove from library')));
+      h('button', { class: 'danger', onclick: del }, existing.source === 'mine' || existing.cloud ? 'Delete recipe' : 'Remove from library')));
   window.scrollTo(0, 0);
   if (!existing && !template) title.focus();
 }
@@ -543,6 +661,8 @@ async function viewSettings() {
 
   fill($app, 
     h('h1', null, 'Settings & backup'),
+    accountCard(ctx),
+    h('h2', null, 'This device'),
     h('section', { class: 'card stack' },
       h('strong', null, 'Status'),
       stat('Recipes in library', lib.all.length.toLocaleString()),
@@ -598,11 +718,20 @@ function route() {
   if (kind === 'edit' && id) return viewEdit(id);
   if (kind === 'new') return viewEdit(null);
   if (kind === 'settings') return viewSettings();
+  if (kind === 'admin') return viewAdmin(ctx);
   if (kind === 'starred') return viewList(true);
   return viewList();
 }
 
+const ctx = {
+  h, fill, toast, icon, lib, $app, setView, goBack, refreshCloud, clearCloud,
+  rerender: () => route(),
+};
+
 async function boot() {
+  const linkType = cloud.takeSessionFromHash();      // arriving from a confirmation / reset email
+  if (linkType) history.replaceState(history.state, '', `${location.pathname}${location.search}#/settings`);
+  loadCloudCache();
   try {
     const [res, mine] = await Promise.all([fetch('data/recipes.json'), store.all()]);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -625,6 +754,12 @@ async function boot() {
   });
   route();
   registerWorker();
+  if (linkType) toast(linkType === 'recovery' ? 'Signed in. Choose a new password below.' : 'Email confirmed. You are signed in.', 5000);
+  if (cloud.isSignedIn()) {
+    await refreshCloud();
+    const view = document.body.dataset.view;
+    if (view === 'list' || (view === 'settings' && !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '') && location.hash.indexOf('admin') < 0)) route();
+  }
 }
 
 function registerWorker() {

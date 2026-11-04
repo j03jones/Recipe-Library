@@ -1,0 +1,183 @@
+// Tiny client for the hosted database (Supabase): sign-in plus the few queries the app needs.
+// Plain fetch, no library, so the offline app has nothing extra to cache. Everything here needs a
+// connection; callers fall back to their cached copy when it fails.
+import { SUPABASE_URL as URL_, SUPABASE_KEY as KEY } from './config.js';
+
+const SESSION_KEY = 'recipelib.session';
+let session = null;
+const listeners = new Set();
+
+export class CloudError extends Error {
+  constructor(message, status = 0) { super(message); this.status = status; }
+}
+
+// ------------------------------------------------------------------ session storage
+function loadSession() {
+  if (session) return session;
+  try { session = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch { session = null; }
+  return session;
+}
+function setSession(s) {
+  session = s;
+  try { if (s) localStorage.setItem(SESSION_KEY, JSON.stringify(s)); else localStorage.removeItem(SESSION_KEY); } catch { /* private mode */ }
+  listeners.forEach((fn) => fn(s));
+}
+export const onSessionChange = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
+export const currentUser = () => loadSession()?.user || null;
+export const isSignedIn = () => !!loadSession();
+
+function fromTokenResponse(t) {
+  return {
+    access_token: t.access_token, refresh_token: t.refresh_token,
+    expires_at: t.expires_at || Math.floor(Date.now() / 1000) + (t.expires_in || 3600),
+    user: { id: t.user.id, email: t.user.email },
+  };
+}
+
+// ------------------------------------------------------------------ low-level calls
+async function call(path, { method = 'GET', body, token, headers = {} } = {}) {
+  let res;
+  try {
+    res = await fetch(`${URL_}${path}`, {
+      method,
+      headers: { apikey: KEY, Authorization: `Bearer ${token || KEY}`, 'Content-Type': 'application/json', ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    throw new CloudError('Could not reach the server. Check your connection.', 0);
+  }
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (!res.ok) {
+    const msg = (data && (data.message || data.msg || data.error_description || data.error)) || `Request failed (${res.status})`;
+    throw new CloudError(String(msg), res.status);
+  }
+  return data;
+}
+
+async function freshToken() {
+  const s = loadSession();
+  if (!s) throw new CloudError('Please sign in.', 401);
+  if (s.expires_at - 60 > Date.now() / 1000) return s.access_token;
+  try {
+    const t = await call('/auth/v1/token?grant_type=refresh_token', { method: 'POST', body: { refresh_token: s.refresh_token } });
+    setSession(fromTokenResponse(t));
+    return session.access_token;
+  } catch (err) {
+    if (err.status === 400 || err.status === 401) setSession(null);   // refresh token no longer valid
+    throw err;
+  }
+}
+
+async function authed(path, opts = {}) {
+  return call(path, { ...opts, token: await freshToken() });
+}
+
+// ------------------------------------------------------------------ accounts
+export async function signIn(email, password) {
+  try {
+    const t = await call('/auth/v1/token?grant_type=password', { method: 'POST', body: { email, password } });
+    setSession(fromTokenResponse(t));
+  } catch (err) {
+    if (err.status === 400) throw new CloudError('Wrong email or password, or the email is not confirmed yet.', 400);
+    throw err;
+  }
+}
+
+/** Creates an account. Returns 'signed-in' or 'confirm-email'. */
+export async function signUp({ email, password, displayName, inviteCode }) {
+  try {
+    const t = await call('/auth/v1/signup', {
+      method: 'POST',
+      body: { email, password, data: { display_name: displayName, invite_code: inviteCode } },
+    });
+    if (t && t.access_token) { setSession(fromTokenResponse(t)); return 'signed-in'; }
+    return 'confirm-email';
+  } catch (err) {
+    // The database refuses bad or missing invite codes; Supabase reports that as a generic server error.
+    if (err.status >= 500 || /database error/i.test(err.message)) {
+      throw new CloudError('That invite code is not valid, has been used up, or the restaurant has no free seats.', err.status);
+    }
+    throw err;
+  }
+}
+
+export async function signOut() {
+  const s = loadSession();
+  setSession(null);
+  if (s) { try { await call('/auth/v1/logout', { method: 'POST', token: s.access_token }); } catch { /* already signed out locally */ } }
+}
+
+export async function changePassword(newPassword) {
+  await authed('/auth/v1/user', { method: 'PUT', body: { password: newPassword } });
+}
+
+/** Handles the link in a confirmation / password-reset email (…#access_token=…&type=signup). Returns the type or null. */
+export function takeSessionFromHash(hash = location.hash) {
+  const q = new URLSearchParams(hash.replace(/^#\/?/, ''));
+  if (!q.get('access_token')) return null;
+  const expires = Number(q.get('expires_in') || 3600);
+  setSession({
+    access_token: q.get('access_token'), refresh_token: q.get('refresh_token'),
+    expires_at: Number(q.get('expires_at')) || Math.floor(Date.now() / 1000) + expires,
+    user: userFromJwt(q.get('access_token')),
+  });
+  return q.get('type') || 'signup';
+}
+function userFromJwt(jwt) {
+  try {
+    const p = JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return { id: p.sub, email: p.email };
+  } catch { return { id: '', email: '' }; }
+}
+
+// ------------------------------------------------------------------ data
+const enc = encodeURIComponent;
+
+/** Who am I: profile + restaurant memberships. */
+export async function loadMe() {
+  const u = currentUser();
+  const [profile] = await authed(`/rest/v1/profiles?id=eq.${enc(u.id)}&select=display_name,role`);
+  const memberships = await authed(
+    `/rest/v1/restaurant_members?user_id=eq.${enc(u.id)}&select=member_role,restaurant:restaurants(id,name,subscription_status,seat_limit)`);
+  return { id: u.id, email: u.email, displayName: profile?.display_name || '', role: profile?.role || 'student', memberships };
+}
+
+/** Everything this person may see (the database filters by their access). */
+export const listRecipes = () => authed('/rest/v1/recipes?select=*&order=title');
+
+const toRow = (r) => ({ title: r.title, categories: r.categories || [], body: bodyOf(r) });
+function bodyOf(r) {
+  const { id, title, categories, updated, ...rest } = r;   // keep ings, dir, yq, yu, yr, tags
+  return rest;
+}
+export async function createRecipe(record, extra = {}) {
+  const u = currentUser();
+  const [row] = await authed('/rest/v1/recipes', {
+    method: 'POST', headers: { Prefer: 'return=representation' },
+    body: { owner_id: u.id, scope: 'private', ...toRow(record), ...extra },
+  });
+  return row;
+}
+export async function updateRecipe(id, record) {
+  const [row] = await authed(`/rest/v1/recipes?id=eq.${enc(id)}`, {
+    method: 'PATCH', headers: { Prefer: 'return=representation' }, body: toRow(record),
+  });
+  if (!row) throw new CloudError('You do not have permission to change that recipe.', 403);
+  return row;
+}
+export const deleteRecipe = (id) => authed(`/rest/v1/recipes?id=eq.${enc(id)}`, { method: 'DELETE' });
+export const submitToCommunity = (id) => authed('/rest/v1/rpc/submit_to_community', { method: 'POST', body: { p_recipe: id, p_confirm: true } });
+
+// admin
+export const reviewRecipe = (id, approve, note) => authed(`/rest/v1/recipes?id=eq.${enc(id)}`, {
+  method: 'PATCH', body: { status: approve ? 'approved' : 'declined', review_note: note || null } });
+export const listRestaurants = () => authed('/rest/v1/restaurants?select=*&order=name');
+export const createRestaurant = (name, seatLimit = 3) => authed('/rest/v1/restaurants', {
+  method: 'POST', headers: { Prefer: 'return=representation' }, body: { name, seat_limit: seatLimit } });
+export const updateRestaurant = (id, fields) => authed(`/rest/v1/restaurants?id=eq.${enc(id)}`, { method: 'PATCH', body: fields });
+export const createInvite = (kind, restaurantId = null, memberRole = 'staff', maxUses = 1, days = 14) =>
+  authed('/rest/v1/rpc/create_invite', { method: 'POST', body: { p_kind: kind, p_restaurant: restaurantId, p_member_role: memberRole, p_max_uses: maxUses, p_days: days } });
+export const removeMember = (restaurantId, userId) =>
+  authed('/rest/v1/rpc/remove_member', { method: 'POST', body: { p_restaurant: restaurantId, p_user: userId } });

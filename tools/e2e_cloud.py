@@ -1,0 +1,384 @@
+"""Browser check of the account features against a FAKE in-memory Supabase (the real one is not reachable
+from the test machine). It proves the app's screens and requests behave; it does not prove the real
+database rules, which are tested separately by supabase/test/run.sh.
+
+    python tools/e2e_cloud.py
+"""
+import asyncio
+import json
+import re
+import subprocess
+import sys
+import time
+import uuid
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+from playwright.async_api import async_playwright
+
+ROOT = Path(__file__).resolve().parent.parent
+PORT = 8792
+URL = f"http://127.0.0.1:{PORT}/"
+CORS = {"access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*"}
+results, errors = [], []
+
+
+def check(name, cond, detail=""):
+    results.append((name, bool(cond)))
+    print(("PASS " if cond else "FAIL ") + name + (f"  [{detail}]" if detail and not cond else ""))
+
+
+class Fake:
+    def __init__(self):
+        self.online = True
+        self.users = {}      # email -> dict(pw,id,name,role)
+        self.restaurants = {}
+        self.members = []    # dict(user_id, restaurant_id, member_role)
+        self.invites = {}    # code -> dict(kind, restaurant_id, member_role, uses, max)
+        self.recipes = {}
+        self.add_user("chef@example.com", "adminpass1", "Joe", "admin")
+        self.log = []
+
+    def add_user(self, email, pw, name, role):
+        uid = str(uuid.uuid4())
+        self.users[email] = dict(pw=pw, id=uid, name=name, role=role, email=email)
+        return uid
+
+    def by_token(self, req):
+        tok = req.headers.get("authorization", "").replace("Bearer ", "")
+        return next((u for u in self.users.values() if tok == f"tok-{u['id']}"), None)
+
+    def token_resp(self, u):
+        return {"access_token": f"tok-{u['id']}", "refresh_token": "r", "expires_in": 3600, "user": {"id": u["id"], "email": u["email"]}}
+
+    def visible(self, u):
+        out = []
+        for r in self.recipes.values():
+            mem = any(m["user_id"] == u["id"] for m in self.members if m["restaurant_id"] == r.get("restaurant_id"))
+            active = r.get("restaurant_id") and self.restaurants[r["restaurant_id"]]["subscription_status"] in ("active", "trialing")
+            if (u["role"] == "admin" or r["owner_id"] == u["id"] or (r["scope"] == "community" and r["status"] == "approved")
+                    or (r["scope"] == "restaurant" and mem and active)):
+                out.append(r)
+        return out
+
+    async def handle(self, route):
+        req = route.request
+        if req.method == "OPTIONS":
+            return await route.fulfill(status=204, headers=CORS)
+        if not self.online:
+            return await route.abort()
+        u = urlparse(req.url)
+        path, q = u.path, parse_qs(u.query)
+        body = json.loads(req.post_data) if req.post_data else None
+        self.log.append((req.method, path))
+        user = self.by_token(req)
+
+        def ok(data, status=200):
+            return route.fulfill(status=status, headers={**CORS, "content-type": "application/json"}, body=json.dumps(data))
+
+        def eq(name):
+            v = q.get(name, [None])[0]
+            return v[3:] if v and v.startswith("eq.") else None
+
+        if path == "/auth/v1/token":
+            x = self.users.get((body or {}).get("email"))
+            if not x or x["pw"] != body["password"]:
+                return await ok({"error_description": "Invalid login credentials"}, 400)
+            return await ok(self.token_resp(x))
+        if path == "/auth/v1/signup":
+            code = (body["data"].get("invite_code") or "").upper()
+            inv = self.invites.get(code)
+            if not inv or inv["uses"] >= inv["max"]:
+                return await ok({"message": "Database error saving new user"}, 500)
+            inv["uses"] += 1
+            uid = self.add_user(body["email"], body["password"], body["data"].get("display_name"), "client" if inv["kind"] == "restaurant" else "student")
+            if inv["kind"] == "restaurant":
+                self.members.append(dict(user_id=uid, restaurant_id=inv["restaurant_id"], member_role=inv["member_role"]))
+            return await ok(self.token_resp(self.users[body["email"]]))
+        if path == "/auth/v1/logout":
+            return await ok({})
+        if user is None:
+            return await ok({"message": "JWT expired"}, 401)
+        if path == "/rest/v1/profiles":
+            return await ok([{"display_name": user["name"], "role": user["role"]}])
+        if path == "/rest/v1/restaurant_members":
+            return await ok([{"member_role": m["member_role"], "restaurant": self.restaurants[m["restaurant_id"]]}
+                             for m in self.members if m["user_id"] == user["id"]])
+        if path == "/rest/v1/recipes":
+            if req.method == "GET":
+                return await ok(self.visible(user))
+            if req.method == "POST":
+                private = [r for r in self.recipes.values() if r["owner_id"] == user["id"] and r["scope"] == "private"]
+                if user["role"] != "admin" and len(private) >= 2 and not any(m["user_id"] == user["id"] for m in self.members):
+                    return await ok({"message": "Free plan limit reached (2 recipes)"}, 400)
+                row = {"id": str(uuid.uuid4()), "scope": "private", "status": "approved", "restaurant_id": None, "source_recipe_id": None, "author_name": None, "review_note": None, **body}
+                self.recipes[row["id"]] = row
+                return await ok([row], 201)
+            rid = eq("id")
+            row = self.recipes.get(rid)
+            if req.method == "DELETE":
+                if row and (user["role"] == "admin" or row["owner_id"] == user["id"]):
+                    del self.recipes[rid]
+                return await route.fulfill(status=204, headers=CORS)
+            if req.method == "PATCH":
+                if not row or not (user["role"] == "admin" or (row["owner_id"] == user["id"] and row["scope"] == "private")):
+                    return await ok([])
+                row.update(body)
+                return await ok([row])
+        if path == "/rest/v1/rpc/submit_to_community":
+            src = self.recipes[body["p_recipe"]]
+            row = dict(src, id=str(uuid.uuid4()), scope="community", status="pending", source_recipe_id=src["id"], author_name=user["name"])
+            self.recipes[row["id"]] = row
+            return await ok(row["id"])
+        if path == "/rest/v1/rpc/create_invite":
+            code = "CODE" + uuid.uuid4().hex[:6].upper()
+            self.invites[code] = dict(kind=body["p_kind"], restaurant_id=body["p_restaurant"], member_role=body["p_member_role"], uses=0, max=body["p_max_uses"])
+            return await ok(code)
+        if path == "/rest/v1/restaurants":
+            if req.method == "GET":
+                return await ok(list(self.restaurants.values()))
+            if req.method == "POST":
+                r = {"id": str(uuid.uuid4()), "subscription_status": "inactive", "seat_limit": 3, **body}
+                self.restaurants[r["id"]] = r
+                return await ok([r], 201)
+            if req.method == "PATCH":
+                self.restaurants[eq("id")].update(body)
+                return await route.fulfill(status=204, headers=CORS)
+        return await ok({"message": f"unhandled {req.method} {path}"}, 404)
+
+
+async def new_page(b, fake, w=390, h=844):
+    ctx = await b.new_context(viewport={"width": w, "height": h}, accept_downloads=True)
+    await ctx.route(re.compile(r"https://.*\.supabase\.co/.*"), fake.handle)
+    page = await ctx.new_page()
+    page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    return ctx, page
+
+
+async def sign_in(page, email, pw):
+    await page.goto(URL + "#/settings")
+    await page.wait_for_selector("input[type=email]")
+    await page.fill("input[type=email]", email)
+    await page.fill("input[type=password]", pw)
+    await page.click("button[type=submit]")
+    await page.wait_for_selector("text=Sign out")
+
+
+async def main():
+    server = subprocess.Popen([sys.executable, "-m", "http.server", str(PORT), "--directory", str(ROOT / "web")],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(1)
+    try:
+        return await run()
+    finally:
+        server.terminate()
+
+
+async def run():
+    fake = Fake()
+    async with async_playwright() as p:
+        b = await p.chromium.launch()
+
+        # ---- admin
+        actx, admin = await new_page(b, fake)
+        await admin.goto(URL + "#/settings")
+        await admin.wait_for_selector("input[type=email]")
+        await admin.fill("input[type=email]", "chef@example.com")
+        await admin.fill("input[type=password]", "wrong")
+        await admin.click("button[type=submit]")
+        await admin.wait_for_selector(".note:has-text('Wrong email')")
+        check("wrong password shows a friendly message", True)
+        await admin.fill("input[type=password]", "adminpass1")
+        await admin.click("button[type=submit]")
+        await admin.wait_for_selector("text=Sign out")
+        check("admin sees Admin tools link", await admin.locator("a:has-text('Admin tools')").count() == 1)
+
+        await admin.click("a:has-text('Admin tools')")
+        await admin.wait_for_selector("h1:has-text('Admin tools')")
+        await admin.fill("input[aria-label='New restaurant name']", "Maple Street Grill")
+        await admin.click("button:has-text('Add restaurant')")
+        await admin.wait_for_selector("strong:has-text('Maple Street Grill')")
+        check("admin can add a restaurant", len(fake.restaurants) == 1)
+        rid = next(iter(fake.restaurants))
+        await admin.select_option("select[aria-label='Subscription for Maple Street Grill']", "active")
+        await admin.wait_for_timeout(300)
+        check("admin can mark a restaurant active", fake.restaurants[rid]["subscription_status"] == "active")
+
+        await admin.click("button:has-text('Make a student code')")
+        await admin.wait_for_selector(".codebox .code")
+        student_code = await admin.inner_text(".codebox .code")
+        await admin.click("button:has-text('Make a restaurant code')")
+        await admin.wait_for_function("(c) => document.querySelector('.codebox .code').textContent !== c", arg=student_code)
+        rest_code = await admin.inner_text(".codebox .code")
+        check("invite codes are generated", student_code.startswith("CODE") and rest_code != student_code)
+        fake.recipes["coll1"] = dict(id="coll1", owner_id=fake.users["chef@example.com"]["id"], scope="restaurant", restaurant_id=rid, status="approved",
+                                     title="Maple House Vinaigrette", categories=["Salad dressings"], author_name=None, review_note=None, source_recipe_id=None,
+                                     body=dict(tags=[], yq="2", yu="cups", yr="2 cups", dir="Whisk.", ings=[["1", "1 cup", "cup", "olive oil", ""]]))
+
+        # ---- student
+        sctx, st = await new_page(b, fake)
+        await st.goto(URL + "#/settings")
+        await st.wait_for_selector("button:has-text('Create account')")
+        await st.click("button[role=tab]:has-text('Create account')")
+        await st.fill("input[aria-label='Your name']", "Sam")
+        await st.fill("input[type=email]", "sam@example.com")
+        await st.fill("input[type=password]", "samspass99")
+        await st.fill("input[aria-label='Invite code']", "BADCODE1")
+        await st.click("button[type=submit]")
+        await st.wait_for_selector(".note:has-text('invite code')")
+        check("bad invite code is explained", True)
+        await st.fill("input[aria-label='Invite code']", student_code)
+        await st.click("button[type=submit]")
+        await st.wait_for_selector("text=Sign out")
+        check("student creates an account with a code", "sam@example.com" in fake.users)
+
+        await st.goto(URL + "#/")
+        await st.wait_for_selector(".chips.src")
+        check("source chips appear when signed in", await st.locator(".chips.src .chip").count() >= 4)
+        check("restaurant collection is hidden from a non-member", await st.locator(".rc:has-text('Maple House')").count() == 0)
+
+        async def add_recipe(page, title):
+            await page.goto(URL + "#/new")
+            await page.fill("input[aria-label=Title]", title)
+            await page.fill("input[aria-label=Amount]", "2")
+            await page.fill("input[aria-label=Unit]", "cup")
+            await page.fill("input[aria-label=Ingredient]", "flour")
+            await page.fill("textarea", "Mix.")
+            await page.click("button:has-text('Save')")
+            await page.wait_for_timeout(700)
+
+        await add_recipe(st, "Sam Secret Biscuits")
+        check("new recipe is saved in the account", sum(r["scope"] == "private" for r in fake.recipes.values()) == 1)
+        check("recipe page opens after saving", "Sam Secret Biscuits" in await st.inner_text("h1"))
+        await add_recipe(st, "Sam Second")
+        await add_recipe(st, "Sam Third")
+        check("free limit message is shown, nothing lost silently", await st.locator("h1:has-text('New recipe')").count() == 1
+              and sum(r["scope"] == "private" for r in fake.recipes.values()) == 2)
+
+        await st.goto(URL + "#/")
+        await st.click(".chips.src .chip:has-text('My recipes')")
+        await st.fill("input[type=search]", "Secret")
+        await st.wait_for_timeout(300)
+        check("My recipes filter shows the account recipe", await st.locator(".rc:has-text('Sam Secret Biscuits')").count() == 1)
+        await st.click(".rc:has-text('Sam Secret Biscuits')")
+        await st.wait_for_selector("button:has-text('Share with the Community')")
+        st.once("dialog", lambda d: d.accept())
+        await st.click("button:has-text('Share with the Community')")
+        await st.wait_for_selector("dialog[open]")
+        check("rights wording is shown before sharing", "right to share" in (await st.inner_text("dialog[open]")))
+        await st.click("dialog[open] button:has-text('Share')")
+        await st.wait_for_selector("text=Withdraw from Community")
+        pend = [r for r in fake.recipes.values() if r["scope"] == "community"]
+        check("sharing creates a pending copy", len(pend) == 1 and pend[0]["status"] == "pending" and pend[0]["author_name"] == "Sam")
+
+        # ---- admin approves
+        await admin.reload()
+        await admin.wait_for_selector("text=Sam Secret Biscuits")
+        check("admin sees the submission with the author", await admin.locator("text=Shared by Sam").count() == 1)
+        await admin.click("button:has-text('Approve')")
+        await admin.wait_for_selector("text=Nothing is waiting for approval")
+        check("approval is saved", pend[0]["status"] == "approved")
+
+        # ---- another student sees it in Community
+        s2ctx, s2 = await new_page(b, fake)
+        fake.add_user("pat@example.com", "patspass99", "Pat", "student")
+        await sign_in(s2, "pat@example.com", "patspass99")
+        await s2.goto(URL + "#/")
+        await s2.wait_for_selector(".chips.src")
+        await s2.click(".chips.src .chip:has-text('Community')")
+        await s2.wait_for_selector(".rc:has-text('Sam Secret Biscuits')")
+        check("approved recipe appears in Community with a badge", await s2.locator(".rc:has-text('Sam Secret Biscuits') .badge:has-text('Community')").count() == 1)
+        await s2.click(".rc:has-text('Sam Secret Biscuits')")
+        await s2.wait_for_selector(".credit:has-text('Shared by Sam')")
+        check("author is credited", True)
+        check("others cannot edit a community recipe", await s2.locator("a[aria-label='Edit recipe']").count() == 0)
+        check("others cannot see Sam's private recipes", "Sam Second" not in await (await s2.request.get(URL)).text())
+        await s2.goto(URL + "#/")
+        await s2.fill("input[type=search]", "Sam Second")
+        await s2.wait_for_timeout(300)
+        check("private recipes of others never listed", await s2.locator(".rc").count() == 0)
+
+        # ---- restaurant staff
+        await admin.reload()
+        await admin.wait_for_selector("button:has-text('Make a restaurant code')")
+        await admin.select_option("select[aria-label=Role]", "staff")
+        await admin.click("button:has-text('Make a restaurant code')")
+        await admin.wait_for_selector(".codebox .code")
+        code2 = await admin.inner_text(".codebox .code")
+        rctx, rs = await new_page(b, fake)
+        await rs.goto(URL + "#/settings")
+        await rs.click("button[role=tab]:has-text('Create account')")
+        await rs.fill("input[aria-label='Your name']", "Rae")
+        await rs.fill("input[type=email]", "rae@maple.test")
+        await rs.fill("input[type=password]", "raespass99")
+        await rs.fill("input[aria-label='Invite code']", code2)
+        await rs.click("button[type=submit]")
+        await rs.wait_for_selector("text=Sign out")
+        check("restaurant staff account shows the restaurant and plan", await rs.locator(".stat:has-text('Maple Street Grill')").count() == 1)
+        await rs.goto(URL + "#/")
+        await rs.wait_for_selector(".chips.src")
+        await rs.fill("input[type=search]", "Vinaigrette")
+        await rs.wait_for_timeout(300)
+        check("staff see the restaurant collection", await rs.locator(".rc:has-text('Maple House Vinaigrette') .badge:has-text('Maple Street Grill')").count() == 1)
+        await rs.click(".rc:has-text('Maple House')")
+        await rs.wait_for_selector(".credit:has-text('collection')")
+        check("collection recipes are read only for staff", await rs.locator("a[aria-label='Edit recipe']").count() == 0)
+        await rs.fill("input[aria-label='Multiplier']", "2")
+        await rs.wait_for_timeout(200)
+        check("collection recipe scales", "2" in await rs.inner_text(".ing"))
+
+        # lapsed subscription hides the collection
+        fake.restaurants[rid]["subscription_status"] = "canceled"
+        await rs.goto(URL + "#/")
+        await rs.reload()
+        await rs.wait_for_selector(".rc")
+        await rs.fill("input[type=search]", "Vinaigrette")
+        await rs.wait_for_timeout(500)
+        check("lapsed subscription hides the collection", await rs.locator(".rc:has-text('Maple House')").count() == 0)
+
+        # ---- offline: cached account data still opens
+        fake.online = False
+        await st.goto(URL + "#/")
+        await st.reload()
+        await st.wait_for_selector(".rc")
+        await st.fill("input[type=search]", "Secret")
+        await st.wait_for_timeout(400)
+        check("account recipes open offline from the cache", await st.locator(".rc:has-text('Sam Secret Biscuits')").count() >= 1)
+        fake.online = True
+
+        # ---- withdraw + sign out
+        await st.goto(URL + "#/")
+        await st.fill("input[type=search]", "Secret")
+        await st.wait_for_timeout(300)
+        await st.click(".rc:has-text('Sam Secret Biscuits') >> nth=0")
+        await st.wait_for_selector("button:has-text('Withdraw from Community')")
+        await st.click("button:has-text('Withdraw from Community')")
+        await st.click("dialog[open] button:has-text('Withdraw')")
+        await st.wait_for_selector("button:has-text('Share with the Community')")
+        check("author can withdraw", not any(r["scope"] == "community" for r in fake.recipes.values()))
+        await st.goto(URL + "#/settings")
+        await st.click("button:has-text('Sign out')")
+        await st.wait_for_selector("input[type=email]")
+        await st.goto(URL + "#/")
+        await st.wait_for_selector(".rc")
+        check("signed-out app hides source chips and account recipes", await st.locator(".chips.src:not([hidden])").count() == 0)
+        await st.screenshot(path="/tmp/cloud_signedout.png")
+        check("admin page refuses non-admins", True)
+        await st.goto(URL + "#/admin")
+        await st.wait_for_selector("text=This page is for the administrator")
+
+        # desktop screenshot of admin
+        await admin.set_viewport_size({"width": 1280, "height": 900})
+        await admin.goto(URL + "#/settings")
+        await admin.wait_for_selector("text=Sign out")
+        await admin.screenshot(path="/tmp/cloud_settings_desktop.png")
+        await b.close()
+    real = [e for e in errors if "Failed to load resource" not in e and "net::ERR" not in e]
+    check("no JavaScript errors", not real, real[:3])
+    failed = [n for n, ok in results if not ok]
+    print(f"\n{len(results) - len(failed)}/{len(results)} passed")
+    return 1 if failed else 0
+
+
+sys.exit(asyncio.run(main()))

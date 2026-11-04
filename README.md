@@ -133,4 +133,10 @@ The real database defaults to `~/.local/share/recipe-library/recipes.db` on Linu
   (e.g. "Into eighths") become separate ingredient lines instead of being merged.
 - Ranges like "2-3" are kept as text and are not scaled.
 
-## Built with Claude (Anthropic)
+## Accounts and the hosted database (v0.10)
+
+The phone app can sign in to a Supabase project (see `supabase/README.md`): private account recipes, a
+Community list that the administrator approves, and restaurant collections that are visible only while the
+restaurant's plan is active. Connection details are in `web/js/config.js` (publishable key only). Test the
+screens with `python tools/e2e_cloud.py` (uses a fake in-memory server) and the database rules with
+`bash supabase/test/run.sh`.
