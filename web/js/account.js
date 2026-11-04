@@ -7,7 +7,7 @@ const STATUS_LABEL = { inactive: 'Not subscribed', trialing: 'Trial', active: 'A
 
 function shareText(code) {
   const url = `${location.origin}${location.pathname}#/settings`;
-  return `Join Jones Ridge Recipes: open ${url}, choose Create account, and enter this invite code: ${code}`;
+  return `Join Jones Ridge Recipes: open ${url}, choose New account, and enter this invite code: ${code}`;
 }
 
 function codeBox(ctx, code) {
@@ -50,12 +50,13 @@ export function accountCard(ctx) {
         if (!code.value.trim()) { msg.textContent = 'Enter the invite code you were given.'; return; }
       }
       go.disabled = true;
+      msg.textContent = mode === 'in' ? 'Signing in…' : 'Creating your account…';
       try {
         if (mode === 'in') {
           await cloud.signIn(email.value.trim(), pass.value);
         } else {
           const r = await cloud.signUp({ email: email.value.trim(), password: pass.value, displayName: name.value.trim(), inviteCode: code.value.trim() });
-          if (r === 'confirm-email') { msg.textContent = 'Almost done. Check your email and tap the link to confirm, then sign in here.'; mode = 'in'; go.disabled = false; return; }
+          if (r === 'confirm-email') { msg.textContent = 'Account created. We emailed you a link. Open it to confirm, then come back and sign in. Check your spam folder if it does not arrive.'; go.disabled = false; return; }
         }
         toast('Signed in');
         await ctx.refreshCloud();
@@ -71,7 +72,7 @@ export function accountCard(ctx) {
       h('p', { class: 'muted small' }, 'Sign in to keep recipes in your account, share with the Community, and open your restaurant’s collection. The built-in library works without an account.'),
       h('div', { class: 'seg2', role: 'tablist' },
         h('button', { type: 'button', role: 'tab', 'aria-pressed': String(mode === 'in'), onclick: () => { mode = 'in'; paint(); } }, 'Sign in'),
-        h('button', { type: 'button', role: 'tab', 'aria-pressed': String(mode === 'up'), onclick: () => { mode = 'up'; paint(); } }, 'Create account')),
+        h('button', { type: 'button', role: 'tab', 'aria-pressed': String(mode === 'up'), onclick: () => { mode = 'up'; paint(); } }, 'New account')),
       form);
   }
 

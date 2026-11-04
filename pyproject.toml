@@ -1,6 +1,6 @@
 [project]
 name = "recipe-library"
-version = "0.10.0"
+version = "0.10.1"
 description = "Recipe library with MealMaster import and scaling"
 requires-python = ">=3.9"
 dependencies = []
