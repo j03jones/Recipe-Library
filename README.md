@@ -132,3 +132,5 @@ The real database defaults to `~/.local/share/recipe-library/recipes.db` on Linu
 - Older exports wrap long right-hand items onto a plain line with no dash; those fragments
   (e.g. "Into eighths") become separate ingredient lines instead of being merged.
 - Ranges like "2-3" are kept as text and are not scaled.
+
+## Built with Claude (Anthropic)
