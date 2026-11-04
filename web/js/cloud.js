@@ -109,6 +109,13 @@ export async function signOut() {
   if (s) { try { await call('/auth/v1/logout', { method: 'POST', token: s.access_token }); } catch { /* already signed out locally */ } }
 }
 
+/** Emails a password-reset link. Always looks successful, so it cannot be used to find out who has an account. */
+export async function requestPasswordReset(email) {
+  const back = encodeURIComponent(`${location.origin}${location.pathname}`);
+  try { await call(`/auth/v1/recover?redirect_to=${back}`, { method: 'POST', body: { email } }); }
+  catch (err) { if (err.status === 0 || err.status === 429) throw err; }
+}
+
 export async function changePassword(newPassword) {
   await authed('/auth/v1/user', { method: 'PUT', body: { password: newPassword } });
 }
@@ -169,6 +176,20 @@ export async function updateRecipe(id, record) {
 }
 export const deleteRecipe = (id) => authed(`/rest/v1/recipes?id=eq.${enc(id)}`, { method: 'DELETE' });
 export const submitToCommunity = (id) => authed('/rest/v1/rpc/submit_to_community', { method: 'POST', body: { p_recipe: id, p_confirm: true } });
+
+// per-person data that follows them between devices
+export async function loadUserData() {
+  const u = currentUser();
+  const [row] = await authed(`/rest/v1/user_data?user_id=eq.${enc(u.id)}&select=stars,updated_at`);
+  return row || null;
+}
+export async function saveStars(ids) {
+  const [row] = await authed('/rest/v1/user_data', {
+    method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+    body: { user_id: currentUser().id, stars: ids },
+  });
+  return row;
+}
 
 // admin
 export const reviewRecipe = (id, approve, note) => authed(`/rest/v1/recipes?id=eq.${enc(id)}`, {

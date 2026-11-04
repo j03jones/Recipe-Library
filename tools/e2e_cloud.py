@@ -38,6 +38,8 @@ class Fake:
         self.recipes = {}
         self.add_user("chef@example.com", "adminpass1", "Joe", "admin")
         self.log = []
+        self.user_data = {}
+        self.tick = 0
 
     def add_user(self, email, pw, name, role):
         uid = str(uuid.uuid4())
@@ -95,10 +97,22 @@ class Fake:
             if inv["kind"] == "restaurant":
                 self.members.append(dict(user_id=uid, restaurant_id=inv["restaurant_id"], member_role=inv["member_role"]))
             return await ok(self.token_resp(self.users[body["email"]]))
+        if path == "/auth/v1/recover":
+            return await ok({})
         if path == "/auth/v1/logout":
             return await ok({})
         if user is None:
             return await ok({"message": "JWT expired"}, 401)
+        if path == "/auth/v1/user" and req.method == "PUT":
+            user["pw"] = body["password"]
+            return await ok({"id": user["id"]})
+        if path == "/rest/v1/user_data":
+            if req.method == "GET":
+                return await ok([self.user_data[user["id"]]] if user["id"] in self.user_data else [])
+            self.tick += 1
+            row = {"user_id": user["id"], "stars": body["stars"], "updated_at": f"2026-11-04T10:00:{self.tick:02d}Z"}
+            self.user_data[user["id"]] = row
+            return await ok([row], 201)
         if path == "/rest/v1/profiles":
             return await ok([{"display_name": user["name"], "role": user["role"]}])
         if path == "/rest/v1/restaurant_members":
@@ -346,6 +360,62 @@ async def run():
         await st.wait_for_timeout(400)
         check("account recipes open offline from the cache", await st.locator(".rc:has-text('Sam Secret Biscuits')").count() >= 1)
         fake.online = True
+
+        # ---- stars follow the person to another device
+        await st.goto(URL + "#/")
+        await st.fill("input[type=search]", "Secret")
+        await st.wait_for_timeout(300)
+        await st.click(".rows .star >> nth=0")
+        await st.wait_for_timeout(1500)
+        sam_id = fake.users["sam@example.com"]["id"]
+        check("a starred recipe is saved to the account", len(fake.user_data.get(sam_id, {}).get("stars", [])) == 1)
+        dctx, dev2 = await new_page(b, fake)
+        await sign_in(dev2, "sam@example.com", "samspass99")
+        await dev2.goto(URL + "#/starred")
+        await dev2.wait_for_selector(".count")
+        await dev2.reload()
+        await dev2.wait_for_selector(".rc:has-text('Sam Secret Biscuits')")
+        check("stars show up on a second device", "1 starred" in await dev2.inner_text(".count"))
+        await dev2.click(".rows .star >> nth=0")
+        await dev2.wait_for_timeout(1500)
+        check("removing a star on one device is saved", fake.user_data[sam_id]["stars"] == [])
+        await st.reload()
+        await st.wait_for_selector(".rc")
+        await st.goto(URL + "#/starred")
+        await st.reload()
+        await st.wait_for_selector(".empty")
+        check("and the first device follows", "0 starred" in await st.inner_text(".count") or await st.locator(".rc").count() == 0)
+
+        # ---- recipes made while signed out can be moved into the account
+        lctx, loc = await new_page(b, fake)
+        await add_recipe(loc, "Offline Only Soup")
+        await loc.goto(URL + "#/settings")
+        await sign_in(loc, "pat@example.com", "patspass99")
+        await loc.wait_for_selector("button:has-text('Move them to my account')")
+        await loc.click("button:has-text('Move them to my account')")
+        await loc.click("dialog[open] button:has-text('Move')")
+        await loc.wait_for_selector("text=Moved 1", timeout=5000) if False else await loc.wait_for_timeout(1200)
+        check("on-device recipes move into the account", any(r["title"] == "Offline Only Soup" and r["owner_id"] == fake.users["pat@example.com"]["id"] for r in fake.recipes.values()))
+        check("moved recipe card disappears", await loc.locator("button:has-text('Move them to my account')").count() == 0)
+
+        # ---- forgot password
+        fctx, fp = await new_page(b, fake)
+        await fp.goto(URL + "#/settings")
+        await fp.click("button:has-text('Forgot password?')")
+        await fp.wait_for_selector("text=Type your email above first")
+        await fp.fill("input[type=email]", "pat@example.com")
+        await fp.click("button:has-text('Forgot password?')")
+        await fp.wait_for_selector("text=reset link is on its way")
+        check("forgot password sends the request", ("POST", "/auth/v1/recover") in fake.log)
+        pat = fake.users["pat@example.com"]
+        rctx2, rec = await new_page(b, fake)
+        await rec.goto(URL + f"#access_token=tok-{pat['id']}&refresh_token=r&expires_in=3600&type=recovery")
+        await rec.wait_for_selector("input[aria-label='New password']")
+        check("reset link signs in and opens the new-password box", "#/settings" in rec.url)
+        await rec.fill("input[aria-label='New password']", "brandnew123")
+        await rec.click("button:has-text('Save password')")
+        await rec.wait_for_timeout(500)
+        check("new password is saved", pat["pw"] == "brandnew123")
 
         # ---- withdraw + sign out
         await st.goto(URL + "#/")

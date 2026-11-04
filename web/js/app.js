@@ -5,7 +5,7 @@ import {
 import { fromRecord, fromRow, toRecord } from './model.js';
 import * as store from './store.js';
 import { SECTIONS } from './groups.js';
-import { addStars, copyText, emojiFor, icon, isStarred, starIds, tile, toggleStar } from './ui.js';
+import { addStars, copyText, emojiFor, icon, isStarred, onStarsChange, replaceStars, starIds, tile, toggleStar } from './ui.js';
 import * as cloud from './cloud.js';
 import { accountCard, viewAdmin } from './account.js';
 
@@ -92,6 +92,37 @@ async function refreshCloud() {
     else if (!lib.me) loadCloudCache();         // offline: fall back to what we saved last time
   }
   rebuild();
+  if (lib.me) await syncStars();
+}
+
+// ---- stars follow the person between devices. This device pushes its list whenever it changes.
+const SYNC_KEY = 'recipelib.starsync';
+const readSync = () => { try { return JSON.parse(localStorage.getItem(SYNC_KEY) || '{}'); } catch { return {}; } };
+const writeSync = (v) => { try { localStorage.setItem(SYNC_KEY, JSON.stringify(v)); } catch { /* ignore */ } };
+let pushTimer;
+async function pushStars() {
+  if (!lib.me) return;
+  try {
+    const row = await cloud.saveStars(starIds());
+    writeSync({ uid: lib.me.id, at: row.updated_at, dirty: false });
+  } catch { /* offline: stays marked as unsent and goes out next time */ }
+}
+onStarsChange(() => {
+  if (!lib.me) return;
+  writeSync({ ...readSync(), uid: lib.me.id, dirty: true });
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushStars, 800);
+});
+async function syncStars() {
+  try {
+    const sync = readSync();
+    const row = await cloud.loadUserData();
+    if (sync.uid !== lib.me.id) {                         // first time this device meets this account: combine both
+      if (row) addStars(row.stars);
+      await pushStars();
+    } else if (!row || sync.dirty) await pushStars();     // this device has unsent changes
+    else if (row.updated_at !== sync.at) { replaceStars(row.stars); writeSync({ ...sync, at: row.updated_at }); }
+  } catch { /* offline or not set up: stars simply stay on this device */ }
 }
 
 const restaurantName = (id) => {
@@ -642,6 +673,22 @@ async function viewSettings() {
     } catch { toast('That file is not a Recipe Library backup'); }
   }
 
+  const localNew = mine.filter((m) => !m.deleted && !lib.base.some((b) => b.id === m.id));
+  async function moveToAccount() {
+    if (!await confirmDialog(`Move ${localNew.length} recipe${localNew.length === 1 ? '' : 's'} from this device into your account? They will then be saved online and available on every device you sign in on.`, 'Move')) return;
+    let moved = 0; let problem = null;
+    for (const rec of localNew) {
+      try {
+        const row = await cloud.createRecipe(rec);
+        if (isStarred(rec.id)) addStars([row.id]);
+        await store.remove(rec.id); lib.mine.delete(rec.id); moved++;
+      } catch (err) { problem = err; break; }
+    }
+    await refreshCloud();
+    toast(problem ? `Moved ${moved}. Stopped: ${problem.message}` : `Moved ${moved} recipe${moved === 1 ? '' : 's'} to your account`, problem ? 6000 : 3000);
+    viewSettings();
+  }
+
   function exportBackup() {
     const blob = new Blob([JSON.stringify({ app: 'recipelib', v: 1, records: [...lib.mine.values()], stars: starIds() }, null, 1)], { type: 'application/json' });
     const a = h('a', { href: URL.createObjectURL(blob), download: `recipe-library-backup-${new Date().toISOString().slice(0, 10)}.json` });
@@ -671,6 +718,10 @@ async function viewSettings() {
       !persisted && navigator.storage?.persist && h('button', { onclick: async () => { toast((await navigator.storage.persist()) ? 'Done' : 'The browser declined'); viewSettings(); } }, 'Ask the browser to keep my data'),
       installPrompt && h('button', { class: 'primary', onclick: async () => { installPrompt.prompt(); installPrompt = null; viewSettings(); } }, 'Install app on this device')),
     h('h2', null, 'Your recipes'),
+    lib.me && localNew.length > 0 && h('section', { class: 'card stack' },
+      h('strong', null, `${localNew.length} recipe${localNew.length === 1 ? ' is' : 's are'} only on this device`),
+      h('p', { class: 'muted small' }, 'Move them into your account so they are backed up online and open on your other devices.'),
+      h('button', { class: 'primary', onclick: moveToAccount }, 'Move them to my account')),
     h('section', { class: 'card stack' },
       stat('Added by you', counts.new), stat('Edited built-in recipes', counts.edited), stat('Removed built-in recipes', counts.removed),
       h('p', { class: 'muted small' }, 'Your additions and edits are stored only on this device. Export a backup to move them to another phone or keep a safe copy.'),
@@ -753,6 +804,7 @@ async function boot() {
   });
   route();
   registerWorker();
+  if (linkType === 'recovery') ctx.recovery = true;
   if (linkType) toast(linkType === 'recovery' ? 'Signed in. Choose a new password below.' : 'Email confirmed. You are signed in.', 5000);
   if (cloud.isSignedIn()) {
     await refreshCloud();
@@ -761,13 +813,26 @@ async function boot() {
   }
 }
 
+function showUpdate() {
+  if (document.querySelector('.updatebar')) return;
+  document.body.append(h('div', { class: 'updatebar', role: 'status' },
+    h('span', null, 'A new version is ready.'),
+    h('button', { type: 'button', onclick: () => location.reload() }, 'Update now'),
+    h('button', { type: 'button', class: 'later', 'aria-label': 'Dismiss', onclick: (e) => e.target.closest('.updatebar').remove() }, '×')));
+}
+
 function registerWorker() {
   if (!('serviceWorker' in navigator)) return;
   const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    toast(hadController ? 'App updated. Reload to use the new version.' : 'Ready to use offline', 5000);
+    if (hadController) showUpdate(); else toast('Ready to use offline', 5000);
   });
-  navigator.serviceWorker.register('sw.js').catch((err) => console.warn('Service worker failed:', err));
+  navigator.serviceWorker.register('sw.js').then((reg) => {
+    // look for a newer version now, whenever the app comes back to the front, and hourly
+    const check = () => reg.update().catch(() => {});
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+    setInterval(check, 60 * 60 * 1000);
+  }).catch((err) => console.warn('Service worker failed:', err));
 }
 
 boot();

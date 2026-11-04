@@ -331,3 +331,14 @@ dialog .row { justify-content: flex-end; margin-top: 1rem; }
 .chips.src .chip[aria-pressed=true] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 select { font: inherit; min-height: 2.6rem; border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 0 .6rem; }
 @media print { .credit { display: none; } }
+
+.linkish { border: 0; background: none; color: var(--flame); min-height: 2.4rem; text-decoration: underline; padding: 0; justify-self: start; }
+.updatebar {
+  position: fixed; z-index: 80; left: 50%; transform: translateX(-50%); top: max(.6rem, env(safe-area-inset-top));
+  width: min(32rem, calc(100% - 1.2rem)); display: flex; align-items: center; gap: .6rem;
+  padding: .55rem .6rem .55rem 1rem; border-radius: 99px; background: var(--ink); color: var(--paper); box-shadow: 0 6px 24px rgba(0,0,0,.25);
+}
+.updatebar span { flex: 1; font-family: var(--display); font-weight: 500; }
+.updatebar button { min-height: 2.5rem; border-radius: 99px; border: 0; background: var(--tape); color: var(--tape-fg); padding: 0 1rem; font-family: var(--display); font-weight: 700; }
+.updatebar .later { background: transparent; color: var(--paper); padding: 0 .7rem; font-size: 1.3rem; }
+@media print { .updatebar { display: none; } }

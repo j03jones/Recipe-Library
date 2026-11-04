@@ -38,10 +38,16 @@ export function accountCard(ctx) {
     const name = h('input', { class: 'full', autocomplete: 'given-name', 'aria-label': 'Your name', placeholder: 'Your first name (shown on shared recipes)' });
     const code = h('input', { class: 'full', autocapitalize: 'characters', autocomplete: 'off', 'aria-label': 'Invite code', placeholder: 'Invite code' });
     const msg = h('p', { class: 'note', role: 'status' });
+    const forgot = h('button', { type: 'button', class: 'linkish', onclick: async () => {
+      if (!email.value.trim()) { msg.textContent = 'Type your email above first, then tap “Forgot password?”.'; email.focus(); return; }
+      msg.textContent = 'Sending…';
+      try { await cloud.requestPasswordReset(email.value.trim()); msg.textContent = 'If that email has an account, a reset link is on its way. Check your spam folder too.'; }
+      catch (err) { msg.textContent = err.message; }
+    } }, 'Forgot password?');
     const go = h('button', { class: 'primary', type: 'submit' }, mode === 'in' ? 'Sign in' : 'Create account');
 
     const form = h('form', { class: 'stack', novalidate: true },
-      mode === 'up' && name, email, pass, mode === 'up' && code, go, msg);
+      mode === 'up' && name, email, pass, mode === 'up' && code, go, mode === 'in' && forgot, msg);
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       msg.textContent = '';
@@ -113,6 +119,7 @@ export function accountCard(ctx) {
         h('button', { type: 'button', onclick: changePw }, 'Change password'),
         h('button', { type: 'button', onclick: async () => { await cloud.signOut(); ctx.clearCloud(); toast('Signed out'); ctx.rerender(); } }, 'Sign out')),
       pw);
+    if (ctx.recovery) { ctx.recovery = false; changePw(); }
   }
 
   paint();

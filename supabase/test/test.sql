@@ -179,6 +179,22 @@ select t.denied('signed-out visitors cannot read invites', $$ select * from publ
 select t.denied('signed-out visitors cannot call actions', $$ select public.create_invite('student') $$);
 reset role;
 
+-- ---- per-person data ------------------------------------------------------------
+select t.login(:'c1'); set role authenticated;
+insert into public.user_data(user_id, stars) values (:'c1', '["a","b"]');
+select t.expect('people can save their own stars', t.n($$ select jsonb_array_length(stars) from public.user_data $$) = 2);
+select t.denied('people cannot write someone elses data', format($$ insert into public.user_data(user_id, stars) values (%L, '[]') $$, :'admin_id'));
+reset role;
+select t.login(:'admin_id'); set role authenticated;
+select t.expect('even the admin account cannot read other peoples stars through the app', t.n($$ select count(*) from public.user_data $$) = 0);
+reset role;
+set role anon;
+select t.denied('signed-out visitors cannot read stars', $$ select * from public.user_data $$);
+reset role;
+select t.login(:'c1'); set role authenticated;
+select t.denied('stars must be a list', $$ update public.user_data set stars = '{"a":1}' $$);
+reset role;
+
 -- ---- open sign-up switch ------------------------------------------------------
 update public.app_settings set open_signup = true;
 insert into auth.users(email) values ('walkin@x.test');

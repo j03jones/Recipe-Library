@@ -319,6 +319,29 @@ create policy recipes_delete_own on public.recipes for delete to authenticated
 create policy recipes_admin on public.recipes for all to authenticated
   using (public.is_admin()) with check (public.is_admin());
 
+-- ----------------------------------------------------------------------------- per-person data (stars)
+create table if not exists public.user_data (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  stars jsonb not null default '[]'
+    check (jsonb_typeof(stars) = 'array' and jsonb_array_length(stars) <= 5000),
+  updated_at timestamptz not null default now()
+);
+
+create or replace function public.touch_user_data() returns trigger
+language plpgsql set search_path = public as $$
+begin new.updated_at := now(); return new; end $$;
+
+drop trigger if exists user_data_touch on public.user_data;
+create trigger user_data_touch before insert or update on public.user_data
+  for each row execute function public.touch_user_data();
+
+alter table public.user_data enable row level security;
+drop policy if exists user_data_own on public.user_data;
+create policy user_data_own on public.user_data for all to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
+revoke all on public.user_data from anon;
+revoke execute on function public.touch_user_data() from public, anon;
+
 -- ----------------------------------------------------------------------------- who may call what
 -- Signed-out visitors (the "anon" role) get nothing. Signed-in users get only the actions below.
 revoke all on all tables in schema public from anon;

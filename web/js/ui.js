@@ -88,17 +88,26 @@ function save() {
   try { localStorage.setItem(KEY, JSON.stringify([...stars])); } catch { /* private mode: stars last until reload */ }
 }
 export const isStarred = (id) => load().has(id);
+let changed = () => {};
+/** Called after the star list changes on this device (used to sync it to the account). */
+export const onStarsChange = (fn) => { changed = fn; };
 export function toggleStar(id) {
   const s = load();
   if (s.has(id)) s.delete(id); else s.add(id);
   save();
+  changed();
   return s.has(id);
+}
+export function replaceStars(ids) {
+  stars = new Set(ids.filter((id) => typeof id === 'string'));
+  save();
 }
 export const starIds = () => [...load()];
 export function addStars(ids) {
   const s = load();
   ids.forEach((id) => typeof id === 'string' && s.add(id));
   save();
+  changed();
 }
 
 /** Copy text. Uses the modern clipboard API, and falls back to the older method that also works on pages

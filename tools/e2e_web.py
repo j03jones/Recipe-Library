@@ -209,6 +209,19 @@ async def run():
         await pg2.wait_for_selector(".rc")
         check("stars come back with the backup (removed recipe stays hidden)", "1 starred" in await pg2.inner_text(".count"))
 
+        # a newly published version shows an "Update now" banner
+        sw = ROOT / "web" / "sw.js"
+        original = sw.read_text()
+        try:
+            await page.goto(URL + "#/")
+            await page.wait_for_selector(".rc")
+            sw.write_text(original.replace("const VERSION = 'dev'", "const VERSION = 'e2e-new'"))
+            await page.evaluate("navigator.serviceWorker.getRegistration().then(r => r.update())")
+            await page.wait_for_selector(".updatebar", timeout=15000)
+            check("new version shows an update banner", "Update now" in await page.inner_text(".updatebar"))
+        finally:
+            sw.write_text(original)
+
         # dark mode renders
         ctx3 = await b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, color_scheme="dark")
         pg3 = await ctx3.new_page()

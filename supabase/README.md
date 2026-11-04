@@ -20,6 +20,15 @@ This starts a throwaway local PostgreSQL, loads small stand-ins for Supabase's l
 `schema.sql` and tries to break it (reading other people's recipes, promoting yourself, skipping the
 invite code, and so on). It needs the PostgreSQL server binaries installed.
 
+## Adding things later
+`add_user_data.sql` adds the table that keeps starred recipes with the person's account. Projects created
+before it existed run it once in the SQL Editor (it is safe to run again). New projects get it from `schema.sql`.
+
 ## Not done yet
-The app does not talk to this database yet, there is no admin screen for approvals, and Stripe
-billing (which would set `restaurants.subscription_status`) is not connected.
+Stripe billing (which would set `restaurants.subscription_status`) is not connected.
+
+## Who can see what
+Passwords are stored hashed by Supabase and never visible to anyone. Every table has row-level security, so
+the app's logins can only read what the rules allow. Two honest caveats: the administrator account can read
+every recipe, including private ones (that is how approvals work), and you as the project owner can see
+everything in the Supabase dashboard. Tell students and clients that "private" means private from other users.
