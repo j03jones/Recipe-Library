@@ -47,6 +47,12 @@ invite code, and so on). It needs the PostgreSQL server binaries installed.
 `add_user_data.sql` adds the table that keeps starred recipes with the person's account. Projects created
 before it existed run it once in the SQL Editor (it is safe to run again). New projects get it from `schema.sql`.
 
+`add_admin_lists.sql` adds the **Invite codes** and **People** lists in Admin tools: see every code
+and who used it, cancel a code, see who has joined (and who has not confirmed their email yet), and
+remove someone. Removing a person deletes their account and private recipes; recipes of theirs that
+are already live in Community stay, still credited to them. Existing projects run it once in the SQL
+Editor (safe to run again). New projects get it from `schema.sql`.
+
 ## Not done yet
 Stripe billing (which would set `restaurants.subscription_status`) is not connected.
 
