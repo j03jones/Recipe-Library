@@ -232,6 +232,30 @@ select t.login(:'s1'); set role authenticated;
 select t.expect('students cannot see collection photos', t.n($$ select count(*) from storage.objects where name like '%/gumbo.jpg' $$) = 0);
 reset role;
 
+-- ---- deleting a restaurant --------------------------------------------------------
+select t.login(:'admin_id'); set role authenticated;
+insert into public.restaurants(name, subscription_status) values ('Gamma Grill', 'active');
+select id as r3 from public.restaurants where name='Gamma Grill' \gset
+select public.create_invite('restaurant', :'r3', 'owner', 1, 14) as own3_code \gset
+reset role;
+insert into auth.users(email, raw_user_meta_data) values ('c3@x.test', jsonb_build_object('invite_code', :'own3_code'));
+select id as c3 from auth.users where email='c3@x.test' \gset
+select t.login(:'admin_id'); set role authenticated;
+insert into public.recipes(owner_id, restaurant_id, scope, title, body) values (:'admin_id', :'r3', 'restaurant', 'Gamma Grits', '{}');
+reset role;
+select t.login(:'c3'); set role authenticated;
+delete from public.restaurants where id = :'r3';
+reset role;
+select t.expect('restaurant owners cannot delete their restaurant', t.n(format($$ select count(*) from public.restaurants where id=%L $$, :'r3')) = 1);
+select t.login(:'admin_id'); set role authenticated;
+delete from public.restaurants where id = :'r3';
+reset role;
+select t.expect('admin can delete a restaurant', t.n(format($$ select count(*) from public.restaurants where id=%L $$, :'r3')) = 0);
+select t.expect('its collection goes with it', t.n($$ select count(*) from public.recipes where title='Gamma Grits' $$) = 0);
+select t.expect('its staff lose membership', t.n(format($$ select count(*) from public.restaurant_members where user_id=%L $$, :'c3')) = 0);
+select t.expect('its invite codes go with it', t.n(format($$ select count(*) from public.invites where code=%L $$, :'own3_code')) = 0);
+select t.expect('staff keep their accounts', t.n(format($$ select count(*) from auth.users where id=%L $$, :'c3')) = 1);
+
 -- ---- signed-out visitors ------------------------------------------------------
 set role anon;
 select t.denied('signed-out visitors cannot read recipes', $$ select * from public.recipes $$);

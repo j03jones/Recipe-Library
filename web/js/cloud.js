@@ -203,6 +203,11 @@ export const reviewRecipe = (id, approve, note) => authed(`/rest/v1/recipes?id=e
 export const listRestaurants = () => authed('/rest/v1/restaurants?select=*&order=name');
 export const createRestaurant = (name, seatLimit = 3) => authed('/rest/v1/restaurants', {
   method: 'POST', headers: { Prefer: 'return=representation' }, body: { name, seat_limit: seatLimit } });
+export async function deleteRestaurant(id) {
+  const rows = await authed(`/rest/v1/restaurants?id=eq.${enc(id)}`, { method: 'DELETE', headers: { Prefer: 'return=representation' } });
+  if (!rows || !rows.length) throw new CloudError('That restaurant could not be deleted. Only the admin can delete restaurants.', 403);
+}
+export const restaurantMembers = (id) => authed(`/rest/v1/restaurant_members?restaurant_id=eq.${enc(id)}&select=user_id,member_role`);
 export const updateRestaurant = (id, fields) => authed(`/rest/v1/restaurants?id=eq.${enc(id)}`, { method: 'PATCH', body: fields });
 export const createInvite = (kind, restaurantId = null, memberRole = 'staff', maxUses = 1, days = 14) =>
   authed('/rest/v1/rpc/create_invite', { method: 'POST', body: { p_kind: kind, p_restaurant: restaurantId, p_member_role: memberRole, p_max_uses: maxUses, p_days: days } });
