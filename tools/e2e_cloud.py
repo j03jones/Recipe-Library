@@ -141,8 +141,15 @@ class Fake:
                     return await ok([])
                 row.update(body)
                 return await ok([row])
+        if path == "/functions/v1/import-recipe":   # made-up page; the real function reads the page's schema.org block
+            return await ok({"url": body["url"], "site": "", "recipe": {
+                "@type": "Recipe", "name": "Test Lentil Soup", "author": {"name": "Pat Example"},
+                "recipeYield": ["4", "4 bowls"], "recipeIngredient": ["1 1/2 cups lentils", "½ tsp salt"],
+                "recipeInstructions": [{"@type": "HowToStep", "text": "Simmer."}, {"@type": "HowToStep", "text": "Serve."}]}})
         if path == "/rest/v1/rpc/submit_to_community":
             src = self.recipes[body["p_recipe"]]
+            if (src.get("body") or {}).get("src", {}).get("url"):
+                return await ok({"message": "This recipe came from another website, so it stays private."}, 400)
             row = dict(src, id=str(uuid.uuid4()), scope="community", status="pending", source_recipe_id=src["id"], author_name=user["name"])
             self.recipes[row["id"]] = row
             return await ok(row["id"])
@@ -446,6 +453,40 @@ async def run():
         check("admin page refuses non-admins", True)
         await st.goto(URL + "#/admin")
         await st.wait_for_selector("text=This page is for the administrator")
+
+        # ---- vegan links and import from a web page (admin has no free-plan limit)
+        await admin.goto(URL + "#/")
+        await admin.goto(URL + "#/links/noracooks")
+        await admin.wait_for_selector("h1:has-text('Nora Cooks')")
+        links = await admin.eval_on_selector_all(".rows a.rc", "els => els.map(a => [a.href, a.target, a.rel])")
+        check("Nora Cooks list links out to her site in a new tab",
+              len(links) > 40 and all(h.startswith("https://www.noracooks.com/?s=") and t == "_blank" and "noopener" in r for h, t, r in links))
+        check("Nora Cooks list credits her", await admin.locator("text=These recipes belong to Nora Taylor").count() == 1)
+        await admin.fill("input[type=search]", "lasagna")
+        await admin.wait_for_timeout(200)
+        check("Nora Cooks list can be searched", await admin.locator(".rows a.rc").count() == 1)
+        await admin.goto(URL + "#/new")
+        check("Add page offers import from a web page", await admin.locator("a:has-text('Import a recipe from a web page')").count() == 1)
+        await admin.click("a:has-text('Import a recipe from a web page')")
+        await admin.fill("input[aria-label='Recipe page address']", "example.com/test-lentil-soup/")
+        await admin.click("button:has-text('Get recipe')")
+        await admin.wait_for_selector("h1:has-text('Check and save')")
+        check("imported recipe opens in the editor with the credit filled in",
+              await admin.input_value("input[aria-label='Recipe by']") == "Pat Example"
+              and await admin.input_value("input[aria-label='Link to the original']") == "https://example.com/test-lentil-soup/"
+              and await admin.input_value("input[aria-label=Title]") == "Test Lentil Soup")
+        await admin.click("button:has-text('Save')")
+        await admin.wait_for_selector(".srccredit")
+        saved = [r for r in fake.recipes.values() if r["title"] == "Test Lentil Soup"]
+        check("imported recipe is saved privately with its credit",
+              len(saved) == 1 and saved[0]["scope"] == "private" and saved[0]["body"]["src"]["author"] == "Pat Example")
+        check("recipe page shows the credit and a link to the original",
+              "Recipe by Pat Example" in await admin.inner_text(".srccredit")
+              and await admin.get_attribute(".srccredit a", "href") == "https://example.com/test-lentil-soup/")
+        check("imported recipe cannot be shared to Community",
+              await admin.locator("button:has-text('Share with the Community')").count() == 0
+              and await admin.locator("text=stays in your private recipes").count() == 1)
+        await admin.screenshot(path="/tmp/cloud_imported.png", full_page=True)
 
         # desktop screenshot of admin
         await admin.set_viewport_size({"width": 1280, "height": 900})

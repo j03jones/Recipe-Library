@@ -355,3 +355,13 @@ select { font: inherit; min-height: 2.6rem; border-radius: 12px; border: 1px sol
 .avatar.empty { display: inline-grid; place-items: center; font-family: var(--display); font-weight: 700; font-size: 1rem; color: var(--muted); }
 .avatar.sm.empty { font-size: .7rem; }
 .credit { display: flex; align-items: center; }
+
+/* credit for recipes from other websites (printed too) */
+.srccredit { display: flex; flex-wrap: wrap; gap: .3rem .8rem; align-items: baseline; margin: .2rem 0 .9rem; padding: .55rem .8rem;
+  border-radius: var(--radius); background: var(--flame-soft); font-size: .92rem; }
+.srccredit span { font-weight: 600; }
+.promo { display: flex; gap: .8rem; align-items: center; margin: .6rem 0; text-decoration: none; color: inherit; }
+.promo strong { display: block; }
+.linkbtn { display: inline-block; padding: .55rem .9rem; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--card); text-decoration: none; color: inherit; font-family: var(--display); font-weight: 500; text-align: center; }
+@media print { .srccredit a::after { content: " " attr(href); } }

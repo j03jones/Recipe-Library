@@ -95,6 +95,9 @@ update public.restaurants set subscription_status='active' where id=:'r1';
 select t.login(:'c1'); set role authenticated;
 insert into public.recipes(owner_id, scope, title, body) select :'c1', 'private', 'Client ' || g, '{}' from generate_series(1, 5) g;
 select t.expect('paying clients are not held to the free limit', t.n($$ select count(*) from public.recipes where owner_id = auth.uid() and scope='private' $$) = 5);
+insert into public.recipes(owner_id, scope, title, body) values (:'c1', 'private', 'Imported dish', '{"src": {"author": "Someone Else", "name": "A Blog", "url": "https://example.com/dish/"}}');
+select id as imported1 from public.recipes where title='Imported dish' \gset
+select t.denied('recipes imported from other websites cannot go to Community', format($$ select public.submit_to_community(%L, true) $$, :'imported1'));
 reset role;
 
 -- ---- sharing and approval -----------------------------------------------------

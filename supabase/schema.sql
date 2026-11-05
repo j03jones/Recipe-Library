@@ -524,6 +524,9 @@ begin
   end if;
   select * into r from public.recipes where id = p_recipe and owner_id = auth.uid() and scope = 'private';
   if not found then raise exception 'Recipe not found.'; end if;
+  if coalesce(r.body -> 'src' ->> 'url', '') <> '' or coalesce(r.body -> 'src' ->> 'author', '') <> '' then
+    raise exception 'This recipe came from another website, so it stays private. Share a link to the original instead.';
+  end if;
   insert into public.recipes (owner_id, scope, status, title, categories, body, source_recipe_id, author_name, photo)
   values (auth.uid(), 'community', 'pending', r.title, r.categories, r.body, r.id,
           coalesce((select nullif(display_name, '') from public.profiles where id = auth.uid()), 'A chef'), r.photo)

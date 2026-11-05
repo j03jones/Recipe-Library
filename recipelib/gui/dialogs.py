@@ -54,10 +54,20 @@ class RecipeEditor(QDialog):
         self.yield_edit = QLineEdit()
         self.yield_edit.setPlaceholderText("e.g. 4 servings, 24 cookies")
 
+        self.author_edit = QLineEdit()
+        self.author_edit.setPlaceholderText("Who wrote the recipe, e.g. Nora Taylor (leave blank if it's yours)")
+        self.site_edit = QLineEdit()
+        self.site_edit.setPlaceholderText("Website, book or person it came from, e.g. Nora Cooks")
+        self.url_edit = QLineEdit()
+        self.url_edit.setPlaceholderText("Link to the original, e.g. https://...")
+
         form = QFormLayout()
         form.addRow("Title:", self.title_edit)
         form.addRow("Categories:", self.categories_edit)
         form.addRow("Yield:", self.yield_edit)
+        form.addRow("Recipe by:", self.author_edit)
+        form.addRow("From:", self.site_edit)
+        form.addRow("Original link:", self.url_edit)
 
         self.table = QTableWidget(0, len(COLUMNS))
         self.table.setHorizontalHeaderLabels(COLUMNS)
@@ -159,6 +169,9 @@ class RecipeEditor(QDialog):
         self.categories_edit.setText(", ".join(recipe.categories))
         self.yield_edit.setText(format_yield(recipe) or recipe.yield_raw)
         self.directions_edit.setPlainText(recipe.directions)
+        self.author_edit.setText(recipe.source_author)
+        self.site_edit.setText(recipe.source_name)
+        self.url_edit.setText(recipe.source_url)
         for ing in recipe.ingredients:
             row = self.table.rowCount()
             self.table.insertRow(row)
@@ -166,7 +179,7 @@ class RecipeEditor(QDialog):
 
     def recipe(self) -> Recipe:
         ingredients = [ingredient_from_fields(a, u, i, g) for a, u, i, g in self._read_rows()]
-        return recipe_from_fields(
+        r = recipe_from_fields(
             self.title_edit.text(),
             self.categories_edit.text(),
             self.yield_edit.text(),
@@ -175,6 +188,10 @@ class RecipeEditor(QDialog):
             recipe_id=self._recipe_id,
             tags=self._tags,
         )
+        r.source_author = self.author_edit.text().strip()
+        r.source_name = self.site_edit.text().strip()
+        r.source_url = self.url_edit.text().strip()
+        return r
 
     def accept(self) -> None:
         if not self.title_edit.text().strip():
@@ -338,3 +355,72 @@ class DuplicatesDialog(QDialog):
             return
         duplicates.ignore_group(self.db, g.ids)
         self._remove_current()
+
+
+class LinksDialog(QDialog):
+    """Recipes from an outside author's website: titles only, each opening on their own site."""
+
+    def __init__(self, collection: dict, parent=None, on_import=None):
+        super().__init__(parent)
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        from ..link_data import link_for
+
+        self._open = lambda url: QDesktopServices.openUrl(QUrl(url))
+        self.setWindowTitle(f"Vegan recipes from {collection['site']}")
+        self.resize(560, 640)
+
+        intro = QLabel(
+            f"<b>{collection['site']}</b>, recipes by <b>{collection['author']}</b>.<br>"
+            "Double-click a recipe to open it on her website. To keep one you cook often, open it, "
+            "copy its address and use <i>File &gt; Import recipe from a web page</i>. It is saved to "
+            "your own library with her name and a link back.")
+        intro.setWordWrap(True)
+        intro.setTextFormat(Qt.TextFormat.RichText)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Filter")
+        self.search.setClearButtonEnabled(True)
+        self.list = QListWidget()
+        self._items = []
+        for section, titles in collection["sections"]:
+            head = QListWidgetItem(section.upper())
+            head.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.list.addItem(head)
+            for t in titles:
+                item = QListWidgetItem("    " + t)
+                item.setData(Qt.ItemDataRole.UserRole, link_for(collection, t))
+                self.list.addItem(item)
+                self._items.append((item, t.lower()))
+        self.list.itemDoubleClicked.connect(self._activate)
+        self.search.textChanged.connect(self._filter)
+
+        open_btn = QPushButton("Open on her website")
+        open_btn.clicked.connect(lambda: self._activate(self.list.currentItem()))
+        site_btn = QPushButton(f"Browse all of {collection['site']}")
+        site_btn.clicked.connect(lambda: self._open(collection["home"]))
+        buttons = QHBoxLayout()
+        buttons.addWidget(open_btn)
+        buttons.addWidget(site_btn)
+        if on_import is not None:
+            imp = QPushButton("Import from a link...")
+            imp.clicked.connect(lambda: (self.accept(), on_import()))
+            buttons.addWidget(imp)
+        buttons.addStretch(1)
+        close = QPushButton("Close")
+        close.clicked.connect(self.accept)
+        buttons.addWidget(close)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(intro)
+        layout.addWidget(self.search)
+        layout.addWidget(self.list, 1)
+        layout.addLayout(buttons)
+
+    def _activate(self, item) -> None:
+        if item is not None and item.data(Qt.ItemDataRole.UserRole):
+            self._open(item.data(Qt.ItemDataRole.UserRole))
+
+    def _filter(self, text: str) -> None:
+        t = text.strip().lower()
+        for item, title in self._items:
+            item.setHidden(bool(t) and t not in title)

@@ -18,7 +18,7 @@ from fractions import Fraction
 
 from . import categories, duplicates
 from .db import RecipeDB, default_db_path
-from .formatting import recipe_to_text
+from .formatting import credit_line, recipe_to_text
 from .mealmaster import parse_file
 from .scaling import scale_recipe
 
@@ -28,6 +28,8 @@ def main(argv=None) -> int:
     ap.add_argument("--db", default=str(default_db_path()), help="database file")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("import"); p.add_argument("files", nargs="+")
+    p = sub.add_parser("import-url", help="save one recipe from a web page, with credit to its author")
+    p.add_argument("url")
     p = sub.add_parser("regroup")
     g2 = p.add_mutually_exclusive_group()
     g2.add_argument("--preview", action="store_true"); g2.add_argument("--restore", action="store_true")
@@ -52,6 +54,18 @@ def main(argv=None) -> int:
                       f"{len(summary.skipped_duplicates)} duplicates skipped")
                 for w in res.warnings:
                     print("  warning:", w)
+        elif args.cmd == "import-url":
+            from . import webimport
+            try:
+                recipe = webimport.fetch_recipe(args.url)
+            except webimport.ImportError_ as e:
+                print(e, file=sys.stderr)
+                return 1
+            if db.find_duplicate(recipe) is not None:
+                print(f"Already in your library: {recipe.title}")
+                return 0
+            rid = db.add_recipe(recipe)
+            print(f"Added {rid}: {recipe.title}  ({credit_line(recipe) or 'no credit found'})")
         elif args.cmd == "regroup":
             if args.preview:
                 print(categories.report(db.light_recipes()))

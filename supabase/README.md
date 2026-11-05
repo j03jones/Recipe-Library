@@ -68,3 +68,16 @@ Passwords are stored hashed by Supabase and never visible to anyone. Every table
 the app's logins can only read what the rules allow. Two honest caveats: the administrator account can read
 every recipe, including private ones (that is how approvals work), and you as the project owner can see
 everything in the Supabase dashboard. Tell students and clients that "private" means private from other users.
+
+`add_source_credit.sql` keeps recipes imported from other websites (they carry a credit and a link to the
+original) out of Community. Run it after `add_photos.sql`. Existing projects run it once in the SQL
+Editor (safe to run again). New projects get it from `schema.sql`.
+
+## Import from a web page (edge function)
+The phone app's "Import a recipe from a web page" needs the `import-recipe` function. It reads the one
+page a signed-in person asks for and returns only its schema.org Recipe block. Nothing is stored.
+
+    supabase functions deploy import-recipe --project-ref <your project ref>
+
+Keep "Verify JWT" switched on so only signed-in people can use it.
+

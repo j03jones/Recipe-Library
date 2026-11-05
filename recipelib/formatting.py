@@ -23,8 +23,21 @@ def format_yield(recipe: Recipe) -> str:
     return recipe.yield_raw
 
 
+def credit_line(recipe: Recipe) -> str:
+    """'Recipe by Nora Taylor, Nora Cooks' (whichever parts are known), or ''."""
+    who = [p for p in (recipe.source_author, recipe.source_name) if p]
+    if len(who) == 2 and who[0].lower() == who[1].lower():
+        who = who[:1]
+    return ("Recipe by " + ", ".join(who)) if who else ""
+
+
 def recipe_to_text(recipe: Recipe) -> str:
     lines = [recipe.title, "=" * len(recipe.title)]
+    credit = credit_line(recipe)
+    if credit:
+        lines.append(credit)
+    if recipe.source_url:
+        lines.append("Original: " + recipe.source_url)
     if recipe.categories:
         lines.append("Categories: " + ", ".join(recipe.categories))
     y = format_yield(recipe)
