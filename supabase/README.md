@@ -53,6 +53,13 @@ remove someone. Removing a person deletes their account and private recipes; rec
 are already live in Community stay, still credited to them. Existing projects run it once in the SQL
 Editor (safe to run again). New projects get it from `schema.sql`.
 
+`add_photos.sql` adds dish photos and profile photos. It creates a private Storage bucket called
+`photos` and the rules for it: a dish photo is visible to whoever can see the recipe (so Community
+photos appear once you approve the recipe), photos on built-in library recipes are visible only to
+the person who took them, and profile photos are visible to anyone signed in. The app shrinks photos
+on the phone to about 200 KB before uploading. Existing projects run it once in the SQL Editor
+(safe to run again). New projects get it from `schema.sql`.
+
 ## Not done yet
 Stripe billing (which would set `restaurants.subscription_status`) is not connected.
 

@@ -5,7 +5,7 @@ const VERSION = 'dev';
 const CACHE = `recipelib-${VERSION}`;
 const ASSETS = [
   './', 'index.html', 'style.css', 'manifest.webmanifest',
-  'js/app.js', 'js/units.js', 'js/unitdata.js', 'js/groups.js', 'js/model.js', 'js/store.js', 'js/ui.js', 'js/config.js', 'js/cloud.js', 'js/account.js',
+  'js/app.js', 'js/units.js', 'js/unitdata.js', 'js/groups.js', 'js/model.js', 'js/store.js', 'js/ui.js', 'js/config.js', 'js/cloud.js', 'js/account.js', 'js/photos.js',
   'fonts/poppins-Medium.woff', 'fonts/poppins-Bold.woff',
   'data/recipes.json',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',

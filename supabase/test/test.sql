@@ -172,6 +172,66 @@ select t.login(:'st1'); set role authenticated;
 select t.expect('removed staff lose access', t.n($$ select count(*) from public.recipes where scope='restaurant' $$) = 0);
 reset role;
 
+-- ---- photos -------------------------------------------------------------------
+-- uploads: only into your own folders
+select t.login(:'s1'); set role authenticated;
+insert into storage.objects(bucket_id, name) values ('photos', 'recipes/' || :'s1' || '/soup.jpg');
+insert into storage.objects(bucket_id, name) values ('photos', 'library/' || :'s1' || '/lib.jpg');
+insert into storage.objects(bucket_id, name) values ('photos', 'avatars/' || :'s1' || '/me.jpg');
+select t.denied('students cannot upload into someone else''s folder', format($$ insert into storage.objects(bucket_id, name) values ('photos', 'recipes/%s/x.jpg') $$, :'s2'));
+select t.denied('students cannot upload outside the photo folders', $$ insert into storage.objects(bucket_id, name) values ('photos', 'other/x.jpg') $$);
+update public.recipes set photo = 'recipes/' || :'s1' || '/soup.jpg' where id = :'sam1';
+select t.expect('a student can put a photo on their own recipe', (select photo from public.recipes where id = :'sam1') like 'recipes/%/soup.jpg');
+update public.profiles set avatar = 'avatars/' || :'s1' || '/me.jpg' where id = :'s1';
+reset role;
+select t.login(:'s2'); set role authenticated;
+insert into storage.objects(bucket_id, name) values ('photos', 'recipes/' || :'s2' || '/mine.jpg');
+insert into public.recipes(owner_id, scope, title, body) values (:'s2', 'private', 'Sue Stew', '{}');
+select t.denied('a recipe cannot point at someone else''s photo',
+  format($$ update public.recipes set photo = 'recipes/%s/soup.jpg' where title = 'Sue Stew' $$, :'s1'));
+select t.expect('other students cannot see a private recipe photo', t.n($$ select count(*) from storage.objects where name like '%/soup.jpg' $$) = 0);
+select t.expect('other students cannot see someone''s library photos', t.n($$ select count(*) from storage.objects where name like 'library/%' $$) = 0);
+select t.expect('signed-in people can see profile photos', t.n($$ select count(*) from storage.objects where name like 'avatars/%' $$) = 1);
+delete from storage.objects where name like '%/soup.jpg' or name like 'avatars/%';
+reset role;
+select t.expect('people cannot delete someone else''s photos', t.n($$ select count(*) from storage.objects where name like '%/soup.jpg' or name like 'avatars/%' $$) = 2);
+set role anon;
+select t.expect('signed-out visitors cannot see photos', t.n($$ select count(*) from storage.objects $$) = 0);
+reset role;
+
+-- sharing carries the photo; it becomes visible to others once approved
+select t.login(:'s1'); set role authenticated;
+select public.submit_to_community(:'sam1', true) as sub2 \gset
+select t.expect('the shared copy keeps the photo', (select photo from public.recipes where id = :'sub2') like 'recipes/%/soup.jpg');
+reset role;
+select t.login(:'s2'); set role authenticated;
+select t.expect('a pending recipe''s photo stays hidden', t.n($$ select count(*) from storage.objects where name like '%/soup.jpg' $$) = 0);
+reset role;
+select t.login(:'admin_id'); set role authenticated;
+update public.recipes set status = 'approved' where id = :'sub2';
+reset role;
+select t.login(:'s2'); set role authenticated;
+select t.expect('an approved Community photo is visible to everyone signed in', t.n($$ select count(*) from storage.objects where name like '%/soup.jpg' $$) = 1);
+select t.expect('Community shows the author''s profile photo', (select avatar from public.community_avatars() where id = :'s1') like 'avatars/%');
+select t.expect('library photos stay private even then', t.n($$ select count(*) from storage.objects where name like 'library/%' $$) = 0);
+reset role;
+
+-- restaurant collections: photos follow the collection's access
+select t.login(:'admin_id'); set role authenticated;
+insert into storage.objects(bucket_id, name) values ('photos', 'recipes/' || :'admin_id' || '/gumbo.jpg');
+update public.recipes set photo = 'recipes/' || :'admin_id' || '/gumbo.jpg' where title = 'Alpha House Gumbo';
+select t.expect('admin can see every photo', t.n($$ select count(*) from storage.objects $$) = 5);
+reset role;
+select t.login(:'c1'); set role authenticated;
+select t.expect('active restaurant staff see their collection''s photos', t.n($$ select count(*) from storage.objects where name like '%/gumbo.jpg' $$) = 1);
+reset role;
+select t.login(:'c2'); set role authenticated;
+select t.expect('other restaurants cannot see them', t.n($$ select count(*) from storage.objects where name like '%/gumbo.jpg' $$) = 0);
+reset role;
+select t.login(:'s1'); set role authenticated;
+select t.expect('students cannot see collection photos', t.n($$ select count(*) from storage.objects where name like '%/gumbo.jpg' $$) = 0);
+reset role;
+
 -- ---- signed-out visitors ------------------------------------------------------
 set role anon;
 select t.denied('signed-out visitors cannot read recipes', $$ select * from public.recipes $$);
