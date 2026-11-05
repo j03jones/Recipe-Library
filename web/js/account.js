@@ -2,6 +2,18 @@
 // Receives `ctx` from app.js so it can reuse the app's helpers without importing the whole app.
 import * as cloud from './cloud.js';
 import { copyText } from './ui.js';
+import * as photos from './photos.js';
+
+const initials = (name) => (name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+/** A round profile photo, or the person's initials when they have none. */
+export function avatarEl(path, name, small = false) {
+  if (path) return photos.photoImg(path, { class: small ? 'avatar sm' : 'avatar', alt: '' });
+  const el = document.createElement('span');
+  el.className = small ? 'avatar sm empty' : 'avatar empty';
+  el.setAttribute('aria-hidden', 'true');
+  el.textContent = initials(name);
+  return el;
+}
 
 const STATUSES = ['inactive', 'trialing', 'active', 'past_due', 'canceled'];
 const STATUS_LABEL = { inactive: 'Not subscribed', trialing: 'Trial', active: 'Active', past_due: 'Payment overdue', canceled: 'Canceled' };
@@ -101,8 +113,29 @@ export function accountCard(ctx) {
       a.focus();
     };
 
+    const changeAvatar = async () => {
+      const file = await photos.pickPhoto();
+      if (!file) return;
+      toast('Saving photo…', 1500);
+      try {
+        const old = me.avatar;
+        const path = await photos.upload('avatars', file, 400);
+        try { await cloud.setAvatar(path); } catch (err) { await photos.discard([path]); throw err; }
+        if (old) await photos.discard([old]);
+        await ctx.refreshCloud(); toast('Profile photo saved'); paint();
+      } catch (err) { toast(err.message, 4500); }
+    };
+    const removeAvatar = async () => {
+      if (!await ctx.confirmDialog('Remove your profile photo?', 'Remove', true)) return;
+      try { const old = me.avatar; await cloud.setAvatar(null); await photos.discard([old]); await ctx.refreshCloud(); toast('Profile photo removed'); paint(); }
+      catch (err) { toast(err.message, 4500); }
+    };
     fill(card,
       h('strong', null, 'Account'),
+      me && h('div', { class: 'row' },
+        avatarEl(me.avatar, me.displayName || user?.email),
+        h('button', { type: 'button', onclick: changeAvatar }, me.avatar ? 'Change photo' : 'Add a profile photo'),
+        me.avatar && h('button', { type: 'button', class: 'danger', onclick: removeAvatar }, 'Remove')),
       h('div', { class: 'stat' }, h('span', null, me?.displayName || 'Signed in'), h('strong', null, me ? ({ admin: 'Admin', client: 'Restaurant', student: 'Student' }[me.role] || me.role) : '')),
       h('p', { class: 'muted small' }, user?.email || ''),
       (me?.memberships || []).filter((m) => m.restaurant).map((m) => h('div', { class: 'stat' },
@@ -202,6 +235,7 @@ function peopleSection(ctx) {
   const { h, fill, toast } = ctx;
   const el = h('div', { class: 'stack' }, h('p', { class: 'muted small' }, 'Loading people…'));
   let people = [];
+  let avatars = {};
 
   const kind = h('select', { 'aria-label': 'Show' },
     h('option', { value: 'student' }, 'Students'), h('option', { value: 'client' }, 'Restaurant staff'), h('option', { value: 'all' }, 'Everyone'));
@@ -217,10 +251,17 @@ function peopleSection(ctx) {
       const n = Number(p.private_recipes) || 0;
       const msg = `Remove ${p.display_name || p.email} (${p.email})? Their account${n ? ` and ${plural(n, 'private recipe')}` : ''} will be deleted. Recipes of theirs already in Community stay there. This cannot be undone.`;
       if (!await ctx.confirmDialog(msg, 'Remove', true)) return;
-      try { await cloud.removePerson(p.id); toast('Removed'); await reload(); } catch (err) { toast(err.message, 5000); }
+      try { await cloud.removePerson(p.id); toast('Removed'); } catch (err) { toast(err.message, 5000); return; }
+      await reload();
+      try {   // tidy their photo files, keeping any that an approved Community recipe still shows
+        const keep = new Set((await cloud.listRecipes()).map((x) => x.photo).filter(Boolean));
+        const files = (await Promise.all(['avatars', 'library', 'recipes'].map((f) => cloud.listPhotos(`${f}/${p.id}`).catch(() => [])))).flat();
+        await photos.discard(files.filter((f) => !keep.has(f)));
+      } catch { /* a leftover file only costs a little storage */ }
     } }, 'Remove');
     return h('div', { class: 'card stack' },
-      h('div', null, h('strong', null, p.display_name || p.email), h('span', { class: 'badge' }, ROLE_TEXT[p.role] || p.role)),
+      h('div', { class: 'row' }, avatarEl(avatars[p.id], p.display_name || p.email, true),
+        h('strong', null, p.display_name || p.email), h('span', { class: 'badge', style: 'margin-left:0' }, ROLE_TEXT[p.role] || p.role)),
       h('p', { class: 'small', style: 'overflow-wrap:anywhere' }, p.email),
       p.restaurants.length ? h('p', { class: 'small' }, p.restaurants.join(', ')) : null,
       p.email_confirmed ? null : h('p', { class: 'small', style: 'color:var(--danger)' }, 'Has not confirmed their email yet. Ask them to check spam for the email from Jones Ridge Kitchen.'),
@@ -239,6 +280,7 @@ function peopleSection(ctx) {
   search.addEventListener('input', paint);
 
   const reload = async () => {
+    try { avatars = Object.fromEntries((await cloud.listAvatars()).map((a) => [a.id, a.avatar])); } catch { avatars = {}; }
     try { people = await cloud.listPeople(); } catch (err) {
       fill(el, h('p', { class: 'muted small' }, `Could not load people: ${err.message}`));
       return;
