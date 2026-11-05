@@ -342,3 +342,14 @@ select { font: inherit; min-height: 2.6rem; border-radius: 12px; border: 1px sol
 .updatebar button { min-height: 2.5rem; border-radius: 99px; border: 0; background: var(--tape); color: var(--tape-fg); padding: 0 1rem; font-family: var(--display); font-weight: 700; }
 .updatebar .later { background: transparent; color: var(--paper); padding: 0 .7rem; font-size: 1.3rem; }
 @media print { .updatebar { display: none; } }
+
+/* photos */
+.photo { display: flex; flex-direction: column; gap: .6rem; margin: .4rem 0 1rem; }
+.photo img.dish { width: 100%; max-height: 26rem; aspect-ratio: 4 / 3; object-fit: cover; border-radius: var(--radius); background: var(--line); }
+.addphoto { display: flex; align-items: center; justify-content: center; gap: .5rem; width: 100%; min-height: 4.5rem; border: 2px dashed var(--line); border-radius: var(--radius); background: transparent; color: var(--muted); }
+.tile.pic { background-size: cover; background-position: center; }
+.avatar { width: 3rem; height: 3rem; border-radius: 50%; object-fit: cover; flex: none; background: var(--line); }
+.avatar.sm { width: 1.7rem; height: 1.7rem; vertical-align: middle; margin-right: .4rem; }
+.avatar.empty { display: inline-grid; place-items: center; font-family: var(--display); font-weight: 700; font-size: 1rem; color: var(--muted); }
+.avatar.sm.empty { font-size: .7rem; }
+.credit { display: flex; align-items: center; }
