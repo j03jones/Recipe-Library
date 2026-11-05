@@ -332,6 +332,8 @@ dialog .row { justify-content: flex-end; margin-top: 1rem; }
 select { font: inherit; min-height: 2.6rem; border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 0 .6rem; }
 @media print { .credit { display: none; } }
 
+.stack > .forgot-row { margin-top: 1.8rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.forgot-row:empty { display: none; }
 .linkish { border: 0; background: none; color: var(--flame); min-height: 2.4rem; text-decoration: underline; padding: 0; justify-self: start; }
 .updatebar {
   position: fixed; z-index: 80; left: 50%; transform: translateX(-50%); top: max(.6rem, env(safe-area-inset-top));

@@ -59,7 +59,7 @@ export function accountCard(ctx) {
     const go = h('button', { class: 'primary', type: 'submit' }, mode === 'in' ? 'Sign in' : 'Create account');
 
     const form = h('form', { class: 'stack', novalidate: true },
-      mode === 'up' && name, email, pass, mode === 'up' && code, go, mode === 'in' && forgot, msg);
+      mode === 'up' && name, email, pass, mode === 'up' && code, go, msg, mode === 'in' && h('p', { class: 'forgot-row' }, forgot));
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       msg.textContent = '';
@@ -365,8 +365,22 @@ export async function viewAdmin(ctx) {
     };
     status.addEventListener('change', save);
     seats.addEventListener('change', save);
+    const del = async () => {
+      let members = [];
+      try { members = await cloud.restaurantMembers(r.id); } catch { /* still ask */ }
+      const recipes = lib.cloud.filter((x) => x.scope === 'restaurant' && x.restaurant_id === r.id);
+      const msg = `Delete ${r.name}? This deletes its collection (${plural(recipes.length, 'recipe')}) and its invite codes, and ${plural(members.length, 'staff login')} will lose access to the collection. Their accounts stay, as free accounts. This cannot be undone.`;
+      if (!await ctx.confirmDialog(msg, 'Delete restaurant', true)) return;
+      try { await cloud.deleteRestaurant(r.id); } catch (err) { toast(err.message, 5000); return; }
+      toast(`${r.name} deleted`);
+      await ctx.refreshCloud();
+      const keep = new Set(lib.cloud.map((x) => x.photo).filter(Boolean));
+      await photos.discard(recipes.map((x) => x.photo).filter((p) => p && !keep.has(p)));   // collection photos nobody else uses
+      viewAdmin(ctx);
+    };
     return h('div', { class: 'card stack' }, h('strong', null, r.name),
-      h('div', { class: 'row' }, h('label', { class: 'row' }, 'Plan', status), h('label', { class: 'row' }, 'Logins', seats)));
+      h('div', { class: 'row' }, h('label', { class: 'row' }, 'Plan', status), h('label', { class: 'row' }, 'Logins', seats)),
+      h('div', null, h('button', { type: 'button', class: 'danger', onclick: del }, 'Delete restaurant')));
   });
 
   fill(ctx.$app,
