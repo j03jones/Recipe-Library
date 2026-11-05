@@ -8,6 +8,7 @@ import { SECTIONS } from './groups.js';
 import { addStars, copyText, emojiFor, icon, isStarred, onStarsChange, replaceStars, starIds, tile, toggleStar } from './ui.js';
 import * as cloud from './cloud.js';
 import { accountCard, viewAdmin } from './account.js';
+import * as photos from './photos.js';
 
 const $app = document.getElementById('app');
 const $toast = document.getElementById('toast');
@@ -65,7 +66,7 @@ const num = (f, places) => trim0(f.toNumber().toFixed(places));
 
 // ------------------------------------------------------------------- library
 
-const lib = { base: [], mine: new Map(), all: [], byId: new Map(), cats: [], cloud: [], me: null, restaurants: [], syncError: '' };
+const lib = { base: [], mine: new Map(), all: [], byId: new Map(), cats: [], cloud: [], me: null, restaurants: [], syncError: '', libPhotos: {}, avatars: {} };
 
 // ---- hosted account data (cached so it still opens offline)
 const CACHE_KEY = 'recipelib.cloudcache';
@@ -73,11 +74,15 @@ function loadCloudCache() {
   try {
     const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
     const u = cloud.currentUser();
-    if (c && u && c.uid === u.id) { lib.me = c.me; lib.cloud = c.rows; }
+    if (c && u && c.uid === u.id) { lib.me = c.me; lib.cloud = c.rows; lib.libPhotos = c.libPhotos || {}; lib.avatars = c.avatars || {}; }
   } catch { /* no cache */ }
 }
+function saveCloudCache() {
+  if (!lib.me) return;
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ uid: lib.me.id, me: lib.me, rows: lib.cloud, libPhotos: lib.libPhotos, avatars: lib.avatars })); } catch { /* full */ }
+}
 function clearCloud() {
-  lib.me = null; lib.cloud = [];
+  lib.me = null; lib.cloud = []; lib.libPhotos = {}; lib.avatars = {};
   try { localStorage.removeItem(CACHE_KEY); } catch { /* ignore */ }
   rebuild();
 }
@@ -86,7 +91,8 @@ async function refreshCloud() {
   try {
     const [me, rows] = await Promise.all([cloud.loadMe(), cloud.listRecipes()]);
     lib.me = me; lib.cloud = rows;
-    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ uid: me.id, me, rows })); } catch { /* full */ }
+    try { lib.avatars = Object.fromEntries((await cloud.communityAvatars()).map((a) => [a.id, a.avatar])); } catch { /* keep the old ones */ }
+    saveCloudCache();
   } catch (err) {
     if (!cloud.isSignedIn()) clearCloud();      // the session was no longer valid
     else if (!lib.me) loadCloudCache();         // offline: fall back to what we saved last time
@@ -118,6 +124,7 @@ async function syncStars() {
   try {
     const sync = readSync();
     const row = await cloud.loadUserData();
+    if (row) { lib.libPhotos = row.library_photos || {}; saveCloudCache(); }
     if (sync.uid !== lib.me.id) {                         // first time this device meets this account: combine both
       if (row) addStars(row.stars);
       await pushStars();
@@ -140,6 +147,54 @@ function cloudSource(row) {
 }
 const SOURCE_GROUP = { base: 'library', edited: 'library', mine: 'mine', account: 'mine', shared: 'mine', community: 'community', collection: 'collection' };
 const canEdit = (r) => !['community', 'collection', 'shared'].includes(r.source) || lib.me?.role === 'admin';
+
+// ---- photos: cloud recipes keep theirs in recipes.photo; built-in library recipes in the person's own list
+const isLibrary = (r) => r.source === 'base' || r.source === 'edited';
+const photoOf = (r) => (r.cloud ? r.row.photo : (lib.me && isLibrary(r) ? lib.libPhotos[r.id] : null)) || null;
+const canPhoto = (r) => !!lib.me && cloud.isSignedIn() && (r.cloud ? (r.source === 'account' || lib.me.role === 'admin') : isLibrary(r));
+/** True while any recipe or library entry still uses this file (a shared Community copy can use the same photo). */
+const photoInUse = (path) => lib.cloud.some((x) => x.photo === path) || Object.values(lib.libPhotos).includes(path);
+/** After a change, delete the old file if it is this person's and nothing uses it any more. */
+async function tidyPhoto(path) {
+  if (!path || !lib.me) return;
+  const mine = path.startsWith(`recipes/${lib.me.id}/`) || path.startsWith(`library/${lib.me.id}/`);
+  if (mine && !photoInUse(path)) await photos.discard([path]);
+}
+async function setLibraryPhotos(map) {
+  await cloud.saveLibraryPhotos(map);
+  lib.libPhotos = map;
+  saveCloudCache();
+}
+async function setPhoto(r, file) {
+  const old = photoOf(r);
+  const path = await photos.upload(r.cloud ? 'recipes' : 'library', file);
+  try {
+    if (r.cloud) { await cloud.setRecipePhoto(r.id, path); await refreshCloud(); }
+    else await setLibraryPhotos({ ...lib.libPhotos, [r.id]: path });
+  } catch (err) { await photos.discard([path]); throw err; }
+  await tidyPhoto(old);
+}
+async function clearPhoto(r) {
+  const old = photoOf(r);
+  if (r.cloud) { await cloud.setRecipePhoto(r.id, null); await refreshCloud(); }
+  else { const m = { ...lib.libPhotos }; delete m[r.id]; await setLibraryPhotos(m); }
+  await tidyPhoto(old);
+}
+// list thumbnails load only when they scroll into view
+const thumbObserver = 'IntersectionObserver' in window ? new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    if (!e.isIntersecting) continue;
+    thumbObserver.unobserve(e.target);
+    const el = e.target;
+    photos.photoURL(el.dataset.photo).then((u) => { if (u) { el.style.backgroundImage = `url("${u}")`; el.classList.add('pic'); el.textContent = ''; } });
+  }
+}, { rootMargin: '300px' }) : null;
+function thumb(r) {
+  const t = tile(r.categories);
+  const path = photoOf(r);
+  if (path && thumbObserver) { t.dataset.photo = path; thumbObserver.observe(t); }
+  return t;
+}
 
 function rebuild() {
   const map = new Map(lib.base.map((r) => [r.id, r]));
@@ -307,7 +362,7 @@ function viewList(starredOnly = false) {
   function row(r) {
     return h('li', null,
       h('a', { class: 'rc', href: `#/r/${r.id}` },
-        tile(r.categories),
+        thumb(r),
         h('span', { class: 'txt' },
           h('span', { class: 't' }, r.title, r.source !== 'base' && h('span', { class: 'badge' }, badgeText(r))),
           h('span', { class: 'c' }, r.categories.length ? r.categories.slice(0, 2).join(', ') : `${r.ings.length} ingredients`))),
@@ -371,11 +426,46 @@ function tick(kids, extraClass = '') {
 }
 
 function credit(r) {
-  if (r.source === 'community') return h('p', { class: 'credit' }, r.row.owner_id === lib.me?.id ? 'Shared by you' : `Shared by ${r.row.author_name || 'a chef'}`);
+  if (r.source === 'community') {
+    const av = lib.avatars[r.row.owner_id] || (r.row.owner_id === lib.me?.id ? lib.me.avatar : null);
+    return h('p', { class: 'credit' }, av && photos.photoImg(av, { class: 'avatar sm', alt: '' }),
+      r.row.owner_id === lib.me?.id ? 'Shared by you' : `Shared by ${r.row.author_name || 'a chef'}`);
+  }
   if (r.source === 'collection') return h('p', { class: 'credit' }, `From the ${restaurantName(r.row.restaurant_id)} collection`);
   if (r.source === 'shared') return h('p', { class: 'credit' }, r.row.status === 'declined'
     ? `Not approved${r.row.review_note ? `: ${r.row.review_note}` : '.'}` : 'Waiting for approval. Only you can see it until then.');
   return null;
+}
+
+/** The dish photo on the recipe page, with Add / Change / Remove when this person may change it. */
+function photoBlock(r) {
+  const path = photoOf(r);
+  const allowed = canPhoto(r);
+  if (!path && !allowed) return null;
+  const box = h('div', { class: 'photo' });
+  const choose = async () => {
+    const file = await photos.pickPhoto();
+    if (!file) return;
+    fill(box, h('p', { class: 'muted small' }, 'Saving photo…'));
+    try { await setPhoto(r, file); toast('Photo saved'); } catch (err) { toast(err.message, 4500); }
+    route();
+  };
+  const drop = async () => {
+    if (!await confirmDialog('Remove this photo?', 'Remove', true)) return;
+    try { await clearPhoto(r); toast('Photo removed'); } catch (err) { toast(err.message, 4500); }
+    route();
+  };
+  const note = isLibrary(r) && allowed ? h('span', { class: 'muted small' }, 'Only you can see this photo.') : null;
+  if (!path) {
+    fill(box, h('button', { type: 'button', class: 'addphoto', onclick: choose }, icon('camera'), 'Add a photo of your dish'), note);
+    return box;
+  }
+  fill(box, photos.photoImg(path, { class: 'dish', alt: `Photo of ${r.title}` }),
+    allowed && h('div', { class: 'row' },
+      h('button', { type: 'button', onclick: choose }, 'Change photo'),
+      h('button', { type: 'button', class: 'danger', onclick: drop }, 'Remove photo'),
+      note));
+  return box;
 }
 
 const RIGHTS = 'Share a copy of this recipe with the Community? Everyone signed in will be able to read it and see your name. Only share a recipe that is yours or that you have the right to share. Chef-owned or restaurant recipes should stay private. The administrator reviews every recipe before it appears, and you can withdraw it later.';
@@ -387,7 +477,7 @@ function sharing(r) {
   const copy = lib.cloud.find((x) => x.scope === 'community' && x.source_recipe_id === r.id && x.owner_id === lib.me.id);
   const withdraw = (row) => h('button', { onclick: async () => {
     if (!await confirmDialog('Withdraw this recipe from the Community? Your own copy stays in your account.', 'Withdraw', true)) return;
-    try { await cloud.deleteRecipe(row.id); await refreshCloud(); toast('Withdrawn'); route(); } catch (err) { toast(err.message, 4000); }
+    try { await cloud.deleteRecipe(row.id); await refreshCloud(); await tidyPhoto(row.photo); toast('Withdrawn'); route(); } catch (err) { toast(err.message, 4000); }
   } }, 'Withdraw from Community');
   if (r.source === 'account') {
     if (copy) fill(out, h('p', { class: 'muted small' }, copy.status === 'approved' ? 'A copy of this recipe is in the Community.' : copy.status === 'declined' ? `Not approved${copy.review_note ? `: ${copy.review_note}` : '.'}` : 'A copy is waiting for approval.'), withdraw(copy));
@@ -505,6 +595,7 @@ function viewRecipe(id) {
       starButton(r.id),
       canEdit(r) && h('a', { class: 'icon-btn', href: `#/edit/${r.id}`, 'aria-label': 'Edit recipe', title: 'Edit recipe' }, icon('edit'))),
     h('div', { class: 'rhead' }, tile(r.categories, true), h('h1', null, r.title)),
+    photoBlock(r),
     r.categories.length > 0 && h('div', { class: 'labels' }, r.categories.map((c) => h('span', { class: 'label' }, c))),
     credit(r),
     h('div', { class: 'cols' },
@@ -602,7 +693,7 @@ function viewEdit(id, template) {
       mine ? 'Delete' : 'Remove', true);
     if (!ok) return;
     if (existing.cloud) {
-      try { await cloud.deleteRecipe(existing.id); await refreshCloud(); } catch (err) { toast(err.message, 4500); return; }
+      try { await cloud.deleteRecipe(existing.id); await refreshCloud(); await tidyPhoto(existing.row.photo); } catch (err) { toast(err.message, 4500); return; }
     } else if (mine) await dropRecord(existing.id);
     else await saveRecord({ id: existing.id, deleted: true });
     toast('Removed');
@@ -813,9 +904,10 @@ async function boot() {
   if (linkType === 'recovery') ctx.recovery = true;
   if (linkType) toast(linkType === 'recovery' ? 'Signed in. Choose a new password below.' : 'Email confirmed. You are signed in.', 5000);
   if (cloud.isSignedIn()) {
+    const hadAccount = !!lib.me;
     await refreshCloud();
     const view = document.body.dataset.view;
-    if (view === 'list' || (view === 'settings' && !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '') && location.hash.indexOf('admin') < 0)) route();
+    if (view === 'list' || (view === 'recipe' && !hadAccount) || (view === 'settings' && !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '') && location.hash.indexOf('admin') < 0)) route();
   }
 }
 
