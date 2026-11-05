@@ -195,6 +195,52 @@ select t.login(:'c1'); set role authenticated;
 select t.denied('stars must be a list', $$ update public.user_data set stars = '{"a":1}' $$);
 reset role;
 
+-- ---- admin lists: codes and people ---------------------------------------------
+select t.login(:'admin_id'); set role authenticated;
+select t.expect('admin sees the student code as used up, with who used it',
+  (select status = 'used up' and 'Sam' = any(used_by) from public.admin_list_invites() where code = :'stu_code'));
+select public.create_invite('student', null, 'staff', 5, 30) as cancel_code \gset
+select public.cancel_invite(:'cancel_code');
+select t.expect('a cancelled code shows as cancelled', (select status from public.admin_list_invites() where code = :'cancel_code') = 'cancelled');
+select t.denied('a code cannot be cancelled twice', format($$ select public.cancel_invite(%L) $$, :'cancel_code'));
+select t.expect('admin sees people with their email and code',
+  (select email = 's1@x.test' and invite_code = :'stu_code' and role = 'student' from public.admin_list_people() where id = :'s1'));
+select t.expect('people list shows restaurant owners',
+  (select 'Alpha Grill (owner)' = any(restaurants) from public.admin_list_people() where id = :'c1'));
+reset role;
+select t.denied('a cancelled code cannot be used to sign up',
+  format($$ insert into auth.users(email, raw_user_meta_data) values ('late@x.test', jsonb_build_object('invite_code', %L)) $$, :'cancel_code'));
+
+select t.login(:'s1'); set role authenticated;
+select t.denied('students cannot list invite codes', $$ select * from public.admin_list_invites() $$);
+select t.denied('students cannot list people', $$ select * from public.admin_list_people() $$);
+select t.denied('students cannot cancel codes', format($$ select public.cancel_invite(%L) $$, :'stu_code'));
+select t.denied('students cannot remove people', format($$ select public.admin_remove_person(%L) $$, :'s2'));
+reset role;
+set role anon;
+select t.denied('signed-out visitors cannot list people', $$ select * from public.admin_list_people() $$);
+reset role;
+
+-- removing someone: private recipes go, their approved Community recipes stay
+select t.login(:'admin_id'); set role authenticated;
+select public.create_invite('student', null, 'staff', 1, 30) as leave_code \gset
+reset role;
+insert into auth.users(email, raw_user_meta_data) values ('leaver@x.test', jsonb_build_object('invite_code', :'leave_code', 'display_name', 'Lee'));
+select id as leaver from auth.users where email='leaver@x.test' \gset
+insert into public.recipes(owner_id, scope, title, body) values (:'leaver', 'private', 'Lee Private Pie', '{}');
+insert into public.recipes(owner_id, scope, status, title, body, author_name) values (:'leaver', 'community', 'approved', 'Lee Shared Slaw', '{}', 'Lee');
+insert into public.recipes(owner_id, scope, status, title, body, author_name) values (:'leaver', 'community', 'pending', 'Lee Waiting Gravy', '{}', 'Lee');
+select t.login(:'admin_id'); set role authenticated;
+select t.denied('admin cannot remove their own account', format($$ select public.admin_remove_person(%L) $$, :'admin_id'));
+select t.denied('the only owner of a restaurant cannot be removed', format($$ select public.admin_remove_person(%L) $$, :'c1'));
+select public.admin_remove_person(:'leaver');
+reset role;
+select t.expect('removed person has no account', t.n(format($$ select count(*) from auth.users where id = %L $$, :'leaver')) = 0);
+select t.expect('removed person''s private recipes are gone', t.n($$ select count(*) from public.recipes where title = 'Lee Private Pie' $$) = 0);
+select t.expect('removed person''s pending submissions are gone', t.n($$ select count(*) from public.recipes where title = 'Lee Waiting Gravy' $$) = 0);
+select t.expect('removed person''s Community recipe stays, still credited to them',
+  (select owner_id = :'admin_id' and author_name = 'Lee' from public.recipes where title = 'Lee Shared Slaw'));
+
 -- ---- open sign-up switch ------------------------------------------------------
 update public.app_settings set open_signup = true;
 insert into auth.users(email) values ('walkin@x.test');

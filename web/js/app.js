@@ -780,7 +780,7 @@ function route() {
 }
 
 const ctx = {
-  h, fill, toast, icon, lib, $app, setView, goBack, refreshCloud, clearCloud,
+  h, fill, toast, icon, lib, $app, setView, goBack, refreshCloud, clearCloud, confirmDialog,
   rerender: () => route(),
 };
 

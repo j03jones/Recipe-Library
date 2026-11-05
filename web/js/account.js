@@ -129,11 +129,133 @@ export function accountCard(ctx) {
   return card;
 }
 
+// ------------------------------------------------------------------ admin: codes and people
+
+const DAY = 86400000;
+const shortDate = (iso) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: new Date(iso).getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const STATUS_TEXT = { active: 'Active', 'used up': 'Used up', expired: 'Expired', cancelled: 'Cancelled' };
+const ROLE_TEXT = { admin: 'Admin', student: 'Student', client: 'Restaurant' };
+
+function whenText(iso) {
+  const days = Math.round((Date.now() - new Date(iso).getTime()) / DAY);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days} days ago`;
+  return shortDate(iso);
+}
+
+// The list of invite codes. Returns { el, reload } so making a new code can refresh it.
+function codesSection(ctx) {
+  const { h, fill, toast } = ctx;
+  const el = h('div', { class: 'stack' }, h('p', { class: 'muted small' }, 'Loading codes…'));
+
+  const codeCard = (c, reload) => {
+    const who = c.kind === 'student'
+      ? (c.max_uses === 1 ? 'Student code for one person' : `Student code for up to ${c.max_uses} people`)
+      : `${c.restaurant_name || 'Restaurant'} · ${c.member_role === 'owner' ? 'Owner' : 'Staff'}`;
+    const facts = [`Used ${c.uses} of ${c.max_uses}`, `made ${shortDate(c.created_at)}`];
+    if (c.status === 'active' && c.expires_at) {
+      const left = Math.ceil((new Date(c.expires_at).getTime() - Date.now()) / DAY);
+      facts.push(left <= 1 ? 'expires within a day' : `expires in ${left} days`);
+    } else if (c.status === 'expired') facts.push(`expired ${shortDate(c.expires_at)}`);
+    else if (c.status === 'cancelled') facts.push(`cancelled ${shortDate(c.cancelled_at)}`);
+
+    const actions = c.status === 'active' ? h('div', { class: 'row' },
+      h('button', { type: 'button', onclick: async () => {
+        toast(await copyText(shareText(c.code)) ? 'Invite message copied' : 'Could not copy. Press and hold the code to copy it.', 3000);
+      } }, 'Copy invite message'),
+      h('button', { type: 'button', class: 'danger', onclick: async () => {
+        if (!await ctx.confirmDialog(`Cancel code ${c.code}? Nobody new can sign up with it. ${c.uses ? 'People who already joined keep their accounts.' : ''}`, 'Cancel code', true)) return;
+        try { await cloud.cancelInvite(c.code); toast('Code cancelled'); reload(); } catch (err) { toast(err.message, 4000); }
+      } }, 'Cancel code')) : null;
+
+    return h('div', { class: 'card stack' },
+      h('div', null, h('strong', { class: 'code' }, c.code), h('span', { class: 'badge' }, STATUS_TEXT[c.status] || c.status)),
+      h('p', { class: 'small' }, who),
+      h('p', { class: 'muted small' }, facts.join(' · ')),
+      c.used_by.length ? h('p', { class: 'small' }, `Joined with this code: ${c.used_by.join(', ')}`) : null,
+      actions);
+  };
+
+  const reload = async () => {
+    let codes;
+    try { codes = await cloud.listInvites(); } catch (err) {
+      fill(el, h('p', { class: 'muted small' }, `Could not load codes: ${err.message}`));
+      return;
+    }
+    if (!codes.length) { fill(el, h('p', { class: 'muted' }, 'No codes yet. Make one above.')); return; }
+    const live = codes.filter((c) => c.status === 'active');
+    const done = codes.filter((c) => c.status !== 'active');
+    fill(el,
+      live.length ? live.map((c) => codeCard(c, reload)) : h('p', { class: 'muted' }, 'No active codes. Make one above.'),
+      done.length ? h('details', null,
+        h('summary', { class: 'muted small' }, `Used up, expired and cancelled codes (${done.length})`),
+        h('div', { class: 'stack', style: 'margin-top:.6rem' }, done.map((c) => codeCard(c, reload)))) : null);
+  };
+  reload();
+  return { el, reload };
+}
+
+// Everyone with an account, with a filter, a search box and a Remove button.
+function peopleSection(ctx) {
+  const { h, fill, toast } = ctx;
+  const el = h('div', { class: 'stack' }, h('p', { class: 'muted small' }, 'Loading people…'));
+  let people = [];
+
+  const kind = h('select', { 'aria-label': 'Show' },
+    h('option', { value: 'student' }, 'Students'), h('option', { value: 'client' }, 'Restaurant staff'), h('option', { value: 'all' }, 'Everyone'));
+  const search = h('input', { class: 'full', type: 'search', placeholder: 'Search by name or email', 'aria-label': 'Search people' });
+  const list = h('div', { class: 'stack' });
+  const count = h('p', { class: 'muted small' });
+
+  const personCard = (p) => {
+    const facts = [`Joined ${whenText(p.joined_at)}${p.invite_code ? ` with code ${p.invite_code}` : ''}`];
+    facts.push(p.last_sign_in_at ? `last signed in ${whenText(p.last_sign_in_at)}` : 'has not signed in yet');
+    facts.push(plural(Number(p.private_recipes) || 0, 'private recipe'));
+    const remove = p.role === 'admin' ? null : h('button', { type: 'button', class: 'danger', onclick: async () => {
+      const n = Number(p.private_recipes) || 0;
+      const msg = `Remove ${p.display_name || p.email} (${p.email})? Their account${n ? ` and ${plural(n, 'private recipe')}` : ''} will be deleted. Recipes of theirs already in Community stay there. This cannot be undone.`;
+      if (!await ctx.confirmDialog(msg, 'Remove', true)) return;
+      try { await cloud.removePerson(p.id); toast('Removed'); await reload(); } catch (err) { toast(err.message, 5000); }
+    } }, 'Remove');
+    return h('div', { class: 'card stack' },
+      h('div', null, h('strong', null, p.display_name || p.email), h('span', { class: 'badge' }, ROLE_TEXT[p.role] || p.role)),
+      h('p', { class: 'small', style: 'overflow-wrap:anywhere' }, p.email),
+      p.restaurants.length ? h('p', { class: 'small' }, p.restaurants.join(', ')) : null,
+      p.email_confirmed ? null : h('p', { class: 'small', style: 'color:var(--danger)' }, 'Has not confirmed their email yet. Ask them to check spam for the email from Jones Ridge Kitchen.'),
+      h('p', { class: 'muted small' }, facts.join(' · ')),
+      remove);
+  };
+
+  const paint = () => {
+    const q = search.value.trim().toLowerCase();
+    const shown = people.filter((p) => (kind.value === 'all' || p.role === kind.value)
+      && (!q || `${p.display_name} ${p.email}`.toLowerCase().includes(q)));
+    count.textContent = `${plural(shown.length, kind.value === 'student' ? 'student' : 'person').replace(/persons$/, 'people')}`;
+    fill(list, shown.length ? shown.map(personCard) : h('p', { class: 'muted' }, q ? 'Nobody matches that search.' : 'Nobody here yet.'));
+  };
+  kind.addEventListener('change', paint);
+  search.addEventListener('input', paint);
+
+  const reload = async () => {
+    try { people = await cloud.listPeople(); } catch (err) {
+      fill(el, h('p', { class: 'muted small' }, `Could not load people: ${err.message}`));
+      return;
+    }
+    fill(el, h('div', { class: 'row' }, kind, count), search, list);
+    paint();
+  };
+  reload();
+  return { el, reload };
+}
+
 // ------------------------------------------------------------------ admin screen
 
 export async function viewAdmin(ctx) {
   const { h, fill, toast, lib, icon } = ctx;
   ctx.setView('settings', 'settings');
+  if (!lib.me && cloud.isSignedIn()) { try { await ctx.refreshCloud(); } catch { /* checked below */ } }   // opened straight from a link
   if (!lib.me || lib.me.role !== 'admin') {
     fill(ctx.$app, h('h1', null, 'Admin tools'), h('p', { class: 'muted' }, 'This page is for the administrator. Sign in with the admin account in Settings.'),
       h('p', null, h('a', { href: '#/settings' }, 'Go to Settings')));
@@ -145,6 +267,8 @@ export async function viewAdmin(ctx) {
 
   const pending = lib.cloud.filter((r) => r.scope === 'community' && r.status === 'pending');
   const inviteOut = h('div');
+  const codes = codesSection(ctx);
+  const people = peopleSection(ctx);
   const note = new Map();
 
   const review = async (row, approve) => {
@@ -174,12 +298,12 @@ export async function viewAdmin(ctx) {
   const maxUses = h('select', { 'aria-label': 'Number of people who can use the code' },
     [1, 5, 10, 25, 50].map((n) => h('option', { value: n }, n === 1 ? 'One person' : `Up to ${n} people`)));
   const studentBtn = h('button', { type: 'button', onclick: async () => {
-    try { fill(inviteOut, codeBox(ctx, await cloud.createInvite('student', null, 'staff', Number(maxUses.value), 30))); } catch (err) { toast(err.message, 4000); }
+    try { fill(inviteOut, codeBox(ctx, await cloud.createInvite('student', null, 'staff', Number(maxUses.value), 30))); codes.reload(); } catch (err) { toast(err.message, 4000); }
   } }, 'Make a student code');
   const rSel = h('select', { 'aria-label': 'Restaurant' }, restaurants.map((r) => h('option', { value: r.id }, r.name)));
   const roleSel = h('select', { 'aria-label': 'Role' }, h('option', { value: 'owner' }, 'Owner'), h('option', { value: 'staff' }, 'Staff'));
   const restBtn = h('button', { type: 'button', disabled: restaurants.length === 0, onclick: async () => {
-    try { fill(inviteOut, codeBox(ctx, await cloud.createInvite('restaurant', rSel.value, roleSel.value, 1, 14))); } catch (err) { toast(err.message, 4000); }
+    try { fill(inviteOut, codeBox(ctx, await cloud.createInvite('restaurant', rSel.value, roleSel.value, 1, 14))); codes.reload(); } catch (err) { toast(err.message, 4000); }
   } }, 'Make a restaurant code');
 
   // restaurants
@@ -215,6 +339,10 @@ export async function viewAdmin(ctx) {
       h('div', { class: 'row' }, maxUses, studentBtn),
       h('div', { class: 'row' }, rSel, roleSel, restBtn),
       inviteOut),
+    h('h2', null, 'Invite codes'),
+    codes.el,
+    h('h2', null, 'People'),
+    people.el,
     h('h2', null, 'Restaurants'),
     h('div', { class: 'stack' }, restRows,
       h('form', { class: 'card stack', onsubmit: addRest }, nameIn, h('button', { type: 'submit' }, 'Add restaurant'))),
