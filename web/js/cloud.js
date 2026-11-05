@@ -145,10 +145,10 @@ const enc = encodeURIComponent;
 /** Who am I: profile + restaurant memberships. */
 export async function loadMe() {
   const u = currentUser();
-  const [profile] = await authed(`/rest/v1/profiles?id=eq.${enc(u.id)}&select=display_name,role`);
+  const [profile] = await authed(`/rest/v1/profiles?id=eq.${enc(u.id)}&select=display_name,role,avatar`);
   const memberships = await authed(
     `/rest/v1/restaurant_members?user_id=eq.${enc(u.id)}&select=member_role,restaurant:restaurants(id,name,subscription_status,seat_limit)`);
-  return { id: u.id, email: u.email, displayName: profile?.display_name || '', role: profile?.role || 'student', memberships };
+  return { id: u.id, email: u.email, displayName: profile?.display_name || '', role: profile?.role || 'student', avatar: profile?.avatar || null, memberships };
 }
 
 /** Everything this person may see (the database filters by their access). */
@@ -180,8 +180,14 @@ export const submitToCommunity = (id) => authed('/rest/v1/rpc/submit_to_communit
 // per-person data that follows them between devices
 export async function loadUserData() {
   const u = currentUser();
-  const [row] = await authed(`/rest/v1/user_data?user_id=eq.${enc(u.id)}&select=stars,updated_at`);
+  const [row] = await authed(`/rest/v1/user_data?user_id=eq.${enc(u.id)}&select=stars,library_photos,updated_at`);
   return row || null;
+}
+export async function saveLibraryPhotos(map) {
+  await authed('/rest/v1/user_data', {
+    method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: { user_id: currentUser().id, library_photos: map },
+  });
 }
 export async function saveStars(ids) {
   const [row] = await authed('/rest/v1/user_data', {
@@ -206,3 +212,51 @@ export const listInvites = () => authed('/rest/v1/rpc/admin_list_invites', { met
 export const cancelInvite = (code) => authed('/rest/v1/rpc/cancel_invite', { method: 'POST', body: { p_code: code } });
 export const listPeople = () => authed('/rest/v1/rpc/admin_list_people', { method: 'POST', body: {} });
 export const removePerson = (userId) => authed('/rest/v1/rpc/admin_remove_person', { method: 'POST', body: { p_user: userId } });
+
+// ------------------------------------------------------------------ photos (Storage bucket "photos")
+// Paths look like recipes/<person id>/<random>.jpg; the database decides who may read or write them.
+export async function setRecipePhoto(id, path) {
+  const rows = await authed(`/rest/v1/recipes?id=eq.${enc(id)}`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: { photo: path } });
+  if (!rows || !rows.length) throw new CloudError('You do not have permission to change that recipe.', 403);
+}
+export const setAvatar = (path) => authed(`/rest/v1/profiles?id=eq.${enc(currentUser().id)}`, { method: 'PATCH', body: { avatar: path } });
+export const communityAvatars = () => authed('/rest/v1/rpc/community_avatars', { method: 'POST', body: {} });
+export const listAvatars = () => authed('/rest/v1/profiles?select=id,avatar&avatar=not.is.null');
+
+async function storage(path, { method = 'GET', body, type } = {}) {
+  const token = await freshToken();
+  let res;
+  try {
+    res = await fetch(`${URL_}/storage/v1/${path}`, {
+      method, body,
+      headers: { apikey: KEY, Authorization: `Bearer ${token}`, ...(type ? { 'Content-Type': type } : {}) },
+    });
+  } catch {
+    throw new CloudError('Could not reach the server. Check your connection.', 0);
+  }
+  if (!res.ok) {
+    let msg = `Photo request failed (${res.status})`;
+    try { const d = await res.json(); msg = d.message || d.error || msg; } catch { /* not JSON */ }
+    throw new CloudError(String(msg), res.status);
+  }
+  return res;
+}
+const encPath = (p) => p.split('/').map(enc).join('/');
+export async function uploadPhoto(path, blob) {
+  await storage(`object/photos/${encPath(path)}`, { method: 'POST', body: blob, type: blob.type || 'image/jpeg' });
+  return path;
+}
+export async function downloadPhoto(path) {
+  return (await storage(`object/authenticated/photos/${encPath(path)}`)).blob();
+}
+export async function removePhotos(paths) {
+  if (!paths.length) return;
+  await storage('object/photos', { method: 'DELETE', body: JSON.stringify({ prefixes: paths }), type: 'application/json' });
+}
+/** File names directly inside a folder such as "library/<id>". */
+export async function listPhotos(folder) {
+  const res = await storage('object/list/photos', {
+    method: 'POST', type: 'application/json', body: JSON.stringify({ prefix: folder, limit: 1000, offset: 0 }),
+  });
+  return (await res.json()).filter((f) => f.id).map((f) => `${folder}/${f.name}`);
+}
