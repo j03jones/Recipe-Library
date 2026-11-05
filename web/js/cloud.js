@@ -202,3 +202,7 @@ export const createInvite = (kind, restaurantId = null, memberRole = 'staff', ma
   authed('/rest/v1/rpc/create_invite', { method: 'POST', body: { p_kind: kind, p_restaurant: restaurantId, p_member_role: memberRole, p_max_uses: maxUses, p_days: days } });
 export const removeMember = (restaurantId, userId) =>
   authed('/rest/v1/rpc/remove_member', { method: 'POST', body: { p_restaurant: restaurantId, p_user: userId } });
+export const listInvites = () => authed('/rest/v1/rpc/admin_list_invites', { method: 'POST', body: {} });
+export const cancelInvite = (code) => authed('/rest/v1/rpc/cancel_invite', { method: 'POST', body: { p_code: code } });
+export const listPeople = () => authed('/rest/v1/rpc/admin_list_people', { method: 'POST', body: {} });
+export const removePerson = (userId) => authed('/rest/v1/rpc/admin_remove_person', { method: 'POST', body: { p_user: userId } });
