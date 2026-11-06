@@ -8,7 +8,7 @@ let session = null;
 const listeners = new Set();
 
 export class CloudError extends Error {
-  constructor(message, status = 0) { super(message); this.status = status; }
+  constructor(message, status = 0, code = '') { super(message); this.status = status; this.code = code; }
 }
 
 // ------------------------------------------------------------------ session storage
@@ -51,7 +51,7 @@ async function call(path, { method = 'GET', body, token, headers = {} } = {}) {
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
   if (!res.ok) {
     const msg = (data && (data.message || data.msg || data.error_description || data.error)) || `Request failed (${res.status})`;
-    throw new CloudError(String(msg), res.status);
+    throw new CloudError(String(msg), res.status, (data && (data.error_code || data.code)) || '');
   }
   return data;
 }
@@ -80,7 +80,10 @@ export async function signIn(email, password) {
     const t = await call('/auth/v1/token?grant_type=password', { method: 'POST', body: { email, password } });
     setSession(fromTokenResponse(t));
   } catch (err) {
-    if (err.status === 400) throw new CloudError('Wrong email or password, or the email is not confirmed yet.', 400);
+    if (err.code === 'email_not_confirmed' || /not confirmed/i.test(err.message)) {
+      throw new CloudError('Your email is not confirmed yet. Open the link we emailed you, or send it again below.', 400, 'email_not_confirmed');
+    }
+    if (err.status === 400) throw new CloudError('Wrong email or password.', 400, 'invalid_credentials');
     throw err;
   }
 }
@@ -95,6 +98,9 @@ export async function signUp({ email, password, displayName, inviteCode }) {
     if (t && t.access_token) { setSession(fromTokenResponse(t)); return 'signed-in'; }
     return 'confirm-email';
   } catch (err) {
+    if (err.status === 422 || err.code === 'user_already_exists') {
+      throw new CloudError('That email already has an account. Sign in instead, or use “Forgot password?”.', 422, 'user_already_exists');
+    }
     // The database refuses bad or missing invite codes; Supabase reports that as a generic server error.
     if (err.status >= 500 || /database error/i.test(err.message)) {
       throw new CloudError('That invite code is not valid, has been used up, or the restaurant has no free seats.', err.status);
@@ -120,9 +126,16 @@ export async function changePassword(newPassword) {
   await authed('/auth/v1/user', { method: 'PUT', body: { password: newPassword } });
 }
 
-/** Handles the link in a confirmation / password-reset email (…#access_token=…&type=signup). Returns the type or null. */
+/**
+ * Handles the link in a confirmation / password-reset / invite email (…#access_token=…&type=invite).
+ * Returns the type ('signup', 'recovery', 'invite', …), 'error:<message>' for an expired or used link, or null.
+ */
 export function takeSessionFromHash(hash = location.hash) {
   const q = new URLSearchParams(hash.replace(/^#\/?/, ''));
+  if (q.get('error_description') || q.get('error_code')) {
+    const code = q.get('error_code') || '';
+    return `error:${code === 'otp_expired' ? 'That link has expired or was already used.' : (q.get('error_description') || 'That link did not work.').replace(/\+/g, ' ')}`;
+  }
   if (!q.get('access_token')) return null;
   const expires = Number(q.get('expires_in') || 3600);
   setSession({
@@ -273,3 +286,31 @@ export async function listPhotos(folder) {
 export async function fetchRecipePage(url) {
   return authed('/functions/v1/import-recipe', { method: 'POST', body: { url } });
 }
+
+// ------------------------------------------------------------------ invites
+/** The link someone opens (or scans as a QR code) to join with an invite code. */
+export const inviteLink = (code) => `${location.origin}${location.pathname}#/join/${encodeURIComponent(code)}`;
+/** Whether an invite code still works, and what it is for. Works without signing in. */
+export async function inviteInfo(code) {
+  const rows = await call('/rest/v1/rpc/invite_info', { method: 'POST', body: { p_code: code } });
+  return (Array.isArray(rows) ? rows[0] : rows) || { status: 'not found' };
+}
+/** Ask the admin for an invite. Works without signing in. */
+export const requestInvite = ({ name, email, about, note }) =>
+  call('/rest/v1/rpc/request_invite', { method: 'POST', body: { p_name: name, p_email: email, p_about: about, p_note: note || '' } });
+/** Email someone a one-person invite (the send-invite edge function; Supabase sends the email). */
+export const sendInvite = ({ email, name, kind = 'student', restaurantId = null, memberRole = 'staff', requestId = null }) =>
+  authed('/functions/v1/send-invite', { method: 'POST', body: {
+    email, name, kind, restaurant_id: restaurantId, member_role: memberRole, request_id: requestId,
+    app_url: `${location.origin}${location.pathname}`,
+  } });
+export const listInviteRequests = () => authed('/rest/v1/invite_requests?status=eq.waiting&order=created_at.desc&select=*');
+export const dismissInviteRequest = (id) => authed(`/rest/v1/invite_requests?id=eq.${enc(id)}`, {
+  method: 'PATCH', body: { status: 'dismissed', handled_at: new Date().toISOString() } });
+/** Send the "confirm your email" message again. Always looks successful. */
+export async function resendConfirmation(email) {
+  const back = encodeURIComponent(`${location.origin}${location.pathname}`);
+  try { await call(`/auth/v1/resend?redirect_to=${back}`, { method: 'POST', body: { type: 'signup', email } }); }
+  catch (err) { if (err.status === 0 || err.status === 429) throw err; }
+}
+

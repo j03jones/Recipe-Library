@@ -369,3 +369,22 @@ select { font: inherit; min-height: 2.6rem; border-radius: 12px; border: 1px sol
 details.original { padding: .7rem .9rem; }
 details.original summary { cursor: pointer; font-weight: 600; }
 details.original ol { margin: .4rem 0 0; padding-left: 1.3rem; }
+
+/* invites: QR codes, links, password fields, dialogs */
+.invite-share { display: grid; grid-template-columns: minmax(0, 150px) 1fr; gap: 1rem; align-items: start; margin-top: .6rem; }
+@media (max-width: 420px) { .invite-share { grid-template-columns: 1fr; } .invite-share .qr { max-width: 220px; margin: 0 auto; } }
+.qr { background: #fff; border-radius: 8px; padding: 4px; line-height: 0; }
+.qr svg { width: 100%; height: auto; display: block; }
+.qr.big { width: min(78vw, 420px); margin: .6rem auto; }
+.qrdialog { text-align: center; }
+.qrdialog .row { justify-content: center; }
+.invite-share input.link { font-size: .85rem; }
+.pwfield { position: relative; }
+.pwfield input { padding-right: 4.2rem; }
+.pwfield .showpw { position: absolute; right: .6rem; top: 50%; transform: translateY(-50%); }
+.okline { color: var(--ok, #17835a); }
+.infodialog h2 { margin-top: 0; }
+.infodialog .row { justify-content: flex-end; }
+.invitebox summary { cursor: pointer; font-weight: 600; }
+.seg2 button { white-space: nowrap; }
+[hidden] { display: none !important; }

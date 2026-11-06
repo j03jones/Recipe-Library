@@ -336,6 +336,35 @@ select t.expect('removed person''s pending submissions are gone', t.n($$ select 
 select t.expect('removed person''s Community recipe stays, still credited to them',
   (select owner_id = :'admin_id' and author_name = 'Lee' from public.recipes where title = 'Lee Shared Slaw'));
 
+-- ---- invite links and invite requests ----------------------------------------
+select t.login(:'admin_id'); set role authenticated;
+select public.create_invite('student', null, 'staff', 1, 30) as link_code \gset
+reset role;
+set role anon;
+select t.expect('anyone with a link can see the invite still works', (select status = 'active' and kind = 'student' from public.invite_info(:'link_code')));
+select t.expect('a made-up code shows as not found', (select status from public.invite_info('NOPE12345678')) = 'not found');
+select t.expect('lower case codes from links still match', (select status from public.invite_info(lower(:'link_code'))) = 'active');
+select public.request_invite('Ana', 'Ana@Example.com', 'student', 'In Chef Joseph''s Tuesday class');
+select public.request_invite('Ana B', 'ana@example.com', 'student', 'asked twice');
+select t.denied('a bad email is refused', $$ select public.request_invite('X', 'not-an-email', 'other', '') $$);
+select t.denied('people without an account cannot read requests', $$ select * from public.invite_requests $$);
+reset role;
+select t.expect('asking twice keeps one waiting request with the latest details',
+  t.n($$ select count(*) from public.invite_requests where email = 'ana@example.com' and status = 'waiting' and name = 'Ana B' $$) = 1);
+select t.login(:'s1'); set role authenticated;
+select t.expect('students cannot see invite requests', t.n($$ select count(*) from public.invite_requests $$) = 0);
+reset role;
+select t.login(:'admin_id'); set role authenticated;
+select t.expect('the admin sees invite requests', t.n($$ select count(*) from public.invite_requests $$) = 1);
+update public.invite_requests set status = 'invited', handled_at = now() where email = 'ana@example.com';
+select t.expect('admin can mark a request handled', t.n($$ select count(*) from public.invite_requests where status = 'invited' $$) = 1);
+select t.expect('admin code list includes the emailed-to column', (select count(*) >= 1 from public.admin_list_invites() where email is null));
+reset role;
+set role anon;
+select public.request_invite('Ana', 'ana@example.com', 'student', 'again later');
+reset role;
+select t.expect('after an invite, the same person can ask again', t.n($$ select count(*) from public.invite_requests where email = 'ana@example.com' $$) = 2);
+
 -- ---- open sign-up switch ------------------------------------------------------
 update public.app_settings set open_signup = true;
 insert into auth.users(email) values ('walkin@x.test');

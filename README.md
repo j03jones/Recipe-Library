@@ -88,6 +88,17 @@ full text never goes to Community, but it can be shared in two ways:
   with the original link and can be shared normally.
 Both go through admin approval, and the review card links to the original so you can compare.
 
+## Invites (phone app)
+- **Links and QR codes.** Admin tools > Invite someone > *Make a link & QR code*. The link opens
+  `#/join/CODE`, a sign-up page with the code already filled in. *Show big QR* lets a whole class scan
+  it from one screen. Restaurant owners get the same for their staff in Settings.
+- **Email invites.** Type a name and email, then *Send invite email*. Supabase emails a button, and
+  tapping it signs them in and asks them to choose a password.
+- **Requests.** People without a code use Settings > *Request*. Requests appear in Admin tools with
+  *Send student invite* / *Dismiss*.
+- Signing in, signing up and arriving from an email link show a confirmation dialog. Password boxes
+  have *Show*, and an unconfirmed email can have its confirmation sent again.
+
 ## Phone web app (offline)
 
 `web/` is an installable web app (PWA) that runs on Android and iPhone, with the whole recipe
