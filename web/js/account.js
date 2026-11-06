@@ -447,7 +447,7 @@ export async function viewAdmin(ctx) {
   ctx.setView('settings', 'settings');
   if (!lib.me && cloud.isSignedIn()) { try { await ctx.refreshCloud(); } catch { /* checked below */ } }   // opened straight from a link
   if (!lib.me || lib.me.role !== 'admin') {
-    fill(ctx.$app, h('h1', null, 'Admin tools'), h('p', { class: 'muted' }, 'This page is for the administrator. Sign in with the admin account in Settings.'),
+    fill(ctx.$app, ctx.pageHead('Admin tools'), h('p', { class: 'muted' }, 'This page is for the administrator. Sign in with the admin account in Settings.'),
       h('p', null, h('a', { href: '#/settings' }, 'Go to Settings')));
     return;
   }
@@ -599,9 +599,7 @@ export async function viewAdmin(ctx) {
   });
 
   fill(ctx.$app,
-    h('div', { class: 'topbar' },
-      h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Back', onclick: () => ctx.goBack('#/settings') }, icon('back'))),
-    h('h1', null, 'Admin tools'),
+    ctx.pageHead('Admin tools'),
     h('h2', null, `Waiting for approval${pending.length ? ` (${pending.length})` : ''}`),
     approvals,
     h('h2', null, 'Sign-up'),
