@@ -70,10 +70,10 @@ Deno.serve(async (req) => {
     return json({ error: m || 'The email could not be sent.' }, 502);
   }
 
-  // 3. if this answered an invite request, mark it handled
+  // 3. if this answered an invite request, mark it handled (as the caller: only the admin can)
   if (body.request_id) {
     await rest(`/rest/v1/invite_requests?id=eq.${encodeURIComponent(body.request_id)}`, {
-      method: 'PATCH', key: SERVICE, body: JSON.stringify({ status: 'invited', handled_at: new Date().toISOString() }),
+      method: 'PATCH', key: ANON, token, body: JSON.stringify({ status: 'invited', handled_at: new Date().toISOString() }),
     });
   }
   return json({ ok: true, code, email });
