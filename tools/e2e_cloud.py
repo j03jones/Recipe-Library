@@ -40,6 +40,8 @@ class Fake:
         self.log = []
         self.user_data = {}
         self.tick = 0
+        self.requests = {}   # id -> invite request
+        self.sent = []       # emailed invites
 
     def add_user(self, email, pw, name, role):
         uid = str(uuid.uuid4())
@@ -99,6 +101,17 @@ class Fake:
             return await ok(self.token_resp(self.users[body["email"]]))
         if path == "/auth/v1/recover":
             return await ok({})
+        if path == "/rest/v1/rpc/invite_info":
+            inv = self.invites.get((body.get("p_code") or "").upper())
+            if not inv:
+                return await ok([{"status": "not found", "kind": None, "restaurant_name": None, "member_role": None}])
+            return await ok([{"status": "active" if inv["uses"] < inv["max"] else "used up", "kind": inv["kind"],
+                              "restaurant_name": (self.restaurants.get(inv["restaurant_id"]) or {}).get("name"), "member_role": inv["member_role"]}])
+        if path == "/rest/v1/rpc/request_invite":
+            rid = str(uuid.uuid4())
+            self.requests[rid] = dict(id=rid, name=body["p_name"], email=body["p_email"].lower(), about=body["p_about"], note=body["p_note"],
+                                      status="waiting", created_at="2026-11-05T10:00:00Z")
+            return await route.fulfill(status=204, headers=CORS)
         if path == "/auth/v1/logout":
             return await ok({})
         if user is None:
@@ -161,6 +174,28 @@ class Fake:
             row = dict(src, id=str(uuid.uuid4()), scope="community", status="pending", source_recipe_id=src["id"], author_name=user["name"])
             self.recipes[row["id"]] = row
             return await ok(row["id"])
+        if path == "/rest/v1/invite_requests":
+            if user["role"] != "admin":
+                return await ok([])
+            if req.method == "GET":
+                return await ok([r for r in self.requests.values() if r["status"] == "waiting"])
+            self.requests[eq("id")].update(body)
+            return await ok([self.requests[eq("id")]])
+        if path == "/functions/v1/send-invite":
+            if user["role"] != "admin":
+                return await ok({"error": "You are not allowed to create this invite."}, 403)
+            if body["email"] in self.users:
+                return await ok({"error": "That email already has an account. They can sign in, or use “Forgot password?”."}, 409)
+            code = "CODE" + uuid.uuid4().hex[:6].upper()
+            self.invites[code] = dict(kind=body["kind"], restaurant_id=body["restaurant_id"], member_role=body["member_role"], uses=0, max=1)
+            self.sent.append(dict(body, code=code))
+            if body.get("request_id"):
+                self.requests[body["request_id"]]["status"] = "invited"
+            return await ok({"ok": True, "code": code})
+        if path == "/rest/v1/rpc/admin_list_invites":
+            return await ok([dict(code=c, kind=i["kind"], restaurant_name=(self.restaurants.get(i["restaurant_id"]) or {}).get("name"), member_role=i["member_role"],
+                                  max_uses=i["max"], uses=i["uses"], expires_at=None, cancelled_at=None, created_at="2026-11-05T10:00:00Z",
+                                  status="active" if i["uses"] < i["max"] else "used up", used_by=[], email=None) for c, i in self.invites.items()])
         if path == "/rest/v1/rpc/create_invite":
             code = "CODE" + uuid.uuid4().hex[:6].upper()
             self.invites[code] = dict(kind=body["p_kind"], restaurant_id=body["p_restaurant"], member_role=body["p_member_role"], uses=0, max=body["p_max_uses"])
@@ -187,13 +222,35 @@ async def new_page(b, fake, w=390, h=844):
     return ctx, page
 
 
+async def close_dialog(page, title_part=""):
+    """Close the confirmation dialog shown after signing in / up. Returns its text."""
+    sel = "dialog.infodialog[open]" + (f":has-text('{title_part}')" if title_part else "")
+    await page.wait_for_selector(sel)
+    text = await page.inner_text(sel)
+    await page.click("dialog.infodialog[open] button:has-text('OK')")
+    return text
+
+
 async def sign_in(page, email, pw):
     await page.goto(URL + "#/settings")
     await page.wait_for_selector("input[type=email]")
     await page.fill("input[type=email]", email)
     await page.fill("input[type=password]", pw)
     await page.click("button[type=submit]")
+    await close_dialog(page, "Welcome back")
     await page.wait_for_selector("text=Sign out")
+
+
+async def make_link(admin, who="student", restaurant=None):
+    """Admin tools > Invite someone > Make a link & QR code. Returns (code, link)."""
+    await admin.select_option("select[aria-label='Who are you inviting']", who)
+    if restaurant:
+        await admin.select_option("select[aria-label=Restaurant]", label=restaurant)
+    old = await admin.locator(".invite-share input.link").first.input_value() if await admin.locator("section .invite-share input.link").count() else ""
+    await admin.click("button:has-text('Make a link & QR code')")
+    await admin.wait_for_function("(o) => { const i = document.querySelector('section .invite-share input.link'); return i && i.value !== o; }", arg=old)
+    link = await admin.locator("section .invite-share input.link").first.input_value()
+    return link.rsplit("/", 1)[1], link
 
 
 async def main():
@@ -222,6 +279,7 @@ async def run():
         check("wrong password shows a friendly message", True)
         await admin.fill("input[type=password]", "adminpass1")
         await admin.click("button[type=submit]")
+        check("signing in shows a welcome-back dialog", "Welcome back, Joe" in await close_dialog(admin))
         await admin.wait_for_selector("text=Sign out")
         check("admin sees Admin tools link", await admin.locator("a:has-text('Admin tools')").count() == 1)
 
@@ -236,13 +294,30 @@ async def run():
         await admin.wait_for_timeout(300)
         check("admin can mark a restaurant active", fake.restaurants[rid]["subscription_status"] == "active")
 
-        await admin.click("button:has-text('Make a student code')")
-        await admin.wait_for_selector(".codebox .code")
-        student_code = await admin.inner_text(".codebox .code")
-        await admin.click("button:has-text('Make a restaurant code')")
-        await admin.wait_for_function("(c) => document.querySelector('.codebox .code').textContent !== c", arg=student_code)
-        rest_code = await admin.inner_text(".codebox .code")
-        check("invite codes are generated", student_code.startswith("CODE") and rest_code != student_code)
+        student_code, student_link = await make_link(admin, "student")
+        check("invite link shows a QR code", await admin.locator("section .invite-share .qr svg path").count() == 1)
+        check("invite link opens the join page", student_link.endswith("#/join/" + student_code))
+        rest_code, _ = await make_link(admin, "owner", "Maple Street Grill")
+        check("invite codes are generated", student_code.startswith("CODE") and rest_code != student_code
+              and fake.invites[rest_code]["member_role"] == "owner")
+        await admin.click("section button:has-text('Show big QR')")
+        await admin.wait_for_selector("dialog.qrdialog[open] svg")
+        await admin.screenshot(path="/tmp/cloud_bigqr.png")
+        await admin.click("dialog.qrdialog[open] button:has-text('Done')")
+
+        # email an invite
+        await admin.select_option("select[aria-label='Who are you inviting']", "student")
+        await admin.fill("input[aria-label='Their name']", "Kim")
+        await admin.fill("input[aria-label='Their email']", "kim@example.com")
+        await admin.click("button:has-text('Send invite email')")
+        await admin.wait_for_selector("text=Sent. Kim will get an email")
+        check("admin can email an invite", fake.sent and fake.sent[-1]["email"] == "kim@example.com" and fake.sent[-1]["name"] == "Kim"
+              and fake.sent[-1]["app_url"].startswith("http"))
+        await admin.fill("input[aria-label='Their email']", "chef@example.com")
+        await admin.click("button:has-text('Send invite email')")
+        await admin.wait_for_selector(".note:has-text('already has an account')")
+        check("emailing someone who already has an account is explained", True)
+        await admin.screenshot(path="/tmp/cloud_admin_invite.png", full_page=True)
         fake.recipes["coll1"] = dict(id="coll1", owner_id=fake.users["chef@example.com"]["id"], scope="restaurant", restaurant_id=rid, status="approved",
                                      title="Maple House Vinaigrette", categories=["Salad dressings"], author_name=None, review_note=None, source_recipe_id=None,
                                      body=dict(tags=[], yq="2", yu="cups", yr="2 cups", dir="Whisk.", ings=[["1", "1 cup", "cup", "olive oil", ""]]))
@@ -259,8 +334,19 @@ async def run():
         await st.click("button[type=submit]")
         await st.wait_for_selector(".note:has-text('invite code')")
         check("bad invite code is explained", True)
-        await st.fill("input[aria-label='Invite code']", student_code)
+        # ...then opens the link they were sent
+        await st.goto(student_link)
+        await st.wait_for_selector("h1:has-text('You’re invited!')")
+        check("join link fills in the invite code", await st.locator(".okline:has-text('" + student_code + "')").count() == 1
+              and await st.locator("input[aria-label='Invite code']").count() == 0)
+        await st.screenshot(path="/tmp/cloud_join.png", full_page=True)
+        await st.fill("input[aria-label='Your name']", "Sam")
+        await st.fill("input[type=email]", "sam@example.com")
+        await st.fill("input[aria-label=Password]", "samspass99")
+        await st.click("button.showpw")
+        check("password can be shown", await st.get_attribute("input[aria-label=Password]", "type") == "text")
         await st.click("button[type=submit]")
+        check("sign-up shows a welcome dialog", "Welcome, Sam!" in await close_dialog(st))
         await st.wait_for_selector("text=Sign out")
         check("student creates an account with a code", "sam@example.com" in fake.users)
 
@@ -332,11 +418,8 @@ async def run():
 
         # ---- restaurant staff
         await admin.reload()
-        await admin.wait_for_selector("button:has-text('Make a restaurant code')")
-        await admin.select_option("select[aria-label=Role]", "staff")
-        await admin.click("button:has-text('Make a restaurant code')")
-        await admin.wait_for_selector(".codebox .code")
-        code2 = await admin.inner_text(".codebox .code")
+        await admin.wait_for_selector("button:has-text('Make a link & QR code')")
+        code2, link2 = await make_link(admin, "staff", "Maple Street Grill")
         rctx, rs = await new_page(b, fake)
         await rs.goto(URL + "#/settings")
         await rs.click("button[role=tab]:has-text('New account')")
@@ -345,6 +428,7 @@ async def run():
         await rs.fill("input[type=password]", "raespass99")
         await rs.fill("input[aria-label='Invite code']", code2)
         await rs.click("button[type=submit]")
+        await close_dialog(rs, "Welcome, Rae")
         await rs.wait_for_selector("text=Sign out")
         check("restaurant staff account shows the restaurant and plan", await rs.locator(".stat:has-text('Maple Street Grill')").count() == 1)
         await rs.goto(URL + "#/")
@@ -429,17 +513,36 @@ async def run():
         await fp.wait_for_selector("text=Type your email above first")
         await fp.fill("input[type=email]", "pat@example.com")
         await fp.click("button:has-text('Forgot password?')")
-        await fp.wait_for_selector("text=reset link is on its way")
+        check("forgot password confirms in a dialog", "reset your password is on its way" in await close_dialog(fp, "Check your email"))
         check("forgot password sends the request", ("POST", "/auth/v1/recover") in fake.log)
         pat = fake.users["pat@example.com"]
         rctx2, rec = await new_page(b, fake)
         await rec.goto(URL + f"#access_token=tok-{pat['id']}&refresh_token=r&expires_in=3600&type=recovery")
+        await close_dialog(rec, "Choose a new password")
         await rec.wait_for_selector("input[aria-label='New password']")
         check("reset link signs in and opens the new-password box", "#/settings" in rec.url)
         await rec.fill("input[aria-label='New password']", "brandnew123")
         await rec.click("button:has-text('Save password')")
         await rec.wait_for_timeout(500)
         check("new password is saved", pat["pw"] == "brandnew123")
+        await close_dialog(rec, "Password changed")
+
+        # ---- arriving from an emailed invite: signed in, asked to choose a password
+        kim_id = fake.add_user("kim@example.com", "", "Kim", "student")
+        kim = fake.users["kim@example.com"]
+        ictx, inv = await new_page(b, fake)
+        await inv.goto(URL + f"#access_token=tok-{kim['id']}&refresh_token=r&expires_in=3600&type=invite")
+        check("invite email link welcomes them", "Welcome to Jones Ridge Recipes" in await close_dialog(inv))
+        await inv.wait_for_selector("text=Choose a password")
+        await inv.screenshot(path="/tmp/cloud_invited.png", full_page=True)
+        check("no Cancel on the first password", await inv.locator(".card button:has-text('Cancel')").count() == 0)
+        await inv.fill("input[aria-label='New password']", "kimspass99")
+        await inv.click("button:has-text('Save password')")
+        check("choosing the first password confirms how to sign in next time", "Next time, sign in with" in await close_dialog(inv, "all set"))  # the fake token has no email in it
+        check("invited person's password is saved", kim["pw"] == "kimspass99")
+        await inv.goto(URL + "#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired")
+        await inv.reload()
+        check("an expired email link is explained", "expired or was already used" in await close_dialog(inv, "didn’t work"))
 
         # ---- withdraw + sign out
         await st.goto(URL + "#/")
@@ -538,6 +641,30 @@ async def run():
         check("own version shows its Adapted from credit", "Adapted from Pat Example" in await admin.inner_text(".srccredit"))
         check("own version can be shared with the Community", await admin.locator("button:has-text('Share with the Community')").count() == 1)
         await admin.screenshot(path="/tmp/cloud_adapted.png", full_page=True)
+
+        # ---- asking for an invite, and a used-up link
+        qctx, q = await new_page(b, fake)
+        await q.goto(URL + "#/join/" + code2)
+        await q.wait_for_selector("h1:has-text('can’t be used')")
+        check("a used-up invite link explains itself and offers a request form",
+              "already been used" in await q.inner_text(".note") and await q.locator("button:has-text('Ask for an invite')").count() == 1)
+        await q.goto(URL + "#/settings")
+        await q.click("button[role=tab]:has-text('Request')")
+        await q.fill("input[aria-label='Your name']", "Dee")
+        await q.fill("input[aria-label='Your email']", "Dee@Example.com")
+        await q.select_option("select[aria-label='I am']", "student")
+        await q.fill("textarea[aria-label=Note]", "Tuesday class")
+        await q.click("button:has-text('Ask for an invite')")
+        check("asking for an invite shows a confirmation", "Request sent" in await close_dialog(q))
+        check("the request reaches the admin's list", any(r["email"] == "dee@example.com" and r["note"] == "Tuesday class" for r in fake.requests.values()))
+        await q.screenshot(path="/tmp/cloud_request.png", full_page=True)
+        await admin.goto(URL + "#/admin")
+        await admin.wait_for_selector("h2:has-text('Invite requests (1)')")
+        await admin.click("button:has-text('Send student invite')")
+        await admin.wait_for_selector("text=Nobody is waiting for an invite")
+        check("admin can answer a request with an emailed invite",
+              fake.sent[-1]["email"] == "dee@example.com" and fake.sent[-1]["request_id"] and
+              all(r["status"] == "invited" for r in fake.requests.values()))
 
         # desktop screenshot of admin
         await admin.set_viewport_size({"width": 1280, "height": 900})

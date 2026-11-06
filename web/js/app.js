@@ -9,7 +9,7 @@ import * as store from './store.js';
 import { SECTIONS } from './groups.js';
 import { addStars, copyText, emojiFor, icon, isStarred, onStarsChange, replaceStars, starIds, tile, toggleStar } from './ui.js';
 import * as cloud from './cloud.js';
-import { accountCard, viewAdmin } from './account.js';
+import { accountCard, viewAdmin, viewJoin } from './account.js';
 import * as photos from './photos.js';
 
 const $app = document.getElementById('app');
@@ -48,6 +48,19 @@ function toast(msg, ms = 2600) {
   $toast.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => $toast.classList.remove('show'), ms);
+}
+
+/** A message with one OK button (sign-in / sign-up confirmations and the like). */
+function infoDialog(title, message, okLabel = 'OK') {
+  return new Promise((resolve) => {
+    const dlg = h('dialog', { class: 'infodialog', 'aria-labelledby': 'dlg-title' },
+      h('h2', { id: 'dlg-title' }, title),
+      message && h('p', null, message),
+      h('div', { class: 'row' }, h('button', { class: 'primary', onclick: () => dlg.close() }, okLabel)));
+    dlg.addEventListener('close', () => { resolve(); dlg.remove(); });
+    document.body.append(dlg);
+    dlg.showModal();
+  });
 }
 
 function confirmDialog(message, okLabel = 'OK', danger = false) {
@@ -1053,13 +1066,14 @@ function route() {
   if (kind === 'links') return viewLinks(id || COLLECTIONS[0].id);
   if (kind === 'import') return viewImport();
   if (kind === 'admin') return viewAdmin(ctx);
+  if (kind === 'join') return viewJoin(ctx, id);
   if (kind === 'starred') return viewList(true);
   return viewList();
 }
 
 const ctx = {
-  h, fill, toast, icon, lib, $app, setView, goBack, refreshCloud, clearCloud, confirmDialog,
-  rerender: () => route(),
+  h, fill, toast, icon, lib, $app, setView, goBack, refreshCloud, clearCloud, confirmDialog, infoDialog,
+  rerender: () => route(), joinCode: '',
 };
 
 async function boot() {
@@ -1089,7 +1103,16 @@ async function boot() {
   route();
   registerWorker();
   if (linkType === 'recovery') ctx.recovery = true;
-  if (linkType) toast(linkType === 'recovery' ? 'Signed in. Choose a new password below.' : 'Email confirmed. You are signed in.', 5000);
+  if (linkType === 'invite') ctx.recovery = 'invite';      // signed in by the invite email: choose a password
+  if (linkType?.startsWith('error:')) {
+    infoDialog('That link didn’t work', `${linkType.slice(6)} Ask for a new invite, or use “Forgot password?” to get a new sign-in link.`);
+  } else if (linkType) {
+    const [t, m] = {
+      recovery: ['Choose a new password', 'You’re signed in. Choose a new password below.'],
+      invite: ['Welcome to Jones Ridge Recipes!', 'Your invite worked and you’re signed in. Choose a password below so you can sign in on other devices.'],
+    }[linkType] || ['Email confirmed', 'Your account is ready and you’re signed in.'];
+    infoDialog(t, m);
+  }
   if (cloud.isSignedIn()) {
     const hadAccount = !!lib.me;
     await refreshCloud();

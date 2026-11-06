@@ -33,6 +33,7 @@ code never touches the Resend key: the site is public, so a key in it could be r
    - Reset password: `reset-password.html`, "Reset your Recipe Library password"
    - Change email address: `change-email.html`, "Confirm your new email address"
    - Magic link: `magic-link.html`, "Your Recipe Library sign-in link"
+   - Invite user: `invite.html`, "You're invited to the Recipe Library"
 6. Test: sign up with a spare address and use "Forgot password?" in the app, then check
    resend.com/emails shows both as Delivered.
 
@@ -83,4 +84,21 @@ Keep "Verify JWT" switched on so only signed-in people can use it.
 
 `add_link_cards.sql` adds Community link cards (`share_link_to_community`): an imported recipe is shared
 as just its name, credit and original link. Run it after `add_source_credit.sql` (safe to run again).
+
+## Invites: links, QR codes, email and requests
+`add_invite_links.sql` (run after `add_link_cards.sql`, safe to run again) adds:
+- `invite_info(code)`: what the join page (`#/join/CODE`, opened from a link or QR code) shows before
+  sign-up. Anyone with the code can call it; it never reveals who made or used a code.
+- `invite_requests` + `request_invite(...)`: the "Request" form for people without a code. Only the
+  admin can read requests (Admin tools > Invite requests).
+- `invites.email`: which address an emailed invite went to.
+
+Emailed invites use the `send-invite` edge function: it makes a one-person code as the signed-in caller
+(so `create_invite`'s rules decide who may invite whom) and asks Supabase Auth to send its "Invite user"
+email through the Resend SMTP. No email key is needed in the function.
+
+    supabase functions deploy send-invite      (keep Verify JWT on)
+
+Paste `email-templates/invite.html` into Authentication > Emails > **Invite user**. The link signs the
+person in and the app asks them to choose a password.
 
