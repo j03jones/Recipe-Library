@@ -78,6 +78,16 @@ won't share them to Community (`supabase/add_source_credit.sql` enforces this on
 phone reads pages through the `import-recipe` edge function (`supabase/functions/import-recipe`)
 because browsers can't read other sites directly.
 
+**Sharing recipes from other websites with the Community** (phone, signed in). An imported recipe's
+full text never goes to Community, but it can be shared in two ways:
+- *Share a link to the Community* sends a **link card**: just the name, "Recipe by …" and a button
+  that opens the original page. No ingredients or method are copied (`share_link_to_community`).
+- *Make my own version* starts a new recipe with the ingredients, an empty method and the original
+  method folded away for reference. The student writes the steps in their own words. The app refuses
+  methods that repeat too much of the original wording. The result carries an "Adapted from …" credit
+  with the original link and can be shared normally.
+Both go through admin approval, and the review card links to the original so you can compare.
+
 ## Phone web app (offline)
 
 `web/` is an installable web app (PWA) that runs on Android and iPhone, with the whole recipe

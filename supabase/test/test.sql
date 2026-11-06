@@ -98,6 +98,14 @@ select t.expect('paying clients are not held to the free limit', t.n($$ select c
 insert into public.recipes(owner_id, scope, title, body) values (:'c1', 'private', 'Imported dish', '{"src": {"author": "Someone Else", "name": "A Blog", "url": "https://example.com/dish/"}}');
 select id as imported1 from public.recipes where title='Imported dish' \gset
 select t.denied('recipes imported from other websites cannot go to Community', format($$ select public.submit_to_community(%L, true) $$, :'imported1'));
+select public.share_link_to_community(:'imported1') as linkcard1 \gset
+select t.expect('an imported recipe can be shared as a link card', t.n(format($$ select count(*) from public.recipes where id = %L and scope = 'community' and status = 'pending' $$, :'linkcard1')) = 1);
+select t.expect('the link card carries only the name, credit and link', t.n(format($$ select count(*) from public.recipes where id = %L and body->>'kind' = 'link' and body->>'dir' = '' and jsonb_array_length(body->'ings') = 0 and body->'src'->>'url' = 'https://example.com/dish/' and body->'src'->>'author' = 'Someone Else' $$, :'linkcard1')) = 1);
+select t.denied('a link card can only be shared once while waiting or live', format($$ select public.share_link_to_community(%L) $$, :'imported1'));
+insert into public.recipes(owner_id, scope, title, body) values (:'c1', 'private', 'Adapted dish', '{"adapted": {"author": "Someone Else", "name": "A Blog", "url": "https://example.com/dish/"}, "dir": "My own steps."}');
+select id as adapted1 from public.recipes where title='Adapted dish' \gset
+select t.denied('a recipe without an original link cannot be shared as a link card', format($$ select public.share_link_to_community(%L) $$, :'adapted1'));
+select t.expect('an adapted recipe (own wording, credited) can go to Community', public.submit_to_community(:'adapted1', true) is not null);
 reset role;
 
 -- ---- sharing and approval -----------------------------------------------------

@@ -81,3 +81,6 @@ page a signed-in person asks for and returns only its schema.org Recipe block. N
 
 Keep "Verify JWT" switched on so only signed-in people can use it.
 
+`add_link_cards.sql` adds Community link cards (`share_link_to_community`): an imported recipe is shared
+as just its name, credit and original link. Run it after `add_source_credit.sql` (safe to run again).
+

@@ -4,6 +4,16 @@ import * as cloud from './cloud.js';
 import { copyText } from './ui.js';
 import * as photos from './photos.js';
 
+/** What the admin needs to check on a submission that credits someone else: the original link. */
+function reviewCredit(h, body) {
+  const link = (who, url, label) => h('p', { class: 'small' }, who, ' ',
+    /^https?:\/\//i.test(url || '') && h('a', { href: url, target: '_blank', rel: 'noopener' }, label));
+  const name = (c) => [c?.author, c?.name].filter(Boolean).join(', ') || 'another website';
+  if (body?.kind === 'link') return link(`Link card: ${name(body.src)}.`, body.src?.url, 'Check the original ↗');
+  if (body?.adapted) return link(`Adapted from ${name(body.adapted)}. Check the method is in their own words:`, body.adapted.url, 'compare with the original ↗');
+  return null;
+}
+
 const initials = (name) => (name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
 /** A round profile photo, or the person's initials when they have none. */
 export function avatarEl(path, name, small = false) {
@@ -330,6 +340,7 @@ export async function viewAdmin(ctx) {
       return h('div', { class: 'card stack' },
         h('a', { href: `#/r/${row.id}` }, h('strong', null, row.title)),
         h('p', { class: 'muted small' }, `Shared by ${row.author_name || 'a chef'}`),
+        reviewCredit(h, row.body),
         n,
         h('div', { class: 'row grow' },
           h('button', { class: 'primary', type: 'button', onclick: () => review(row, true) }, 'Approve'),

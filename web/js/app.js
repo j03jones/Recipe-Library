@@ -1,10 +1,10 @@
 import {
-  Frac, UNIT_CHOICES, amountForEditing, creditLine, factorForServings, formatIngredient, formatYield,
+  Frac, UNIT_CHOICES, adaptedLine, amountForEditing, creditLine, factorForServings, formatIngredient, formatYield,
   ingredientFromFields, parseYield, recipeToText, scaleRecipe, splitCategories,
 } from './units.js';
-import { fromRecord, fromRow, hasSource, toRecord } from './model.js';
+import { fromRecord, fromRow, hasSource, isAdapted, toRecord } from './model.js';
 import { COLLECTIONS } from './linkdata.js';
-import { VEGAN_GROUP, recipeFromSchema } from './webimport.js';
+import { MAX_OVERLAP, VEGAN_GROUP, recipeFromSchema, wordingOverlap } from './webimport.js';
 import * as store from './store.js';
 import { SECTIONS } from './groups.js';
 import { addStars, copyText, emojiFor, icon, isStarred, onStarsChange, replaceStars, starIds, tile, toggleStar } from './ui.js';
@@ -375,7 +375,8 @@ function viewList(starredOnly = false) {
         thumb(r),
         h('span', { class: 'txt' },
           h('span', { class: 't' }, r.title, r.source !== 'base' && h('span', { class: 'badge' }, badgeText(r))),
-          h('span', { class: 'c' }, r.categories.length ? r.categories.slice(0, 2).join(', ') : `${r.ings.length} ingredients`))),
+          h('span', { class: 'c' }, r.kind === 'link' ? `Link · ${r.src?.name || 'another website'} ↗`
+            : r.categories.length ? r.categories.slice(0, 2).join(', ') : `${r.ings.length} ingredients`))),
       starButton(r.id));
   }
 
@@ -449,11 +450,18 @@ function credit(r) {
 
 /** "Recipe by Nora Taylor, Nora Cooks · View the original" for recipes that came from somewhere else. */
 function sourceCredit(r) {
-  if (!hasSource(r)) return null;
-  const safe = /^https?:\/\//i.test(r.src.url || '') ? r.src.url : '';
-  return h('p', { class: 'srccredit' },
-    h('span', null, creditLine(r) || 'From another source'),
-    safe && h('a', { href: safe, target: '_blank', rel: 'noopener' }, 'View the original recipe'));
+  const safe = (u) => (/^https?:\/\//i.test(u || '') ? u : '');
+  if (hasSource(r)) {
+    return h('p', { class: 'srccredit' },
+      h('span', null, creditLine(r) || 'From another source'),
+      safe(r.src.url) && h('a', { href: safe(r.src.url), target: '_blank', rel: 'noopener' }, 'View the original recipe'));
+  }
+  if (isAdapted(r)) {
+    return h('p', { class: 'srccredit' },
+      h('span', null, adaptedLine(r) || 'Adapted from another recipe'),
+      safe(r.adapted.url) && h('a', { href: safe(r.adapted.url), target: '_blank', rel: 'noopener' }, 'See the original'));
+  }
+  return null;
 }
 
 /** The dish photo on the recipe page, with Add / Change / Remove when this person may change it. */
@@ -490,6 +498,16 @@ function photoBlock(r) {
 const RIGHTS = 'Share a copy of this recipe with the Community? Everyone signed in will be able to read it and see your name. Only share a recipe that is yours or that you have the right to share. Chef-owned or restaurant recipes should stay private. The administrator reviews every recipe before it appears, and you can withdraw it later.';
 
 /** Share / withdraw buttons for the recipe page. */
+const RIGHTS_LINK = 'Share a link to this recipe with the Community? People will see its name, who wrote it and a button that opens it on the original website. None of the recipe’s text is copied. The administrator reviews it before it appears, and you can withdraw it later.';
+
+/** Start the person's own version of an imported recipe: ingredients kept, method rewritten in their words. */
+function adaptRecipe(r) {
+  viewEdit(null, {
+    ...r, id: null, source: 'mine', title: `${r.title} (my version)`, dir: '', src: null,
+    adapted: { ...r.src }, adaptFrom: r.dir, adapting: true,
+  });
+}
+
 function sharing(r) {
   if (!lib.me) return null;
   const out = h('div', { class: 'stack' });
@@ -498,10 +516,23 @@ function sharing(r) {
     if (!await confirmDialog('Withdraw this recipe from the Community? Your own copy stays in your account.', 'Withdraw', true)) return;
     try { await cloud.deleteRecipe(row.id); await refreshCloud(); await tidyPhoto(row.photo); toast('Withdrawn'); route(); } catch (err) { toast(err.message, 4000); }
   } }, 'Withdraw from Community');
-  if (r.source === 'account' && hasSource(r) && !copy) {
-    fill(out, h('p', { class: 'muted small' }, 'This recipe came from another website, so it stays in your private recipes and is not shared with the Community. Send people to the original instead.'));
+  const status = (row) => h('p', { class: 'muted small' }, row.status === 'approved'
+    ? (row.body?.kind === 'link' ? 'A link to this recipe is in the Community.' : 'A copy of this recipe is in the Community.')
+    : row.status === 'declined' ? `Not approved${row.review_note ? `: ${row.review_note}` : '.'}`
+      : (row.body?.kind === 'link' ? 'A link to this recipe is waiting for approval.' : 'A copy is waiting for approval.'));
+  if (r.source === 'account' && hasSource(r)) {
+    const canLink = /^https?:\/\//i.test(r.src.url || '');
+    fill(out,
+      h('p', { class: 'muted small' }, 'This recipe came from another website, so its full text stays in your private recipes. To share it with the Community, share a link to the original, or make your own version in your own words.'),
+      copy && [status(copy), withdraw(copy)],
+      h('div', { class: 'row grow' },
+        !copy && canLink && h('button', { onclick: async () => {
+          if (!await confirmDialog(RIGHTS_LINK, 'Share link')) return;
+          try { await cloud.shareLinkToCommunity(r.id); await refreshCloud(); toast('Link sent for approval'); route(); } catch (err) { toast(err.message, 4000); }
+        } }, 'Share a link to the Community'),
+        h('button', { onclick: () => adaptRecipe(r) }, 'Make my own version')));
   } else if (r.source === 'account') {
-    if (copy) fill(out, h('p', { class: 'muted small' }, copy.status === 'approved' ? 'A copy of this recipe is in the Community.' : copy.status === 'declined' ? `Not approved${copy.review_note ? `: ${copy.review_note}` : '.'}` : 'A copy is waiting for approval.'), withdraw(copy));
+    if (copy) fill(out, status(copy), withdraw(copy));
     else fill(out, h('button', { onclick: async () => {
       if (!await confirmDialog(RIGHTS, 'Share')) return;
       try { await cloud.submitToCommunity(r.id); await refreshCloud(); toast('Sent for approval'); route(); } catch (err) { toast(err.message, 4000); }
@@ -511,9 +542,30 @@ function sharing(r) {
   return out;
 }
 
+/** A Community link card: name, credit and a button that opens the recipe on its own website. */
+function viewLinkCard(r) {
+  setView('recipe', 'list');
+  const url = /^https?:\/\//i.test(r.src?.url || '') ? r.src.url : '';
+  fill($app,
+    h('div', { class: 'topbar' },
+      h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Back', onclick: () => goBack('#/') }, icon('back')),
+      h('span', { class: 'sp' }),
+      starButton(r.id)),
+    h('div', { class: 'rhead' }, tile(r.categories, true), h('h1', null, r.title)),
+    r.categories.length > 0 && h('div', { class: 'labels' }, r.categories.map((c) => h('span', { class: 'label' }, c))),
+    credit(r),
+    h('div', { class: 'card stack linkcard' },
+      h('p', null, h('strong', null, creditLine(r) || 'A recipe from another website')),
+      h('p', { class: 'muted small' }, `This is a link to a recipe on ${r.src?.name || 'another website'}. Open it there to cook from it. The author keeps the visit and the credit.`),
+      url && h('a', { class: 'linkbtn primary', href: url, target: '_blank', rel: 'noopener' }, `Open the recipe on ${r.src?.name || 'their website'} ↗`)),
+    h('section', { class: 'tools stack' }, sharing(r)));
+  window.scrollTo(0, 0);
+}
+
 function viewRecipe(id) {
   const r = lib.byId.get(id);
   if (!r) return viewMissing();
+  if (r.kind === 'link') return viewLinkCard(r);
   setView('recipe', 'list');
   let factor = new Frac(1n);
   let smart = true;
@@ -660,6 +712,7 @@ function viewEdit(id, template) {
   const yld = h('input', { class: 'full', value: formatYield(r) || r.yr, placeholder: 'e.g. 4 servings, 24 cookies', 'aria-label': 'Yield' });
   const dir = h('textarea', { 'aria-label': 'Directions', placeholder: 'Directions. Leave a blank line between paragraphs.' });
   dir.value = r.dir;
+  const adapting = !!r.adapting;
   const src0 = r.src || {};
   const srcAuthor = h('input', { class: 'full', value: src0.author || '', placeholder: 'e.g. Nora Taylor (blank if it’s yours)', autocomplete: 'off', 'aria-label': 'Recipe by' });
   const srcName = h('input', { class: 'full', value: src0.name || '', placeholder: 'Website, book or person, e.g. Nora Cooks', autocomplete: 'off', 'aria-label': 'From' });
@@ -697,6 +750,16 @@ function viewEdit(id, template) {
       src: { author: srcAuthor.value.trim(), name: srcName.value.trim(), url: srcUrl.value.trim() },
     };
     if (recipe.src.url && !/^https?:\/\//i.test(recipe.src.url)) recipe.src.url = `https://${recipe.src.url}`;
+    const base = existing || template || {};
+    if (isAdapted(base)) recipe.adapted = { ...base.adapted };
+    if (adapting) {
+      if (!recipe.dir) { toast('Write the method in your own words first'); dir.focus(); return; }
+      if (wordingOverlap(recipe.dir, base.adaptFrom) > MAX_OVERLAP) {
+        toast('Your method is still too close to the original wording. Rewrite the steps in your own words.', 5000);
+        dir.focus();
+        return;
+      }
+    }
     const rec = toRecord(recipe);
     let target = recipe.id;
     if ((existing && existing.cloud) || (!existing && lib.me && cloud.isSignedIn())) {
@@ -735,8 +798,9 @@ function viewEdit(id, template) {
   }
 
   fill($app, 
-    h('h1', null, existing ? 'Edit recipe' : template?.imported ? 'Check and save' : template ? 'Save as new recipe' : 'New recipe'),
+    h('h1', null, existing ? 'Edit recipe' : adapting ? 'Make your own version' : template?.imported ? 'Check and save' : template ? 'Save as new recipe' : 'New recipe'),
     !existing && !template && h('p', null, h('a', { class: 'linkbtn', href: '#/import' }, '⤓ Import a recipe from a web page')),
+    adapting && h('p', { class: 'muted' }, 'Keep or change the ingredients, then write the method in your own words. Your version can be shared with the Community and will say “Adapted from” with a link to the original.'),
     h('label', { class: 'field' }, h('span', null, 'Title'), title),
     h('label', { class: 'field' }, h('span', null, 'Categories'), cats),
     h('label', { class: 'field' }, h('span', null, 'Yield'), yld),
@@ -744,12 +808,20 @@ function viewEdit(id, template) {
     h('p', { class: 'muted small' }, 'Amounts can be 2, 1/2, 1 1/2, 1.5 or ½. Use Group for headings like Sauce or Topping.'),
     datalist, rowsBox,
     h('button', { type: 'button', class: 'full', onclick: () => addRow(undefined, true) }, '+ Add ingredient'),
-    h('label', { class: 'field' }, h('span', null, 'Directions'), dir),
+    adapting && r.adaptFrom && h('details', { class: 'card original' },
+      h('summary', null, 'The original method, for reference'),
+      h('p', { class: 'muted small' }, 'Write your own steps below in your own words. Don’t copy these. Change what you like: technique, timing, seasoning.'),
+      h('ol', null, r.adaptFrom.split('\n').filter((l) => l.trim()).map((l) => h('li', null, l)))),
+    h('label', { class: 'field' }, h('span', null, adapting ? 'Your method, in your own words' : 'Directions'), dir),
     h('h2', null, 'Credit'),
-    h('p', { class: 'muted small' }, 'For a recipe from someone else, say who wrote it and link to the original. It is shown on the recipe.'),
-    h('label', { class: 'field' }, h('span', null, 'Recipe by'), srcAuthor),
-    h('label', { class: 'field' }, h('span', null, 'From'), srcName),
-    h('label', { class: 'field' }, h('span', null, 'Link to the original'), srcUrl),
+    isAdapted(r)
+      ? [h('p', { class: 'srccredit' }, h('span', null, adaptedLine(r) || 'Adapted from another recipe'),
+        /^https?:\/\//i.test(r.adapted.url || '') && h('a', { href: r.adapted.url, target: '_blank', rel: 'noopener' }, 'See the original')),
+      h('p', { class: 'muted small' }, 'This credit stays on your version, including in the Community.')]
+      : [h('p', { class: 'muted small' }, 'For a recipe from someone else, say who wrote it and link to the original. It is shown on the recipe.'),
+        h('label', { class: 'field' }, h('span', null, 'Recipe by'), srcAuthor),
+        h('label', { class: 'field' }, h('span', null, 'From'), srcName),
+        h('label', { class: 'field' }, h('span', null, 'Link to the original'), srcUrl)],
     h('div', { class: 'row grow' },
       h('button', { class: 'primary', onclick: save }, 'Save'),
       h('button', { onclick: () => (template ? route() : goBack(existing ? `#/r/${existing.id}` : '#/')) }, 'Cancel')),

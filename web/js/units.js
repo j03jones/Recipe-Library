@@ -121,10 +121,18 @@ export function formatYield(r) {
 
 /** 'Recipe by Nora Taylor, Nora Cooks' (whichever parts are known), or ''. Same as formatting.credit_line. */
 export function creditLine(r) {
-  const src = r.src || {};
-  let who = [src.author, src.name].filter(Boolean);
+  return whoLine('Recipe by', r.src);
+}
+
+/** 'Adapted from Nora Taylor, Nora Cooks' for someone's own version of another person's recipe, or ''. */
+export function adaptedLine(r) {
+  return whoLine('Adapted from', r.adapted);
+}
+
+function whoLine(lead, src) {
+  let who = [src?.author, src?.name].filter(Boolean);
   if (who.length === 2 && who[0].toLowerCase() === who[1].toLowerCase()) who = who.slice(0, 1);
-  return who.length ? `Recipe by ${who.join(', ')}` : '';
+  return who.length ? `${lead} ${who.join(', ')}` : '';
 }
 
 export function recipeToText(r) {
@@ -132,6 +140,9 @@ export function recipeToText(r) {
   const credit = creditLine(r);
   if (credit) lines.push(credit);
   if (r.src?.url) lines.push('Original: ' + r.src.url);
+  const adapted = adaptedLine(r);   // phone-only for now (the desktop app has no adapted recipes)
+  if (adapted) lines.push(adapted);
+  if (r.adapted?.url) lines.push('Original: ' + r.adapted.url);
   if (r.categories.length) lines.push('Categories: ' + r.categories.join(', '));
   const y = formatYield(r);
   if (y) lines.push('Yield: ' + y);

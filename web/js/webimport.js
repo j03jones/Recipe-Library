@@ -123,3 +123,27 @@ export function recipeFromSchema(node, url = '', siteName = '') {
     src: { author, name: site, url: link }, source: 'mine',
   };
 }
+
+/**
+ * How much of `mine` repeats the wording of `original`: the share of my 4-word runs that also appear in the
+ * original (0 to 1). Used to check that an adapted recipe's method is written in the person's own words.
+ */
+export function wordingOverlap(mine, original) {
+  const words = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9½¼¾/\s]+/g, ' ').split(/\s+/).filter(Boolean);
+  const runs = (w) => {
+    const out = new Set();
+    for (let i = 0; i + 4 <= w.length; i++) out.add(w.slice(i, i + 4).join(' '));
+    return out;
+  };
+  const mw = words(mine);
+  if (!mw.length) return 0;
+  if (mw.length < 4) return ` ${words(original).join(' ')} `.includes(` ${mw.join(' ')} `) ? 1 : 0;   // very short methods
+  const a = runs(mw);
+  const b = runs(words(original));
+  let same = 0;
+  for (const x of a) if (b.has(x)) same++;
+  return same / a.size;
+}
+
+/** Above this share of repeated 4-word runs, an adapted method is too close to the original wording. */
+export const MAX_OVERLAP = 0.35;

@@ -146,6 +146,14 @@ class Fake:
                 "@type": "Recipe", "name": "Test Lentil Soup", "author": {"name": "Pat Example"},
                 "recipeYield": ["4", "4 bowls"], "recipeIngredient": ["1 1/2 cups lentils", "½ tsp salt"],
                 "recipeInstructions": [{"@type": "HowToStep", "text": "Simmer."}, {"@type": "HowToStep", "text": "Serve."}]}})
+        if path == "/rest/v1/rpc/share_link_to_community":
+            src = self.recipes[body["p_recipe"]]
+            o = src["body"]["src"]
+            row = dict(id=str(uuid.uuid4()), owner_id=user["id"], scope="community", status="pending", restaurant_id=None, review_note=None,
+                       title=src["title"], categories=src.get("categories", []), source_recipe_id=src["id"], author_name=user["name"],
+                       body=dict(kind="link", title=src["title"], tags=[], yq="", yu="", yr="", dir="", ings=[], src=o))
+            self.recipes[row["id"]] = row
+            return await ok(row["id"])
         if path == "/rest/v1/rpc/submit_to_community":
             src = self.recipes[body["p_recipe"]]
             if (src.get("body") or {}).get("src", {}).get("url"):
@@ -487,6 +495,49 @@ async def run():
               await admin.locator("button:has-text('Share with the Community')").count() == 0
               and await admin.locator("text=stays in your private recipes").count() == 1)
         await admin.screenshot(path="/tmp/cloud_imported.png", full_page=True)
+
+        # ---- share it as a link card
+        admin.once("dialog", lambda d: d.accept())
+        await admin.click("button:has-text('Share a link to the Community')")
+        await admin.wait_for_selector("dialog[open]")
+        check("link sharing explains nothing is copied", "None of the recipe" in await admin.inner_text("dialog[open]"))
+        await admin.click("dialog[open] button:has-text('Share link')")
+        await admin.wait_for_selector("text=A link to this recipe is waiting for approval")
+        card = [r for r in fake.recipes.values() if r["scope"] == "community" and r["body"].get("kind") == "link"]
+        check("link card goes to Community with no recipe text", len(card) == 1 and card[0]["body"]["dir"] == "" and card[0]["body"]["ings"] == []
+              and card[0]["body"]["src"]["url"] == "https://example.com/test-lentil-soup/")
+        await admin.goto(URL + "#/admin")
+        await admin.wait_for_selector("text=Link card: Pat Example")
+        check("admin sees the original link when reviewing a link card",
+              await admin.get_attribute("a:has-text('Check the original')", "href") == "https://example.com/test-lentil-soup/")
+        await admin.goto(URL + f"#/r/{card[0]['id']}")
+        await admin.wait_for_selector(".linkcard")
+        check("link card page opens the original website",
+              await admin.get_attribute(".linkcard a", "href") == "https://example.com/test-lentil-soup/"
+              and await admin.locator("h2:has-text('Ingredients')").count() == 0)
+        await admin.screenshot(path="/tmp/cloud_linkcard.png", full_page=True)
+
+        # ---- make my own version
+        imported = next(r for r in fake.recipes.values() if r["title"] == "Test Lentil Soup" and r["scope"] == "private")
+        await admin.goto(URL + f"#/r/{imported['id']}")
+        await admin.click("button:has-text('Make my own version')")
+        await admin.wait_for_selector("h1:has-text('Make your own version')")
+        check("own version starts with the ingredients and an empty method",
+              await admin.input_value("input[aria-label=Title]") == "Test Lentil Soup (my version)"
+              and await admin.input_value("textarea") == "" and await admin.locator("details.original li").count() == 2)
+        await admin.fill("textarea", "Simmer. Serve.")
+        await admin.click("button:has-text('Save')")
+        await admin.wait_for_selector("text=too close to the original wording")
+        check("copying the original method is refused", not any(r["title"].endswith("(my version)") for r in fake.recipes.values()))
+        await admin.fill("textarea", "Cook the lentils gently in plenty of water until soft, about half an hour.\nTaste, adjust the salt and ladle into bowls.")
+        await admin.click("button:has-text('Save')")
+        await admin.wait_for_selector("h1:has-text('(my version)')")
+        mine = [r for r in fake.recipes.values() if r["title"].endswith("(my version)")]
+        check("own version is saved with an Adapted from credit and no imported-source tag",
+              len(mine) == 1 and mine[0]["body"]["adapted"]["url"] == "https://example.com/test-lentil-soup/" and "src" not in mine[0]["body"])
+        check("own version shows its Adapted from credit", "Adapted from Pat Example" in await admin.inner_text(".srccredit"))
+        check("own version can be shared with the Community", await admin.locator("button:has-text('Share with the Community')").count() == 1)
+        await admin.screenshot(path="/tmp/cloud_adapted.png", full_page=True)
 
         # desktop screenshot of admin
         await admin.set_viewport_size({"width": 1280, "height": 900})
