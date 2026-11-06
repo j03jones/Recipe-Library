@@ -41,6 +41,8 @@ class Fake:
         self.user_data = {}
         self.tick = 0
         self.requests = {}   # id -> invite request
+        self.notified = []   # admin emails about new requests
+        self.open_signup = False
         self.sent = []       # emailed invites
 
     def add_user(self, email, pw, name, role):
@@ -89,6 +91,19 @@ class Fake:
             if not x or x["pw"] != body["password"]:
                 return await ok({"error_description": "Invalid login credentials"}, 400)
             return await ok(self.token_resp(x))
+        if path == "/rest/v1/rpc/signup_open":
+            return await ok(self.open_signup)
+        if path == "/functions/v1/request-invite":
+            new = not any(r["email"] == body["email"].lower() and r["status"] == "waiting" for r in self.requests.values())
+            rid = str(uuid.uuid4())
+            self.requests[rid] = dict(id=rid, name=body["name"], email=body["email"].lower(), about=body["about"], note=body["note"],
+                                      status="waiting", created_at="2026-11-05T10:00:00Z")
+            if new:
+                self.notified.append(body["email"].lower())
+            return await ok({"ok": True, "new": new, "emailed": new})
+        if path == "/auth/v1/signup" and self.open_signup and not (body["data"].get("invite_code") or ""):
+            uid = self.add_user(body["email"], body["password"], body["data"].get("display_name"), "student")
+            return await ok(self.token_resp(self.users[body["email"]]))
         if path == "/auth/v1/signup":
             code = (body["data"].get("invite_code") or "").upper()
             inv = self.invites.get(code)
@@ -174,6 +189,11 @@ class Fake:
             row = dict(src, id=str(uuid.uuid4()), scope="community", status="pending", source_recipe_id=src["id"], author_name=user["name"])
             self.recipes[row["id"]] = row
             return await ok(row["id"])
+        if path == "/rest/v1/app_settings":
+            if user["role"] != "admin":
+                return await ok([])
+            self.open_signup = bool(body["open_signup"])
+            return await route.fulfill(status=204, headers=CORS)
         if path == "/rest/v1/invite_requests":
             if user["role"] != "admin":
                 return await ok([])
@@ -657,6 +677,7 @@ async def run():
         await q.click("button:has-text('Ask for an invite')")
         check("asking for an invite shows a confirmation", "Request sent" in await close_dialog(q))
         check("the request reaches the admin's list", any(r["email"] == "dee@example.com" and r["note"] == "Tuesday class" for r in fake.requests.values()))
+        check("the admin is emailed about a new request", fake.notified == ["dee@example.com"])
         await q.screenshot(path="/tmp/cloud_request.png", full_page=True)
         await admin.goto(URL + "#/admin")
         await admin.wait_for_selector("h2:has-text('Invite requests (1)')")
@@ -665,6 +686,31 @@ async def run():
         check("admin can answer a request with an emailed invite",
               fake.sent[-1]["email"] == "dee@example.com" and fake.sent[-1]["request_id"] and
               all(r["status"] == "invited" for r in fake.requests.values()))
+
+        # ---- open sign-up switch
+        await admin.goto(URL + "#/admin")
+        await admin.wait_for_selector("text=Off: people need an invite")
+        await admin.click("input[aria-label='Open sign-up']")
+        await admin.wait_for_selector("dialog[open]")
+        check("opening sign-up asks first", "Anyone who finds the app" in await admin.inner_text("dialog[open]"))
+        await admin.click("dialog[open] button:has-text('Open sign-up')")
+        await admin.wait_for_selector("text=On: anyone can create")
+        check("admin can open sign-up", fake.open_signup is True)
+        octx, o = await new_page(b, fake)
+        await o.goto(URL + "#/settings")
+        await o.wait_for_selector("button[role=tab]:has-text('New account')")
+        await o.wait_for_timeout(500)
+        check("with open sign-up there is no Request tab", await o.locator("button[role=tab]:has-text('Request')").count() == 0)
+        await o.click("button[role=tab]:has-text('New account')")
+        await o.fill("input[aria-label='Your name']", "Val")
+        await o.fill("input[type=email]", "val@example.com")
+        await o.fill("input[aria-label=Password]", "valspass99")
+        await o.click("button[type=submit]")
+        check("with open sign-up anyone can join without a code", "Welcome, Val!" in await close_dialog(o) and "val@example.com" in fake.users)
+        await admin.click("input[aria-label='Open sign-up']")
+        await admin.click("dialog[open] button:has-text('Close sign-up')")
+        await admin.wait_for_selector("text=Off: people need an invite")
+        check("admin can close sign-up again", fake.open_signup is False)
 
         # desktop screenshot of admin
         await admin.set_viewport_size({"width": 1280, "height": 900})

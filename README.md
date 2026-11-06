@@ -96,6 +96,9 @@ Both go through admin approval, and the review card links to the original so you
   tapping it signs them in and asks them to choose a password.
 - **Requests.** People without a code use Settings > *Request*. Requests appear in Admin tools with
   *Send student invite* / *Dismiss*.
+  You get an email for each new request, with a button to Admin tools.
+- **Open sign-up.** Admin tools > Sign-up has a switch that lets anyone create a free student
+  account without a code. Turn it on when you're ready to open up.
 - Signing in, signing up and arriving from an email link show a confirmation dialog. Password boxes
   have *Show*, and an unconfirmed email can have its confirmation sent again.
 

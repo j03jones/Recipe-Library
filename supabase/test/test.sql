@@ -366,6 +366,20 @@ reset role;
 select t.expect('after an invite, the same person can ask again', t.n($$ select count(*) from public.invite_requests where email = 'ana@example.com' $$) = 2);
 
 -- ---- open sign-up switch ------------------------------------------------------
+set role anon;
+select t.expect('anyone can see sign-up is invite-only', public.signup_open() = false);
+select t.expect('a new invite request says it is new', public.request_invite('Bo', 'bo@example.com', 'other', '') = true);
+select t.expect('asking again says it is not new', public.request_invite('Bo', 'BO@example.com', 'other', 'again') = false);
+reset role;
+select t.login(:'s1'); set role authenticated;
+update public.app_settings set open_signup = true;
+reset role;
+select t.expect('students cannot open sign-up', public.signup_open() = false);
+select t.login(:'admin_id'); set role authenticated;
+update public.app_settings set open_signup = true;
+reset role;
+select t.expect('the admin can open sign-up', public.signup_open() = true);
+update public.app_settings set open_signup = false;
 update public.app_settings set open_signup = true;
 insert into auth.users(email) values ('walkin@x.test');
 select t.expect('open sign-up makes free students', (select role from public.profiles where id=(select id from auth.users where email='walkin@x.test')) = 'student');

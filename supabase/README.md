@@ -102,3 +102,21 @@ email through the Resend SMTP. No email key is needed in the function.
 Paste `email-templates/invite.html` into Authentication > Emails > **Invite user**. The link signs the
 person in and the app asks them to choose a password.
 
+## Invite request emails and the open sign-up switch
+`add_signup_settings.sql` (run after `add_invite_links.sql`, safe to run again) adds `signup_open()`, which
+the sign-up form reads, and makes `request_invite` report whether a request is new.
+
+The app's Request form goes through the `request-invite` edge function. It saves the request, and the
+first time someone asks it emails the admin address in `app_settings` through Resend: their name, email,
+what they are, their note and an "Open Admin tools" button, with reply-to set to them. It uses an
+idempotency key and retries, and sends at most 10 emails an hour (more requests just wait in Admin tools).
+
+    supabase functions deploy request-invite --no-verify-jwt      (signed-out visitors call it)
+
+Add the secret **RESEND_API_KEY** (Edge Functions > Secrets) with a Resend key that can send from
+`mail.jonesridgekitchen.com`. Without it, requests are still saved but no email goes out.
+
+**Open sign-up** is the switch in Admin tools > Sign-up (it sets `app_settings.open_signup`). When it is
+on, anyone can create a free student account without a code, the Request tab is hidden, and invite
+links and restaurant codes still work.
+
