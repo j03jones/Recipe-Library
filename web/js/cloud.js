@@ -175,6 +175,7 @@ export async function updateRecipe(id, record) {
   return row;
 }
 export const deleteRecipe = (id) => authed(`/rest/v1/recipes?id=eq.${enc(id)}`, { method: 'DELETE' });
+export const shareLinkToCommunity = (id) => authed('/rest/v1/rpc/share_link_to_community', { method: 'POST', body: { p_recipe: id } });
 export const submitToCommunity = (id) => authed('/rest/v1/rpc/submit_to_community', { method: 'POST', body: { p_recipe: id, p_confirm: true } });
 
 // per-person data that follows them between devices
