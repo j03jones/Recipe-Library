@@ -147,12 +147,18 @@ export function accountCard(ctx) {
   }
 
   function paintSignedOut() {
+    if (ctx.signupOpen === undefined) {    // ask once whether sign-up needs an invite code
+      ctx.signupOpen = false;
+      cloud.signupOpen().then((open) => { if (open) { ctx.signupOpen = true; if (!cloud.isSignedIn() && card.isConnected) paint(); } }).catch(() => {});
+    }
+    const open = ctx.signupOpen === true;
+    if (open && mode === 'ask') mode = 'up';
     if (ctx.joinCode && mode === 'in' && !paintSignedOut.seen) { mode = 'up'; paintSignedOut.seen = true; }
     const email = h('input', { type: 'email', class: 'full', autocomplete: 'email', autocapitalize: 'off', 'aria-label': 'Email', placeholder: 'Email' });
     const pw = passwordField(h, { placeholder: mode === 'in' ? 'Password' : 'Password (8+ characters)', autocomplete: mode === 'in' ? 'current-password' : 'new-password' });
     const pass = pw.input;
     const name = h('input', { class: 'full', autocomplete: 'given-name', 'aria-label': 'Your name', placeholder: 'Your first name' });
-    const code = h('input', { class: 'full', autocapitalize: 'characters', autocomplete: 'off', 'aria-label': 'Invite code', placeholder: 'Invite code', value: ctx.joinCode || '' });
+    const code = h('input', { class: 'full', autocapitalize: 'characters', autocomplete: 'off', 'aria-label': 'Invite code', placeholder: open ? 'Invite code (optional, for a restaurant)' : 'Invite code', value: ctx.joinCode || '' });
     const msg = h('p', { class: 'note', role: 'status' });
     const extra = h('div');
     const forgot = h('button', { type: 'button', class: 'linkish', onclick: async () => {
@@ -179,7 +185,7 @@ export function accountCard(ctx) {
       if (mode === 'up') {
         if (!name.value.trim()) { msg.textContent = 'Enter your first name.'; name.focus(); return; }
         if (pass.value.length < 8) { msg.textContent = 'Use a password of at least 8 characters.'; return; }
-        if (!(ctx.joinCode || code.value.trim())) { msg.textContent = 'Enter the invite code you were given, or ask for one below.'; return; }
+        if (!open && !(ctx.joinCode || code.value.trim())) { msg.textContent = 'Enter the invite code you were given, or ask for one below.'; return; }
       }
       go.disabled = true;
       msg.textContent = mode === 'in' ? 'Signing in…' : 'Creating your account…';
@@ -218,9 +224,11 @@ export function accountCard(ctx) {
       h('div', { class: 'seg2', role: 'tablist' },
         h('button', { type: 'button', role: 'tab', 'aria-pressed': String(mode === 'in'), onclick: () => { mode = 'in'; paint(); } }, 'Sign in'),
         h('button', { type: 'button', role: 'tab', 'aria-pressed': String(mode === 'up'), onclick: () => { mode = 'up'; paint(); } }, 'New account'),
-        h('button', { type: 'button', role: 'tab', 'aria-pressed': String(mode === 'ask'), onclick: () => { mode = 'ask'; paint(); } }, 'Request')),
+        !open && h('button', { type: 'button', role: 'tab', 'aria-pressed': String(mode === 'ask'), onclick: () => { mode = 'ask'; paint(); } }, 'Request')),
       mode === 'ask' ? requestInviteForm(ctx) : form,
-      mode === 'up' && h('p', { class: 'muted small' }, 'Accounts are by invitation. No code? ', h('button', { type: 'button', class: 'linkish', onclick: () => { mode = 'ask'; paint(); } }, 'Ask for an invite')));
+      mode === 'up' && (open
+        ? h('p', { class: 'muted small' }, 'Anyone can create a free student account. Restaurant staff: enter the code your restaurant gave you.')
+        : h('p', { class: 'muted small' }, 'Accounts are by invitation. No code? ', h('button', { type: 'button', class: 'linkish', onclick: () => { mode = 'ask'; paint(); } }, 'Ask for an invite'))));
     if (mode === 'up' && !ctx.joinCode) setTimeout(() => name.focus(), 0);
   }
 
@@ -504,6 +512,27 @@ export async function viewAdmin(ctx) {
     } catch (err) { toast(err.message, 4000); }
   } }, 'Make a link & QR code');
 
+  // open sign-up switch
+  const signupBox = h('section', { class: 'card stack' }, h('p', { class: 'muted small' }, 'Loading…'));
+  const paintSignup = (open) => {
+    const sw = h('input', { type: 'checkbox', role: 'switch', checked: open, 'aria-label': 'Open sign-up' });
+    sw.addEventListener('change', async () => {
+      const want = sw.checked;
+      const ok = await ctx.confirmDialog(want
+        ? 'Open sign-up? Anyone who finds the app can create a free student account without an invite. They still confirm their email, and you can remove people in Admin tools. Restaurant staff still need a code from their restaurant.'
+        : 'Close sign-up? New people will need an invite code again. Everyone who already has an account keeps it.', want ? 'Open sign-up' : 'Close sign-up');
+      if (!ok) { sw.checked = !want; return; }
+      try { await cloud.setSignupOpen(want); ctx.signupOpen = want; toast(want ? 'Sign-up is open' : 'Sign-up is invite-only again'); paintSignup(want); }
+      catch (err) { sw.checked = !want; toast(err.message, 4000); }
+    });
+    fill(signupBox,
+      h('label', { class: 'check' }, sw, h('strong', null, 'Open sign-up')),
+      h('p', { class: 'small' }, open
+        ? 'On: anyone can create a free student account. The Request form is hidden, and invite links still work.'
+        : 'Off: people need an invite (link, QR code or email) or can send a request.'));
+  };
+  cloud.signupOpen().then(paintSignup).catch((err) => fill(signupBox, h('p', { class: 'muted small' }, `Could not load: ${err.message}`)));
+
   // invite requests
   const requestsEl = h('div', { class: 'stack' });
   const loadRequests = async () => {
@@ -575,6 +604,8 @@ export async function viewAdmin(ctx) {
     h('h1', null, 'Admin tools'),
     h('h2', null, `Waiting for approval${pending.length ? ` (${pending.length})` : ''}`),
     approvals,
+    h('h2', null, 'Sign-up'),
+    signupBox,
     requestsHead,
     requestsEl,
     h('h2', null, 'Invite someone'),

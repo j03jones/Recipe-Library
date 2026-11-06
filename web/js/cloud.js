@@ -296,8 +296,18 @@ export async function inviteInfo(code) {
   return (Array.isArray(rows) ? rows[0] : rows) || { status: 'not found' };
 }
 /** Ask the admin for an invite. Works without signing in. */
-export const requestInvite = ({ name, email, about, note }) =>
-  call('/rest/v1/rpc/request_invite', { method: 'POST', body: { p_name: name, p_email: email, p_about: about, p_note: note || '' } });
+export async function requestInvite({ name, email, about, note }) {
+  try {   // saves the request and emails the admin (the request-invite edge function)
+    return await call('/functions/v1/request-invite', { method: 'POST', body: { name, email, about, note: note || '' } });
+  } catch (err) {
+    if (err.status !== 404) throw err;   // function not deployed yet: just save the request
+    return call('/rest/v1/rpc/request_invite', { method: 'POST', body: { p_name: name, p_email: email, p_about: about, p_note: note || '' } });
+  }
+}
+/** Can people create an account without an invite code right now? Works without signing in. */
+export const signupOpen = async () => (await call('/rest/v1/rpc/signup_open', { method: 'POST', body: {} })) === true;
+/** Admin only: switch open sign-up on or off. */
+export const setSignupOpen = (open) => authed('/rest/v1/app_settings?id=eq.true', { method: 'PATCH', body: { open_signup: !!open } });
 /** Email someone a one-person invite (the send-invite edge function; Supabase sends the email). */
 export const sendInvite = ({ email, name, kind = 'student', restaurantId = null, memberRole = 'staff', requestId = null }) =>
   authed('/functions/v1/send-invite', { method: 'POST', body: {
