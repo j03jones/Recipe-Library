@@ -265,3 +265,10 @@ export async function listPhotos(folder) {
   });
   return (await res.json()).filter((f) => f.id).map((f) => `${folder}/${f.name}`);
 }
+
+// ------------------------------------------------------------------ import from a web page
+// The phone can't read other websites directly (browsers block it), so the import-recipe edge function
+// fetches the one page the person chose and returns only its schema.org Recipe block. Signed-in users only.
+export async function fetchRecipePage(url) {
+  return authed('/functions/v1/import-recipe', { method: 'POST', body: { url } });
+}

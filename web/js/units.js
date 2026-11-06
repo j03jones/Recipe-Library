@@ -119,8 +119,19 @@ export function formatYield(r) {
   return r.yr;
 }
 
+/** 'Recipe by Nora Taylor, Nora Cooks' (whichever parts are known), or ''. Same as formatting.credit_line. */
+export function creditLine(r) {
+  const src = r.src || {};
+  let who = [src.author, src.name].filter(Boolean);
+  if (who.length === 2 && who[0].toLowerCase() === who[1].toLowerCase()) who = who.slice(0, 1);
+  return who.length ? `Recipe by ${who.join(', ')}` : '';
+}
+
 export function recipeToText(r) {
   const lines = [r.title, '='.repeat(r.title.length)];
+  const credit = creditLine(r);
+  if (credit) lines.push(credit);
+  if (r.src?.url) lines.push('Original: ' + r.src.url);
   if (r.categories.length) lines.push('Categories: ' + r.categories.join(', '));
   const y = formatYield(r);
   if (y) lines.push('Yield: ' + y);

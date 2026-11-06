@@ -4,10 +4,10 @@ from __future__ import annotations
 from fractions import Fraction
 from typing import Optional
 
-from PySide6.QtCore import QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtCore import QSettings, Qt, QTimer, QUrl
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QHBoxLayout, QLabel,
+    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressDialog,
     QPushButton, QSplitter, QTextBrowser, QVBoxLayout, QWidget,
 )
@@ -15,13 +15,14 @@ from PySide6.QtWidgets import (
 from .. import __version__
 from .. import categories as category_rules
 from .. import duplicates
+from .. import link_data, webimport
 from ..db import RecipeDB
 from ..formatting import recipe_to_text
 from ..mealmaster import parse_file
 from ..models import Recipe
 from ..render import recipe_to_html
 from ..scaling import scale_recipe
-from .dialogs import DuplicatesDialog, RecipeEditor
+from .dialogs import DuplicatesDialog, LinksDialog, RecipeEditor
 
 FILE_FILTER = "MealMaster files (*.mmf *.mm *.txt);;All files (*)"
 
@@ -113,6 +114,8 @@ class MainWindow(QMainWindow):
 
         self.view = QTextBrowser()
         self.view.setOpenExternalLinks(False)
+        self.view.setOpenLinks(False)
+        self.view.anchorClicked.connect(self._open_link)
 
         self.copy_btn = QPushButton("Copy as text")
         self.copy_btn.clicked.connect(self.copy_text)
@@ -156,6 +159,7 @@ class MainWindow(QMainWindow):
 
         file_menu = self.menuBar().addMenu("&File")
         file_menu.addAction(action("&Import MealMaster files...", self.import_files, "Ctrl+I"))
+        file_menu.addAction(action("Import recipe from a &web page...", self.import_from_url, "Ctrl+Shift+I"))
         file_menu.addAction(action("&New recipe...", self.new_recipe, "Ctrl+N"))
         file_menu.addSeparator()
         file_menu.addAction(action("&Quit", self.close, "Ctrl+Q"))
@@ -167,6 +171,9 @@ class MainWindow(QMainWindow):
         recipe_menu.addAction(action("&Save scaled copy...", self.save_scaled_copy))
 
         tools_menu = self.menuBar().addMenu("&Tools")
+        for c in link_data.COLLECTIONS:
+            tools_menu.addAction(action(f"&Vegan recipes from {c['site']}...", lambda c=c: self.show_links(c)))
+        tools_menu.addSeparator()
         tools_menu.addAction(action("&Tidy categories...", self.tidy_categories))
         tools_menu.addAction(action("&Restore original categories...", self.restore_categories))
         tools_menu.addSeparator()
@@ -378,6 +385,43 @@ class MainWindow(QMainWindow):
             copy.title = f"{copy.title} (scaled)"
         dialog = RecipeEditor(self, copy)
         dialog.setWindowTitle("Save scaled copy as new recipe")
+        if dialog.exec():
+            new_id = self.db.add_recipe(dialog.recipe())
+            self.reload_categories()
+            self._select(new_id)
+
+    def _open_link(self, url: QUrl) -> None:
+        if url.scheme() in ("http", "https"):
+            QDesktopServices.openUrl(url)
+
+    def show_links(self, collection: dict) -> None:
+        LinksDialog(collection, self, on_import=self.import_from_url).exec()
+
+    def import_from_url(self) -> None:
+        clip = QApplication.clipboard().text().strip()
+        suggestion = clip if clip.startswith(("http://", "https://")) and "\n" not in clip else ""
+        url, ok = QInputDialog.getText(
+            self, "Import recipe from a web page",
+            "Paste the address of one recipe page.\n"
+            "It is saved to your library with the author's name and a link back to the original.\n"
+            "Only the ingredients, method and yield are taken; photos and stories stay on their site.",
+            text=suggestion)
+        if not ok or not url.strip():
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            recipe = webimport.fetch_recipe(url)
+        except webimport.ImportError_ as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Import recipe", str(exc))
+            return
+        QApplication.restoreOverrideCursor()
+        if self.db.find_duplicate(recipe) is not None:
+            QMessageBox.information(self, "Import recipe", f"\"{recipe.title}\" is already in your library.")
+            self._select(self.db.find_duplicate(recipe))
+            return
+        dialog = RecipeEditor(self, recipe)
+        dialog.setWindowTitle("Check and save the imported recipe")
         if dialog.exec():
             new_id = self.db.add_recipe(dialog.recipe())
             self.reload_categories()

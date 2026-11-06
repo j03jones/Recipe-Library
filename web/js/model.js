@@ -19,12 +19,17 @@ export function toRecord(r) {
     id: r.id, title: r.title, categories: r.categories, tags: r.tags || [],
     yq: r.yq == null ? '' : String(r.yq), yu: r.yu, yr: r.yr, dir: r.dir,
     ings: r.ings.map((i) => [i.q == null ? '' : String(i.q), i.raw, i.unit, i.item, i.group]),
+    ...(hasSource(r) ? { src: { author: r.src.author || '', name: r.src.name || '', url: r.src.url || '' } } : {}),
     updated: Date.now(),
   };
 }
 
+/** True when the recipe came from somewhere else and carries a credit (author, site or link). */
+export const hasSource = (r) => !!(r && r.src && (r.src.author || r.src.name || r.src.url));
+
 export function fromRecord(rec, source) {
   const r = fromRow([rec.id, rec.title, rec.categories, rec.yq, rec.yu, rec.yr, rec.ings, rec.dir, rec.tags]);
   r.source = source;
+  if (rec.src) r.src = { author: rec.src.author || '', name: rec.src.name || '', url: rec.src.url || '' };
   return r;
 }

@@ -61,6 +61,23 @@ From the command line:
 
 For the phone app, `python tools/export_web.py --db <file> --drop-near-duplicates high` leaves them out.
 
+## Recipes from other websites (with credit)
+
+**Vegan recipes from Nora Cooks.** Tools > *Vegan recipes from Nora Cooks* (desktop) and the
+*Vegetarian & Vegan* category or `#/links/noracooks` (phone) list recipe titles by Nora Taylor. Each
+one opens on her website, so she keeps the visit and the credit. Only titles and links are built in, no
+recipe content. The list lives in `recipelib/link_data.py`. Run `python3 tools/gen_unitdata.py` after
+editing it.
+
+**Import one recipe from a web page.** File > *Import recipe from a web page* (desktop),
+`python -m recipelib import-url <link>`, or Add > *Import a recipe from a web page* (phone, signed in).
+It reads the page's standard schema.org recipe block and takes only the title, ingredients, method and
+yield. It also records **Recipe by**, **From** and the **link to the original**, which show on the
+recipe, in copied or printed text, and in the editor. Imported recipes stay private: the phone app
+won't share them to Community (`supabase/add_source_credit.sql` enforces this on the server too). The
+phone reads pages through the `import-recipe` edge function (`supabase/functions/import-recipe`)
+because browsers can't read other sites directly.
+
 ## Phone web app (offline)
 
 `web/` is an installable web app (PWA) that runs on Android and iPhone, with the whole recipe

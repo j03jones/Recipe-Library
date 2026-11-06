@@ -1,8 +1,10 @@
 import {
-  Frac, UNIT_CHOICES, amountForEditing, factorForServings, formatIngredient, formatYield,
+  Frac, UNIT_CHOICES, amountForEditing, creditLine, factorForServings, formatIngredient, formatYield,
   ingredientFromFields, parseYield, recipeToText, scaleRecipe, splitCategories,
 } from './units.js';
-import { fromRecord, fromRow, toRecord } from './model.js';
+import { fromRecord, fromRow, hasSource, toRecord } from './model.js';
+import { COLLECTIONS } from './linkdata.js';
+import { VEGAN_GROUP, recipeFromSchema } from './webimport.js';
 import * as store from './store.js';
 import { SECTIONS } from './groups.js';
 import { addStars, copyText, emojiFor, icon, isStarred, onStarsChange, replaceStars, starIds, tile, toggleStar } from './ui.js';
@@ -320,6 +322,13 @@ function viewList(starredOnly = false) {
   }
 
   const count = h('p', { class: 'count muted small' });
+  const promo = h('div');
+  const paintPromo = () => {
+    const cols = COLLECTIONS.filter((c) => listState.cat === c.group || (!listState.cat && visible.some(([, rows, i]) => i === listState.sec && rows.some(([g]) => g === c.group))));
+    fill(promo, !starredOnly && cols.map((c) => h('a', { class: 'promo card', href: `#/links/${c.id}` },
+      h('span', { class: 'tile', 'aria-hidden': 'true', 'data-sec': 2 }, '🌱'),
+      h('span', null, h('strong', null, `More vegan recipes from ${c.site}`), h('span', { class: 'muted small' }, `By ${c.author}. Opens on her website.`)))));
+  };
   const ul = h('ul', { class: 'rows' });
   const empty = h('div');
   const more = h('button', { class: 'more', onclick: () => { listState.shown += PAGE; paint(); } }, 'Show more');
@@ -347,6 +356,7 @@ function viewList(starredOnly = false) {
   srcRow.hidden = !lib.me;
 
   function chipState() {
+    paintPromo();
     for (const [k, b] of srcButtons) b.setAttribute('aria-pressed', String(k === listState.src));
     for (const [i, b] of secButtons) b.setAttribute('aria-pressed', String(i === listState.sec));
     const sec = visible.find(([, , i]) => i === listState.sec);
@@ -404,7 +414,7 @@ function viewList(starredOnly = false) {
       h('h1', null, starredOnly ? 'Starred' : 'What are we cooking?'),
       starredOnly && h('p', { class: 'muted' }, 'Your go-to recipes, saved on this device.')),
     h('div', { class: 'searchbar' }, h('label', { class: 'search' }, icon('search', { size: 22 }), input)),
-    !starredOnly && srcRow, !starredOnly && secRow, !starredOnly && groupsRow, count, ul, empty, more);
+    !starredOnly && srcRow, !starredOnly && secRow, !starredOnly && groupsRow, promo, count, ul, empty, more);
   chipState();
   paint();
   window.scrollTo(0, listState.scroll);
@@ -435,6 +445,15 @@ function credit(r) {
   if (r.source === 'shared') return h('p', { class: 'credit' }, r.row.status === 'declined'
     ? `Not approved${r.row.review_note ? `: ${r.row.review_note}` : '.'}` : 'Waiting for approval. Only you can see it until then.');
   return null;
+}
+
+/** "Recipe by Nora Taylor, Nora Cooks · View the original" for recipes that came from somewhere else. */
+function sourceCredit(r) {
+  if (!hasSource(r)) return null;
+  const safe = /^https?:\/\//i.test(r.src.url || '') ? r.src.url : '';
+  return h('p', { class: 'srccredit' },
+    h('span', null, creditLine(r) || 'From another source'),
+    safe && h('a', { href: safe, target: '_blank', rel: 'noopener' }, 'View the original recipe'));
 }
 
 /** The dish photo on the recipe page, with Add / Change / Remove when this person may change it. */
@@ -479,7 +498,9 @@ function sharing(r) {
     if (!await confirmDialog('Withdraw this recipe from the Community? Your own copy stays in your account.', 'Withdraw', true)) return;
     try { await cloud.deleteRecipe(row.id); await refreshCloud(); await tidyPhoto(row.photo); toast('Withdrawn'); route(); } catch (err) { toast(err.message, 4000); }
   } }, 'Withdraw from Community');
-  if (r.source === 'account') {
+  if (r.source === 'account' && hasSource(r) && !copy) {
+    fill(out, h('p', { class: 'muted small' }, 'This recipe came from another website, so it stays in your private recipes and is not shared with the Community. Send people to the original instead.'));
+  } else if (r.source === 'account') {
     if (copy) fill(out, h('p', { class: 'muted small' }, copy.status === 'approved' ? 'A copy of this recipe is in the Community.' : copy.status === 'declined' ? `Not approved${copy.review_note ? `: ${copy.review_note}` : '.'}` : 'A copy is waiting for approval.'), withdraw(copy));
     else fill(out, h('button', { onclick: async () => {
       if (!await confirmDialog(RIGHTS, 'Share')) return;
@@ -598,6 +619,7 @@ function viewRecipe(id) {
     photoBlock(r),
     r.categories.length > 0 && h('div', { class: 'labels' }, r.categories.map((c) => h('span', { class: 'label' }, c))),
     credit(r),
+    sourceCredit(r),
     h('div', { class: 'cols' },
       h('div', { class: 'side' },
     h('section', { class: 'dock', 'aria-label': 'Scale this recipe' },
@@ -638,6 +660,10 @@ function viewEdit(id, template) {
   const yld = h('input', { class: 'full', value: formatYield(r) || r.yr, placeholder: 'e.g. 4 servings, 24 cookies', 'aria-label': 'Yield' });
   const dir = h('textarea', { 'aria-label': 'Directions', placeholder: 'Directions. Leave a blank line between paragraphs.' });
   dir.value = r.dir;
+  const src0 = r.src || {};
+  const srcAuthor = h('input', { class: 'full', value: src0.author || '', placeholder: 'e.g. Nora Taylor (blank if it’s yours)', autocomplete: 'off', 'aria-label': 'Recipe by' });
+  const srcName = h('input', { class: 'full', value: src0.name || '', placeholder: 'Website, book or person, e.g. Nora Cooks', autocomplete: 'off', 'aria-label': 'From' });
+  const srcUrl = h('input', { class: 'full', type: 'url', value: src0.url || '', placeholder: 'https://…', autocomplete: 'off', autocapitalize: 'off', 'aria-label': 'Link to the original' });
   const rowsBox = h('div');
   const datalist = h('datalist', { id: 'units' }, UNIT_CHOICES.filter(Boolean).map((u) => h('option', { value: u })));
 
@@ -668,7 +694,9 @@ function viewEdit(id, template) {
       id: existing ? existing.id : `u-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
       title: title.value.trim(), categories: splitCategories(cats.value), tags: (existing || template || {}).tags || [], yq, yu, yr: text,
       dir: dir.value.trim(), ings,
+      src: { author: srcAuthor.value.trim(), name: srcName.value.trim(), url: srcUrl.value.trim() },
     };
+    if (recipe.src.url && !/^https?:\/\//i.test(recipe.src.url)) recipe.src.url = `https://${recipe.src.url}`;
     const rec = toRecord(recipe);
     let target = recipe.id;
     if ((existing && existing.cloud) || (!existing && lib.me && cloud.isSignedIn())) {
@@ -707,7 +735,8 @@ function viewEdit(id, template) {
   }
 
   fill($app, 
-    h('h1', null, existing ? 'Edit recipe' : template ? 'Save as new recipe' : 'New recipe'),
+    h('h1', null, existing ? 'Edit recipe' : template?.imported ? 'Check and save' : template ? 'Save as new recipe' : 'New recipe'),
+    !existing && !template && h('p', null, h('a', { class: 'linkbtn', href: '#/import' }, '⤓ Import a recipe from a web page')),
     h('label', { class: 'field' }, h('span', null, 'Title'), title),
     h('label', { class: 'field' }, h('span', null, 'Categories'), cats),
     h('label', { class: 'field' }, h('span', null, 'Yield'), yld),
@@ -716,6 +745,11 @@ function viewEdit(id, template) {
     datalist, rowsBox,
     h('button', { type: 'button', class: 'full', onclick: () => addRow(undefined, true) }, '+ Add ingredient'),
     h('label', { class: 'field' }, h('span', null, 'Directions'), dir),
+    h('h2', null, 'Credit'),
+    h('p', { class: 'muted small' }, 'For a recipe from someone else, say who wrote it and link to the original. It is shown on the recipe.'),
+    h('label', { class: 'field' }, h('span', null, 'Recipe by'), srcAuthor),
+    h('label', { class: 'field' }, h('span', null, 'From'), srcName),
+    h('label', { class: 'field' }, h('span', null, 'Link to the original'), srcUrl),
     h('div', { class: 'row grow' },
       h('button', { class: 'primary', onclick: save }, 'Save'),
       h('button', { onclick: () => (template ? route() : goBack(existing ? `#/r/${existing.id}` : '#/')) }, 'Cancel')),
@@ -724,6 +758,85 @@ function viewEdit(id, template) {
       h('button', { class: 'danger', onclick: del }, existing.source === 'mine' || existing.cloud ? 'Delete recipe' : 'Remove from library')));
   window.scrollTo(0, 0);
   if (!existing && !template) title.focus();
+}
+
+// ------------------------------------------------------ outside collections and web import
+
+/** Recipe titles from an outside author, each opening on their own website (nothing is copied). */
+function viewLinks(collectionId) {
+  const c = COLLECTIONS.find((x) => x.id === collectionId);
+  if (!c) return viewMissing();
+  setView('list', 'list');
+  const input = h('input', { type: 'search', placeholder: `Search ${c.site} recipes`, autocomplete: 'off', 'aria-label': `Search ${c.site} recipes` });
+  const box = h('div');
+  const paint = () => {
+    const q = input.value.trim().toLowerCase();
+    fill(box, c.sections.map(([name, rows]) => {
+      const hits = rows.filter(([t]) => !q || t.toLowerCase().includes(q));
+      return hits.length > 0 && [h('h2', null, name), h('ul', { class: 'rows' }, hits.map(([t, url]) => h('li', null,
+        h('a', { class: 'rc', href: url, target: '_blank', rel: 'noopener' },
+          h('span', { class: 'tile', 'aria-hidden': 'true', 'data-sec': 2 }, '🌱'),
+          h('span', { class: 'txt' }, h('span', { class: 't' }, t), h('span', { class: 'c' }, `${c.site} · opens her website ↗`))))))];
+    }));
+  };
+  input.addEventListener('input', paint);
+  fill($app,
+    h('div', { class: 'topbar' },
+      h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Back', onclick: () => goBack('#/') }, icon('back')),
+      h('span', { class: 'sp' })),
+    h('header', { class: 'hero' }, h('h1', null, `Vegan recipes from ${c.site}`),
+      h('p', { class: 'muted' }, c.blurb)),
+    h('div', { class: 'card stack' },
+      h('p', { class: 'small' }, `These recipes belong to ${c.author}. Each one opens on ${c.site}, so she gets the visit and the credit. To keep one you cook often, open it, copy the address, then tap Import below. It is saved in your own recipes with her name and a link back.`),
+      h('div', { class: 'row grow' },
+        h('a', { class: 'linkbtn', href: '#/import' }, '⤓ Import one from a link'),
+        h('a', { class: 'linkbtn', href: c.home, target: '_blank', rel: 'noopener' }, `Browse all of ${c.site} ↗`))),
+    h('div', { class: 'searchbar' }, h('label', { class: 'search' }, icon('search', { size: 22 }), input)),
+    box);
+  paint();
+  window.scrollTo(0, 0);
+}
+
+/** Paste one recipe link; the recipe is read, checked in the editor, then saved with credit. */
+function viewImport() {
+  setView('edit', 'new');
+  const signedIn = !!lib.me && cloud.isSignedIn();
+  const url = h('input', { class: 'full', type: 'url', placeholder: 'https://www.noracooks.com/…', autocomplete: 'off', autocapitalize: 'off', 'aria-label': 'Recipe page address' });
+  const status = h('p', { class: 'muted small', role: 'status' });
+  const go = h('button', { class: 'primary', type: 'button', disabled: !signedIn, onclick: run }, 'Get recipe');
+  async function run() {
+    let link = url.value.trim();
+    if (!link) { url.focus(); return; }
+    if (!/^https?:\/\//i.test(link)) link = `https://${link}`;
+    go.disabled = true;
+    status.textContent = 'Reading the page…';
+    try {
+      const res = await cloud.fetchRecipePage(link);
+      if (!res || !res.recipe) throw new Error((res && res.error) || 'No recipe was found on that page.');
+      const r = recipeFromSchema(res.recipe, res.url || link, res.site || '');
+      r.imported = true;
+      const dup = lib.all.find((x) => x.src?.url && x.src.url === r.src.url);
+      if (dup) { toast('That recipe is already in your recipes'); location.hash = `#/r/${encodeURIComponent(dup.id)}`; return; }
+      viewEdit(null, r);
+    } catch (err) {
+      status.textContent = err.message;
+      go.disabled = false;
+    }
+  }
+  url.addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+  fill($app,
+    h('div', { class: 'topbar' },
+      h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Back', onclick: () => goBack('#/new') }, icon('back')),
+      h('span', { class: 'sp' })),
+    h('h1', null, 'Import from a web page'),
+    h('p', { class: 'muted' }, 'Paste the address of one recipe page. You check it before it is saved. It goes into your own private recipes with the author’s name and a link back to the original. Only the ingredients, method and yield are taken. Photos and stories stay on their site.'),
+    !signedIn && h('p', { class: 'note' }, 'Sign in first (Settings). The phone can’t read other websites on its own, so the page is read through your account.'),
+    h('label', { class: 'field' }, h('span', null, 'Recipe page address'), url),
+    h('div', { class: 'row grow' }, go),
+    status,
+    COLLECTIONS.map((c) => h('p', { class: 'small' }, h('a', { href: `#/links/${c.id}` }, `Browse vegan recipes from ${c.site}`))));
+  window.scrollTo(0, 0);
+  if (signedIn) url.focus();
 }
 
 function viewMissing() {
@@ -865,6 +978,8 @@ function route() {
   if (kind === 'edit' && id) return viewEdit(id);
   if (kind === 'new') return viewEdit(null);
   if (kind === 'settings') return viewSettings();
+  if (kind === 'links') return viewLinks(id || COLLECTIONS[0].id);
+  if (kind === 'import') return viewImport();
   if (kind === 'admin') return viewAdmin(ctx);
   if (kind === 'starred') return viewList(true);
   return viewList();

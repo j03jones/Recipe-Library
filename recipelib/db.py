@@ -108,6 +108,7 @@ class RecipeDB:
         self.conn = sqlite3.connect(str(path))
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self._has_fts = self._init_fts()
 
     def close(self) -> None:
@@ -118,6 +119,14 @@ class RecipeDB:
 
     def __exit__(self, *exc):
         self.close()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a library file was first created."""
+        have = {r["name"] for r in self.conn.execute("PRAGMA table_info(recipes)")}
+        with self.conn:
+            for col in ("source_author", "source_name", "source_url"):
+                if col not in have:
+                    self.conn.execute(f"ALTER TABLE recipes ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
 
     # ------------------------------------------------------------- full text
 
@@ -184,11 +193,13 @@ class RecipeDB:
         with self.conn:
             cur = self.conn.execute(
                 "INSERT INTO recipes(title, directions, yield_qty, yield_unit, yield_raw, "
-                "content_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "content_hash, created_at, updated_at, source_author, source_name, source_url) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     recipe.title, recipe.directions,
                     str(recipe.yield_quantity) if recipe.yield_quantity is not None else None,
                     recipe.yield_unit, recipe.yield_raw, content_hash(recipe), now, now,
+                    recipe.source_author, recipe.source_name, recipe.source_url,
                 ),
             )
             rid = cur.lastrowid
@@ -203,11 +214,13 @@ class RecipeDB:
         with self.conn:
             cur = self.conn.execute(
                 "UPDATE recipes SET title=?, directions=?, yield_qty=?, yield_unit=?, "
-                "yield_raw=?, content_hash=?, updated_at=? WHERE id=?",
+                "yield_raw=?, content_hash=?, updated_at=?, source_author=?, source_name=?, "
+                "source_url=? WHERE id=?",
                 (
                     recipe.title, recipe.directions,
                     str(recipe.yield_quantity) if recipe.yield_quantity is not None else None,
-                    recipe.yield_unit, recipe.yield_raw, content_hash(recipe), _now(), recipe.id,
+                    recipe.yield_unit, recipe.yield_raw, content_hash(recipe), _now(),
+                    recipe.source_author, recipe.source_name, recipe.source_url, recipe.id,
                 ),
             )
             if cur.rowcount == 0:
@@ -257,6 +270,7 @@ class RecipeDB:
             categories=cats, tags=self._tag_names(recipe_id),
             yield_quantity=Fraction(row["yield_qty"]) if row["yield_qty"] is not None else None,
             yield_unit=row["yield_unit"], yield_raw=row["yield_raw"],
+            source_author=row["source_author"], source_name=row["source_name"], source_url=row["source_url"],
         )
 
     def count(self) -> int:
