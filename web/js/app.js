@@ -5,7 +5,8 @@ import {
 import { fromRecord, fromRow, toRecord } from './model.js';
 import * as store from './store.js';
 import { SECTIONS } from './groups.js';
-import { addStars, copyText, emojiFor, icon, isStarred, onStarsChange, replaceStars, starIds, tile, toggleStar } from './ui.js';
+import { addStars, buzz, confetti, copyText, emojiFor, greeting, icon, isStarred, onStarsChange, replaceStars, ridge, starIds, tile, toggleStar } from './ui.js';
+import { restoreTimers, timerChips } from './timers.js';
 import * as cloud from './cloud.js';
 import { accountCard, viewAdmin } from './account.js';
 
@@ -58,6 +59,18 @@ function confirmDialog(message, okLabel = 'OK', danger = false) {
     document.body.append(dlg);
     dlg.showModal();
   });
+}
+
+/** A green header band with the website's contour lines (tall = the home-page version). */
+function band(kind, ...kids) {
+  return h('header', { class: `band ${kind}` }, kids, ridge(kind === 'hero'));
+}
+const pageHead = (title, sub) => band('page', h('h1', null, title), sub && h('p', { class: 'sub' }, sub));
+
+function celebrate(from) {
+  confetti(from);
+  buzz([30, 40, 30]);
+  toast('Plated! Nice cooking 🍽️', 3200);
 }
 
 const trim0 = (s) => (s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s);
@@ -226,13 +239,15 @@ function starButton(id, onChange) {
     e.preventDefault();
     const on = toggleStar(id);
     paintStar();
-    if (on) { btn.classList.remove('pop'); void btn.offsetWidth; btn.classList.add('pop'); }
+    if (on) { btn.classList.remove('pop'); void btn.offsetWidth; btn.classList.add('pop'); buzz(12); }
     toast(on ? 'Starred' : 'Removed from starred', 1400);
     onChange?.(on);
   });
   paintStar();
   return btn;
 }
+
+const firstName = () => (lib.me?.displayName || '').trim().split(/\s+/)[0] || '';
 
 function badgeText(r) {
   switch (r.source) {
@@ -265,7 +280,8 @@ function viewList(starredOnly = false) {
   }
 
   const count = h('p', { class: 'count muted small' });
-  const ul = h('ul', { class: 'rows' });
+  const ul = h('ul', { class: 'rows intro' });
+  setTimeout(() => ul.classList.remove('intro'), 1200);
   const empty = h('div');
   const more = h('button', { class: 'more', onclick: () => { listState.shown += PAGE; paint(); } }, 'Show more');
   const groupsRow = h('div', { class: 'chips groups', role: 'group', 'aria-label': 'Categories' });
@@ -304,8 +320,8 @@ function viewList(starredOnly = false) {
     }
   }
 
-  function row(r) {
-    return h('li', null,
+  function row(r, i = 0) {
+    return h('li', { style: `--i:${Math.min(i, 14)}` },
       h('a', { class: 'rc', href: `#/r/${r.id}` },
         tile(r.categories),
         h('span', { class: 'txt' },
@@ -323,7 +339,7 @@ function viewList(starredOnly = false) {
       ? `${results.length.toLocaleString()} starred`
       : results.length === lib.all.length ? `${results.length.toLocaleString()} recipes`
         : `${results.length.toLocaleString()} of ${lib.all.length.toLocaleString()} recipes`;
-    ul.replaceChildren(...shown.map(row));
+    ul.replaceChildren(...shown.map((r, i) => row(r, i)));
     more.hidden = shown.length >= results.length;
     if (results.length) { fill(empty); return; }
     const filtered = listState.q || listState.cat || (lib.me && listState.src);
@@ -338,6 +354,7 @@ function viewList(starredOnly = false) {
         : h('button', { onclick: () => { location.hash = '#/'; } }, 'Browse recipes')));
   }
 
+  const searchbar = h('div', { class: 'searchbar' }, h('label', { class: 'search' }, icon('search', { size: 22 }), input));
   let t;
   input.addEventListener('input', () => {
     clearTimeout(t);
@@ -345,15 +362,16 @@ function viewList(starredOnly = false) {
   });
 
   fill($app,
-    h('header', { class: 'hero' },
+    band('hero',
+      h('p', { class: 'eyebrow' }, starredOnly ? 'Your favorites' : `${greeting()}${firstName() ? `, ${firstName()}` : ''}`),
       h('h1', null, starredOnly ? 'Starred' : 'What are we cooking?'),
-      starredOnly && h('p', { class: 'muted' }, 'Your go-to recipes, saved on this device.')),
-    h('div', { class: 'searchbar' }, h('label', { class: 'search' }, icon('search', { size: 22 }), input)),
+      h('p', { class: 'sub' }, starredOnly ? 'Your go-to recipes, one tap away.' : `${lib.all.length.toLocaleString()} recipes to search, scale and cook.`)),
+    searchbar,
     !starredOnly && srcRow, !starredOnly && secRow, !starredOnly && groupsRow, count, ul, empty, more);
   chipState();
   paint();
   window.scrollTo(0, listState.scroll);
-  onScroll = () => { listState.scroll = window.scrollY; };
+  onScroll = () => { listState.scroll = window.scrollY; searchbar.classList.toggle('stuck', window.scrollY > 150); };
   window.addEventListener('scroll', onScroll, { passive: true });
 }
 
@@ -366,7 +384,7 @@ function amountSplit(text) {
 
 function tick(kids, extraClass = '') {
   const btn = h('button', { class: `tick ${extraClass}`.trim(), type: 'button', 'aria-pressed': 'false' }, kids);
-  btn.addEventListener('click', () => btn.setAttribute('aria-pressed', String(btn.getAttribute('aria-pressed') !== 'true')));
+  btn.addEventListener('click', () => { btn.setAttribute('aria-pressed', String(btn.getAttribute('aria-pressed') !== 'true')); buzz(6); });
   return btn;
 }
 
@@ -462,10 +480,14 @@ function viewRecipe(id) {
           tick([h('span', { class: 'box' }, icon('check', { size: 16 })), h('span', { class: 'what' }, amountSplit(formatIngredient(i)))]))))]));
     fill(dirBox,
       steps.length > 0 && h('h2', null, 'Method'),
+      steps.length > 0 && h('button', { class: 'cookbtn', type: 'button', onclick: cookMode }, icon('play', { size: 20 }), 'Start cook mode'),
       steps.length > 1
-        ? h('ol', { class: 'steps' }, steps.map((l, n) => h('li', null,
-          tick([h('span', { class: 'n' }, n + 1), h('span', { class: 'what' }, l)]))))
-        : steps.length === 1 && h('div', { class: 'dir' }, h('p', null, steps[0])),
+        ? h('ol', { class: 'steps', onclick: (e) => {
+          const ol = e.currentTarget;
+          if (e.target.closest('.tick') && ol.querySelectorAll('.tick[aria-pressed=true]').length === steps.length) celebrate(e.target);
+        } }, steps.map((l, n) => h('li', null,
+          tick([h('span', { class: 'n' }, n + 1), h('span', { class: 'what' }, l)]), timerChips(l))))
+        : steps.length === 1 && h('div', { class: 'dir' }, h('p', null, steps[0]), timerChips(steps[0])),
       warnings.length > 0 && h('p', { class: 'note' }, warnings.join(' ')));
   }
 
@@ -485,6 +507,73 @@ function viewRecipe(id) {
   }
   releaseWake = () => setWake(false);
 
+  // one step at a time, big text, swipe or tap to move on
+  function cookMode() {
+    const s = scaleRecipe(r, factor, smart).recipe;
+    const steps = s.dir ? s.dir.split('\n').filter((l) => l.trim()) : [];
+    if (!steps.length) return;
+    let i = 0;
+    const wasAwake = awake;
+    if (!wasAwake && 'wakeLock' in navigator) setWake(true);
+    const num = h('p', { class: 'cook-n' });
+    const text = h('p', { class: 'cook-text', 'aria-live': 'polite' });
+    const chips = h('div');
+    const bar = h('div', { class: 'cook-bar', 'aria-hidden': 'true' }, steps.map(() => h('i')));
+    const back = h('button', { type: 'button', onclick: () => go(-1) }, 'Back');
+    const next = h('button', { class: 'primary', type: 'button', onclick: () => go(1) });
+    const body = h('div', { class: 'cook-body' }, num, text, chips);
+    let sheet = null;
+
+    const closeBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close cook mode', onclick: close }, icon('close'));
+    const ingBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Show ingredients', onclick: () => {
+      if (sheet) { sheet.remove(); sheet = null; return; }
+      sheet = h('div', { class: 'cook-sheet' },
+        h('h2', null, 'Ingredients'),
+        h('ul', null, s.ings.map((ing) => h('li', null, amountSplit(formatIngredient(ing))))),
+        h('button', { class: 'primary', type: 'button', style: 'margin-top:1.2rem;width:100%', onclick: () => { sheet.remove(); sheet = null; } }, 'Back to the step'));
+      overlay.append(sheet);
+    } }, icon('list'));
+    const overlay = h('div', { class: 'cook', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Cooking ${r.title}` },
+      h('div', { class: 'cook-top' }, closeBtn, h('span', { class: 'ttl' }, r.title), ingBtn),
+      bar, body, h('div', { class: 'cook-foot' }, back, next));
+
+    function paintStep(dir = 1) {
+      num.textContent = `Step ${i + 1} of ${steps.length}`;
+      text.textContent = steps[i];
+      text.className = `cook-text${dir < 0 ? ' back' : ''}`;
+      text.style.animation = 'none'; void text.offsetWidth; text.style.animation = '';
+      fill(chips, timerChips(steps[i]));
+      [...bar.children].forEach((b, n) => b.classList.toggle('on', n <= i));
+      back.disabled = i === 0;
+      next.textContent = i === steps.length - 1 ? 'Done' : 'Next step';
+    }
+    function go(d) {
+      if (i + d >= steps.length) { close(); celebrate(); return; }
+      if (i + d < 0) return;
+      i += d; paintStep(d); buzz(8);
+    }
+    function close() {
+      overlay.remove();
+      document.removeEventListener('keydown', onKey, true);
+      if (!wasAwake) setWake(false);
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') { e.stopImmediatePropagation(); e.preventDefault(); if (sheet) { sheet.remove(); sheet = null; } else close(); }
+      else if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); go(1); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); go(-1); }
+    }
+    let x0 = 0; let y0 = 0;
+    body.addEventListener('touchstart', (e) => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, { passive: true });
+    body.addEventListener('touchend', (e) => {
+      const dx = e.changedTouches[0].clientX - x0; const dy = e.changedTouches[0].clientY - y0;
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) go(dx < 0 ? 1 : -1);
+    }, { passive: true });
+    document.addEventListener('keydown', onKey, true);
+    document.body.append(overlay);
+    paintStep();
+    next.focus();
+  }
+
   const copy = async () => {
     const text = recipeToText(scaleRecipe(r, factor, smart).recipe);
     toast(await copyText(text) ? 'Recipe copied' : 'Could not copy on this browser');
@@ -498,14 +587,15 @@ function viewRecipe(id) {
 
   const [primary, ...rest] = r.categories;
   fill($app,
-    h('div', { class: 'topbar' },
-      h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Back', onclick: () => goBack('#/') }, icon('back')),
-      h('span', { class: 'sp' }),
-      awakeBtn,
-      starButton(r.id),
-      canEdit(r) && h('a', { class: 'icon-btn', href: `#/edit/${r.id}`, 'aria-label': 'Edit recipe', title: 'Edit recipe' }, icon('edit'))),
-    h('div', { class: 'rhead' }, tile(r.categories, true), h('h1', null, r.title)),
-    r.categories.length > 0 && h('div', { class: 'labels' }, r.categories.map((c) => h('span', { class: 'label' }, c))),
+    band('rband',
+      h('div', { class: 'topbar' },
+        h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Back', onclick: () => goBack('#/') }, icon('back')),
+        h('span', { class: 'sp' }),
+        awakeBtn,
+        starButton(r.id),
+        canEdit(r) && h('a', { class: 'icon-btn', href: `#/edit/${r.id}`, 'aria-label': 'Edit recipe', title: 'Edit recipe' }, icon('edit'))),
+      h('div', { class: 'rhead' }, tile(r.categories, true), h('h1', null, r.title)),
+      r.categories.length > 0 && h('div', { class: 'labels' }, r.categories.map((c) => h('span', { class: 'label' }, c)))),
     credit(r),
     h('div', { class: 'cols' },
       h('div', { class: 'side' },
@@ -539,7 +629,7 @@ function viewEdit(id, template) {
   setView('edit', 'new');
   const existing = id ? lib.byId.get(id) : null;
   if (id && !existing) return viewMissing();
-  if (existing && !canEdit(existing)) { fill($app, h('h1', null, 'Read only'), h('p', { class: 'muted' }, 'This recipe belongs to someone else. Open it and use “Save scaled copy” to make your own version.'), h('p', null, h('a', { href: `#/r/${existing.id}` }, 'Back to the recipe'))); return; }
+  if (existing && !canEdit(existing)) { fill($app, pageHead('Read only'), h('p', { class: 'muted' }, 'This recipe belongs to someone else. Open it and use “Save scaled copy” to make your own version.'), h('p', null, h('a', { href: `#/r/${existing.id}` }, 'Back to the recipe'))); return; }
   const r = existing || template || { title: '', categories: [], tags: [], yq: null, yu: '', yr: '', dir: '', ings: [], source: 'mine' };
 
   const title = h('input', { class: 'full', value: r.title, autocomplete: 'off', 'aria-label': 'Title' });
@@ -616,7 +706,7 @@ function viewEdit(id, template) {
   }
 
   fill($app, 
-    h('h1', null, existing ? 'Edit recipe' : template ? 'Save as new recipe' : 'New recipe'),
+    pageHead(existing ? 'Edit recipe' : template ? 'Save as new recipe' : 'New recipe'),
     h('label', { class: 'field' }, h('span', null, 'Title'), title),
     h('label', { class: 'field' }, h('span', null, 'Categories'), cats),
     h('label', { class: 'field' }, h('span', null, 'Yield'), yld),
@@ -637,7 +727,7 @@ function viewEdit(id, template) {
 
 function viewMissing() {
   setView('list', 'list');
-  fill($app, h('h1', null, 'Recipe not found'), h('p', null, h('a', { href: '#/' }, 'Back to the library')));
+  fill($app, pageHead('Recipe not found'), h('p', null, h('a', { href: '#/' }, 'Back to the library')));
 }
 
 // ----------------------------------------------------------------- settings
@@ -711,7 +801,7 @@ async function viewSettings() {
   }
 
   fill($app, 
-    h('h1', null, 'Settings & backup'),
+    pageHead('Settings & backup'),
     accountCard(ctx),
     h('h2', null, 'This device'),
     h('section', { class: 'card stack' },
@@ -767,6 +857,8 @@ function goBack(fallback = '#/') {
 function route() {
   stampHistory();
   clearView();
+  $app.removeAttribute('aria-busy');
+  $app.classList.remove('enter'); void $app.offsetWidth; $app.classList.add('enter');
   const hash = location.hash.replace(/^#\/?/, '');
   const [kind, arg] = hash.split('/');
   const id = arg ? decodeURIComponent(arg) : null;
@@ -780,7 +872,7 @@ function route() {
 }
 
 const ctx = {
-  h, fill, toast, icon, lib, $app, setView, goBack, refreshCloud, clearCloud,
+  h, fill, toast, icon, lib, $app, setView, goBack, refreshCloud, clearCloud, pageHead,
   rerender: () => route(),
 };
 
@@ -788,6 +880,8 @@ async function boot() {
   const linkType = cloud.takeSessionFromHash();      // arriving from a confirmation / reset email
   if (linkType) history.replaceState(history.state, '', `${location.pathname}${location.search}#/settings`);
   loadCloudCache();
+  restoreTimers();
+  document.addEventListener('timerdone', (e) => toast(`${e.detail.label} timer is done`, 6000));
   try {
     const [res, mine] = await Promise.all([fetch('data/recipes.json'), store.all()]);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -815,7 +909,7 @@ async function boot() {
   if (cloud.isSignedIn()) {
     await refreshCloud();
     const view = document.body.dataset.view;
-    if (view === 'list' || (view === 'settings' && !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '') && location.hash.indexOf('admin') < 0)) route();
+    if (view === 'list' || (view === 'settings' && !ctx.recovery && !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '') && location.hash.indexOf('admin') < 0)) route();
   }
 }
 
@@ -829,9 +923,9 @@ function showUpdate() {
 
 function registerWorker() {
   if (!('serviceWorker' in navigator)) return;
-  const hadController = !!navigator.serviceWorker.controller;
+  let controlled = !!navigator.serviceWorker.controller;      // false only on the very first visit
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (hadController) showUpdate(); else toast('Ready to use offline', 5000);
+    if (controlled) showUpdate(); else { controlled = true; toast('Ready to use offline', 5000); }
   });
   navigator.serviceWorker.register('sw.js').then((reg) => {
     // look for a newer version now, whenever the app comes back to the front, and hourly

@@ -1,3 +1,3 @@
-Poppins (Medium and Bold, Latin subset) - Copyright 2020 The Poppins Project Authors
-(https://github.com/itfoundry/Poppins). Licensed under the SIL Open Font License 1.1,
-https://openfontlicense.org. Used for headings only; body text uses the phone's own font.
+The app's fonts (Zilla Slab and Work Sans, both SIL Open Font License 1.1) are loaded from Google Fonts,
+the same as the Jones Ridge Kitchen website, and saved by the service worker for offline use.
+If the fonts cannot load, the app falls back to Georgia and the phone's own font.

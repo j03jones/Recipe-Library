@@ -140,3 +140,17 @@ Community list that the administrator approves, and restaurant collections that 
 restaurant's plan is active. Connection details are in `web/js/config.js` (publishable key only). Test the
 screens with `python tools/e2e_cloud.py` (uses a fake in-memory server) and the database rules with
 `bash supabase/test/run.sh`.
+
+
+## Look and feel (v0.12)
+
+The phone/desktop app now matches the Jones Ridge Kitchen website: ridge green headers with the animated
+contour lines, rust and clay accents, Zilla Slab headings and Work Sans text (loaded from Google Fonts and
+kept for offline use by the service worker). New in the app:
+
+- **Cook mode**: one big step at a time, swipe or arrow keys, ingredients one tap away, screen stays on.
+- **Timers**: steps that mention a time ("simmer 15 minutes", "two hours") get a start button; timers keep
+  running while you browse, survive a reload, and ring with sound and vibration.
+- Animations and feedback: the header lines draw themselves, lists glide in, stars pop, ticked ingredients
+  strike through, a little confetti when a recipe is finished. All of it switches off for people who ask their
+  device to reduce motion.
