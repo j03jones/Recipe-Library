@@ -59,9 +59,10 @@ needed, so the site can offer every recipe without a large first download:
 
 To publish a library:
 
-    python3 tools/export_more.py --db ~/.local/share/recipe-library/recipes.db --refresh-core
+    python3 tools/export_more.py --db ~/.local/share/recipe-library/recipes.db --refresh-core --duplicates likely
 
-Recipes already in the built-in set are left out. `--refresh-core` also gives built-in recipes the
+Recipes already in the built-in set are left out (`--duplicates likely` also leaves out the ones that are
+probably the same as a built-in recipe). `--refresh-core` also gives built-in recipes the
 library's corrected text where it has a same-titled copy, keeping their ids so stars and edits made on
 phones stay attached. A browser set to save data skips the extra library.
 
