@@ -189,22 +189,26 @@ class RecipeDB:
             )
 
     def add_recipe(self, recipe: Recipe) -> int:
-        now = _now()
         with self.conn:
-            cur = self.conn.execute(
-                "INSERT INTO recipes(title, directions, yield_qty, yield_unit, yield_raw, "
-                "content_hash, created_at, updated_at, source_author, source_name, source_url) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    recipe.title, recipe.directions,
-                    str(recipe.yield_quantity) if recipe.yield_quantity is not None else None,
-                    recipe.yield_unit, recipe.yield_raw, content_hash(recipe), now, now,
-                    recipe.source_author, recipe.source_name, recipe.source_url,
-                ),
-            )
-            rid = cur.lastrowid
-            self._write_children(rid, recipe)
-            self._index(rid, recipe)
+            return self._insert(recipe)
+
+    def _insert(self, recipe: Recipe) -> int:
+        """Add one recipe inside the caller's transaction."""
+        now = _now()
+        cur = self.conn.execute(
+            "INSERT INTO recipes(title, directions, yield_qty, yield_unit, yield_raw, "
+            "content_hash, created_at, updated_at, source_author, source_name, source_url) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                recipe.title, recipe.directions,
+                str(recipe.yield_quantity) if recipe.yield_quantity is not None else None,
+                recipe.yield_unit, recipe.yield_raw, content_hash(recipe), now, now,
+                recipe.source_author, recipe.source_name, recipe.source_url,
+            ),
+        )
+        rid = cur.lastrowid
+        self._write_children(rid, recipe)
+        self._index(rid, recipe)
         recipe.id = rid
         return rid
 
@@ -290,10 +294,16 @@ class RecipeDB:
         sql = "SELECT r.id, r.title FROM recipes r"
         where, params = [], []
         search = search.strip()
+        found: Optional[set] = None
         if search:
-            ids = self._search_ids(search)
-            where.append(f"r.id IN ({','.join('?' * len(ids)) or 'NULL'})")
-            params.extend(ids)
+            found = set(self._search_ids(search))
+            if not found:
+                return []
+            if len(found) <= 500:   # small result: let SQLite filter (and LIMIT) for us
+                where.append(f"r.id IN ({','.join('?' * len(found))})")
+                params.extend(sorted(found))
+                found = None
+            # otherwise filter below: thousands of ids would exceed SQLite's parameter limit
         if category:
             where.append(
                 "r.id IN (SELECT rc.recipe_id FROM recipe_categories rc "
@@ -303,20 +313,25 @@ class RecipeDB:
         if where:
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY r.title COLLATE NOCASE"
-        if limit:
+        if limit and found is None:
             sql += f" LIMIT {int(limit)}"
-        out = []
-        for row in self.conn.execute(sql, params).fetchall():
-            cats = [
-                r["name"]
-                for r in self.conn.execute(
-                    "SELECT c.name FROM categories c JOIN recipe_categories rc "
-                    "ON rc.category_id = c.id WHERE rc.recipe_id = ? ORDER BY c.name COLLATE NOCASE",
-                    (row["id"],),
-                )
-            ]
-            out.append(RecipeSummary(id=row["id"], title=row["title"], categories=cats))
-        return out
+        rows = self.conn.execute(sql, params).fetchall()
+        if found is not None:
+            rows = [row for row in rows if row["id"] in found]
+            if limit:
+                rows = rows[:int(limit)]
+        cats: dict = {}
+        if len(rows) > 50:   # one pass over the link table beats a query per recipe
+            for r in self.conn.execute(
+                "SELECT rc.recipe_id, c.name FROM recipe_categories rc "
+                "JOIN categories c ON c.id = rc.category_id ORDER BY c.name COLLATE NOCASE"
+            ):
+                cats.setdefault(r["recipe_id"], []).append(r["name"])
+        else:
+            for row in rows:
+                cats[row["id"]] = self._category_names(row["id"])
+        return [RecipeSummary(id=row["id"], title=row["title"], categories=cats.get(row["id"], []))
+                for row in rows]
 
     def _search_ids(self, text: str) -> List[int]:
         tokens = re.findall(r"\w+", text)
@@ -362,15 +377,17 @@ class RecipeDB:
         """
         items = list(recipes)
         summary = ImportSummary()
-        for n, r in enumerate(items, 1):
-            if skip_duplicates and self.find_duplicate(r) is not None:
-                summary.skipped_duplicates.append(r.title)
-            else:
-                if regroup:
-                    category_rules.apply(r)
-                summary.added.append(self.add_recipe(r))
-            if progress is not None and progress(n, len(items)) is False:
-                break
+        # One transaction for the whole batch: a commit per recipe made big files take minutes.
+        with self.conn:
+            for n, r in enumerate(items, 1):
+                if skip_duplicates and self.find_duplicate(r) is not None:
+                    summary.skipped_duplicates.append(r.title)
+                else:
+                    if regroup:
+                        category_rules.apply(r)
+                    summary.added.append(self._insert(r))
+                if progress is not None and progress(n, len(items)) is False:
+                    break
         return summary
 
     # ------------------------------------------------------- tidy categories

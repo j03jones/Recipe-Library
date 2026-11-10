@@ -1,6 +1,9 @@
 """Tiny command-line front end, handy for trying the core before the GUI exists.
 
-    python -m recipelib import samples/sample.mmf
+    python -m recipelib import samples/sample.mmf    (files or whole folders)
+    python -m recipelib export -o mine.mmf [ids]   (MealMaster file; every recipe if no ids)
+    python -m recipelib shopping 3 17 42:2         (one combined list; ID:FACTOR scales a recipe)
+    python -m recipelib show 1 --units metric      (or --units us; also works with scale)
     python -m recipelib list [search words]
     python -m recipelib show 1
     python -m recipelib scale 1 --servings 12      (or --factor 2)
@@ -15,11 +18,12 @@ from __future__ import annotations
 import argparse
 import sys
 from fractions import Fraction
+from pathlib import Path
 
-from . import categories, duplicates
+from . import categories, convert, duplicates, shopping
 from .db import RecipeDB, default_db_path
 from .formatting import credit_line, recipe_to_text
-from .mealmaster import parse_file
+from .mealmaster import parse_file, recipes_to_mmf
 from .scaling import scale_recipe
 
 
@@ -27,7 +31,13 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="recipelib")
     ap.add_argument("--db", default=str(default_db_path()), help="database file")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("import"); p.add_argument("files", nargs="+")
+    p = sub.add_parser("import", help="import MealMaster files, or every .mmf/.mm/.txt file in a folder")
+    p.add_argument("files", nargs="+")
+    p = sub.add_parser("export", help="write recipes to a MealMaster file")
+    p.add_argument("ids", nargs="*", type=int, help="recipe ids (default: the whole library)")
+    p.add_argument("-o", "--output", required=True, help="file to write")
+    p = sub.add_parser("shopping", help="one combined shopping list for several recipes")
+    p.add_argument("picks", nargs="+", metavar="ID[:FACTOR]", help="e.g. 12 or 12:2 or 12:1/2")
     p = sub.add_parser("import-url", help="save one recipe from a web page, with credit to its author")
     p.add_argument("url")
     p = sub.add_parser("regroup")
@@ -40,20 +50,67 @@ def main(argv=None) -> int:
     p.add_argument("--yes", action="store_true", help="don't ask before removing")
     p = sub.add_parser("list"); p.add_argument("search", nargs="*")
     p = sub.add_parser("show"); p.add_argument("id", type=int)
+    p.add_argument("--units", choices=convert.SYSTEMS, help="show amounts in metric or US units")
     p = sub.add_parser("scale"); p.add_argument("id", type=int)
+    p.add_argument("--units", choices=convert.SYSTEMS, help="show amounts in metric or US units")
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--factor"); g.add_argument("--servings")
     args = ap.parse_args(argv)
 
     with RecipeDB(args.db) as db:
         if args.cmd == "import":
-            for path in args.files:
-                res = parse_file(path)
+            files, problems = _import_targets(args.files)
+            for problem in problems:
+                print(problem, file=sys.stderr)
+            added = skipped = 0
+            for path in files:
+                try:
+                    res = parse_file(path)
+                except OSError as e:
+                    print(f"{path}: could not be read ({e.strerror or e})", file=sys.stderr)
+                    problems.append(str(path))
+                    continue
                 summary = db.import_recipes(res.recipes, regroup=True)
+                added += len(summary.added)
+                skipped += len(summary.skipped_duplicates)
                 print(f"{path}: {len(summary.added)} added, "
                       f"{len(summary.skipped_duplicates)} duplicates skipped")
                 for w in res.warnings:
                     print("  warning:", w)
+            if len(files) > 1:
+                print(f"Total: {added:,} added, {skipped:,} duplicates skipped from {len(files)} files.")
+            if problems:
+                return 1
+        elif args.cmd == "export":
+            ids = args.ids or [s.id for s in db.list_recipes()]
+            recipes = [db.get_recipe(i) for i in ids]
+            missing = [str(i) for i, r in zip(ids, recipes) if r is None]
+            if missing:
+                print(f"No recipe with id {', '.join(missing)}", file=sys.stderr)
+                return 1
+            try:
+                Path(args.output).write_text(recipes_to_mmf(recipes), encoding="utf-8")
+            except OSError as e:
+                print(f"Could not write {args.output} ({e.strerror or e})", file=sys.stderr)
+                return 1
+            print(f"Wrote {len(recipes):,} recipes to {args.output}")
+        elif args.cmd == "shopping":
+            picks = []
+            for pick in args.picks:
+                rid, _, factor = pick.partition(":")
+                try:
+                    recipe, f = db.get_recipe(int(rid)), Fraction(factor or 1)
+                except (ValueError, ZeroDivisionError):
+                    print(f"'{pick}' is not ID or ID:FACTOR (for example 12 or 12:2)", file=sys.stderr)
+                    return 1
+                if recipe is None or f <= 0:
+                    print(f"No recipe with id {rid}" if recipe is None else "FACTOR must be greater than zero",
+                          file=sys.stderr)
+                    return 1
+                picks.append((recipe, f))
+            print("Shopping list for: " + "; ".join(
+                r.title + (f" (x{f})" if f != 1 else "") for r, f in picks))
+            print(shopping.to_text(shopping.shopping_list(picks)))
         elif args.cmd == "import-url":
             from . import webimport
             try:
@@ -116,8 +173,30 @@ def main(argv=None) -> int:
                 recipe = res.recipe
                 for w in res.warnings:
                     print("warning:", w, file=sys.stderr)
+            if args.units:
+                recipe = convert.convert_recipe(recipe, args.units)
             print(recipe_to_text(recipe))
     return 0
+
+
+_IMPORT_SUFFIXES = {".mmf", ".mm", ".txt"}
+
+
+def _import_targets(args):
+    """Expand folders into their recipe files. Returns (files, problems)."""
+    files, problems = [], []
+    for arg in args:
+        path = Path(arg)
+        if path.is_dir():
+            found = sorted(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in _IMPORT_SUFFIXES)
+            if not found:
+                problems.append(f"{arg}: no .mmf, .mm or .txt files in this folder")
+            files.extend(found)
+        elif path.is_file():
+            files.append(path)
+        else:
+            problems.append(f"{arg}: no such file or folder")
+    return files, problems
 
 
 if __name__ == "__main__":

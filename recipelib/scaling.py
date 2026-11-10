@@ -7,7 +7,7 @@ from fractions import Fraction
 from typing import List, Optional, Union
 
 from .models import Ingredient, Recipe
-from .units import VOLUME_TSP
+from .units import VOLUME_TSP, format_range, parse_range
 
 Number = Union[int, float, str, Fraction]
 
@@ -89,6 +89,10 @@ def scale_recipe(
             ing.quantity = ing.quantity * f
             if smart_units and f != 1:
                 ing.quantity, ing.unit = _promote_unit(ing.quantity, ing.unit)
+        elif ing.raw_quantity and parse_range(ing.raw_quantity):
+            if f != 1:  # "2-3" doubled is "4-6"; the unit is left alone so both ends share it
+                low, high = parse_range(ing.raw_quantity)
+                ing.raw_quantity = format_range(low * f, high * f)
         elif ing.raw_quantity:
             warnings.append(f"Couldn't scale '{ing.raw_quantity} {ing.item}'; check this one by hand.")
 

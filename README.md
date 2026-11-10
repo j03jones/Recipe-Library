@@ -45,6 +45,31 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Shopping list, units and export (v0.13)
+
+**Shopping list.** In the phone app, open a recipe and choose **Add to shopping list** (it is added at
+the scale on screen). The **List** tab combines every recipe you added into one list to tick off, copy,
+share or print. The same ingredient from different recipes becomes one line, and amounts are added up
+when they are the same kind of measure (cups with tablespoons, pounds with ounces, grams with
+kilograms). The list is kept on the device. From the command line:
+
+    python -m recipelib shopping 3 17 42:2         # recipes 3 and 17, and recipe 42 doubled
+
+**Units.** The recipe page has a **Units** choice: as written, US, or metric. Only like-for-like
+conversions are made (cups to millilitres, ounces to grams), rounded to amounts you can measure; a cup
+of flour is never turned into grams, because that depends on the ingredient.
+
+    python -m recipelib show 12 --units metric     # also works with scale
+
+**Ranges scale.** "2-3 cups" doubled is "4-6 cups". MealMaster's way of writing a range
+(`1/2 c  To 1 c Dry sherry`) is read as one.
+
+**Whole folders, and export.**
+
+    python -m recipelib import ~/Recipes            # every .mmf / .mm / .txt file in the folder
+    python -m recipelib export -o mine.mmf          # the whole library as a MealMaster file
+    python -m recipelib export -o two.mmf 12 40     # or just some recipes
+
 ## Find duplicate recipes
 
 Exact copies are skipped when you import. For near-duplicates (retitled or translated copies,
@@ -153,6 +178,8 @@ The real database defaults to `~/.local/share/recipe-library/recipes.db` on Linu
     recipelib/db.py           SQLite storage, search, duplicate-aware import
     recipelib/units.py        unit names, fraction parsing/formatting
     recipelib/formatting.py   text rendering of ingredients and recipes
+    recipelib/convert.py      US / metric conversion
+    recipelib/shopping.py     combined shopping list
     tests/                    unit tests (unittest)
     samples/sample.mmf        small hand-made MealMaster sample
 
@@ -164,15 +191,22 @@ The real database defaults to `~/.local/share/recipe-library/recipes.db` on Linu
 - Two ingredients per line (right-hand field starts at column 41)
 - Wrapped items: `- more words`, `-- more words`, and mid-word `-xyz` continuations
 - Unit codes, including the nonstandard `x`/`ea` (no unit), `ga` (gallon), `pg` (package)
-- Mixed text encodings (UTF-8, then Windows-1252, then Latin-1) and CRLF line endings
+- Mixed text encodings and CRLF line endings: UTF-8, DOS (code page 437, what MealMaster itself wrote)
+  and Windows-1252 are told apart from context, line by line, so "350°F", "½" and "sauté" survive
+- Amount ranges written MealMaster style (`1/2 c  To 1 c Dry sherry`)
+- Rules and dash-framed headings inside the directions (`~--------`, `---For the sauce:---`)
 
 ## Known limits
 
-- MealMaster itself dropped a character where it wrapped some long items (e.g. "temp" became
-  "t" + "-mp"), so those words come out misspelled ("tmp"). The lost letter can't be recovered.
+- MealMaster itself dropped a character where it wrapped an item that filled the line (e.g. "temp"
+  became "t" + "-mp"), so those words come out misspelled ("tmp"). The lost letter can't be recovered,
+  and when the cut fell between two words they can come out joined. Lines the person wrapped
+  themselves (shorter than the field) are joined with a space.
 - Older exports wrap long right-hand items onto a plain line with no dash; those fragments
   (e.g. "Into eighths") become separate ingredient lines instead of being merged.
-- Ranges like "2-3" are kept as text and are not scaled.
+- Ranges like "2-3" scale, but are not converted between US and metric units.
+- Recipes imported before v0.13 keep the text they were imported with. To pick up the importer fixes
+  (degree signs, wrapped items, tidier directions), import the original files into a fresh library.
 
 ## Accounts and the hosted database (v0.10)
 

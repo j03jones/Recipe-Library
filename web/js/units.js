@@ -70,6 +70,20 @@ export function parseQuantity(text) {
   return null;
 }
 
+const NUM = String.raw`(?:\d+\s+\d+/\d+|\d+/\d+|\d*\.\d+|\d+)`;
+const RANGE_RE = new RegExp(`^(${NUM})\\s*(?:-|\u2013|to)\\s*(${NUM})$`, 'i');
+
+/** '2-3', '1/2 to 1', '1 1/2-2' -> [low, high] as Fracs; null if not a rising range. */
+export function parseRange(text) {
+  const m = RANGE_RE.exec(String(text).trim());
+  if (!m) return null;
+  const low = parseQuantity(m[1]), high = parseQuantity(m[2]);
+  if (low == null || high == null || high.cmp(low) <= 0) return null;
+  return [low, high];
+}
+
+export const formatRange = (low, high) => `${formatQuantity(low)}-${formatQuantity(high)}`;
+
 const trimZeros = (s) => s.replace(/0+$/, '').replace(/\.$/, '');
 
 export function formatQuantity(q) {
@@ -109,7 +123,14 @@ export function formatIngredient(ing) {
   const parts = [];
   if (ing.q != null) parts.push(formatQuantity(ing.q));
   else if (ing.raw) parts.push(ing.raw);
-  if (ing.unit) parts.push(displayUnit(ing.unit, ing.q));
+  if (ing.unit) {
+    let amount = ing.q;
+    if (amount == null && ing.raw) {   // "2-3 cups": the top of the range decides
+      const rng = parseRange(ing.raw);
+      amount = rng ? rng[1] : null;
+    }
+    parts.push(displayUnit(ing.unit, amount));
+  }
   parts.push(ing.item);
   return parts.filter(Boolean).join(' ');
 }
@@ -172,7 +193,7 @@ function isNice(q, denoms = [2n, 3n, 4n, 8n]) {
     frac.sub(new Frac(roundHalfEven(frac.mul(new Frac(d))), d)).abs().cmp(HUNDREDTH) <= 0);
 }
 
-function promoteUnit(q, unit) {
+export function promoteUnit(q, unit) {
   if (Object.hasOwn(VOLUME_TSP, unit)) {
     const tsp = q.mul(VOLUME_TSP[unit]);
     for (const [name, threshold] of [['cup', F(1, 4)], ['Tbsp', F(1)], ['tsp', F(0)]]) {
@@ -204,6 +225,11 @@ export function scaleRecipe(recipe, factor, smart = true) {
     if (copy.q != null) {
       copy.q = copy.q.mul(factor);
       if (smart && !factor.eq(ONE)) [copy.q, copy.unit] = promoteUnit(copy.q, copy.unit);
+    } else if (copy.raw && parseRange(copy.raw)) {
+      if (!factor.eq(ONE)) {  // "2-3" doubled is "4-6"; the unit is left alone so both ends share it
+        const [low, high] = parseRange(copy.raw);
+        copy.raw = formatRange(low.mul(factor), high.mul(factor));
+      }
     } else if (copy.raw) {
       warnings.push(`Couldn't scale '${copy.raw} ${copy.item}'; check this one by hand.`);
     }
@@ -213,6 +239,73 @@ export function scaleRecipe(recipe, factor, smart = true) {
   if (yq != null) yq = yq.mul(factor);
   else if (!factor.eq(ONE)) warnings.push('This recipe has no numeric yield, so the yield was left unchanged.');
   return { recipe: { ...recipe, ings, yq, id: null }, factor, warnings };
+}
+
+// ------------------------------------------------------- metric / US units
+// A line-by-line port of recipelib/convert.py: volume to volume and weight to weight only,
+// rounded to amounts you can measure. Ranges and amounts without a number are left alone.
+
+export const SYSTEMS = ['metric', 'us'];
+const ML = {
+  tsp: F(4929, 1000), Tbsp: F(14787, 1000), 'fl oz': F(29574, 1000), cup: F(236588, 1000),
+  pint: F(473176, 1000), quart: F(946353, 1000), gallon: F(3785412, 1000),
+};
+const GRAMS = { oz: F(283495, 10000), lb: F(4535924, 10000) };
+const METRIC_ML = { ml: F(1), dl: F(100), l: F(1000) };
+const METRIC_G = { g: F(1), kg: F(1000) };
+const THOUSAND = F(1000);
+
+/** Nearest multiple of step, never zero (a tiny amount stays one step). */
+function roundTo(value, step) {
+  const n = roundHalfEven(value.div(step));
+  return new Frac(n || 1n).mul(step);
+}
+
+function metric(value, small, big) {
+  if (value.cmp(THOUSAND) >= 0) return [roundTo(value.div(THOUSAND), F(1, 20)), big];
+  const step = value.cmp(F(10)) < 0 ? F(1, 2) : value.cmp(F(100)) < 0 ? F(5) : F(10);
+  const rounded = roundTo(value, step);
+  return rounded.cmp(THOUSAND) >= 0 ? [rounded.div(THOUSAND), big] : [rounded, small];
+}
+
+function usVolume(ml) {
+  if (ml.cmp(ML.Tbsp) < 0) return [roundTo(ml.div(ML.tsp), F(1, 4)), 'tsp'];
+  if (ml.cmp(ML.cup.div(F(4))) < 0) return [roundTo(ml.div(ML.Tbsp), F(1, 2)), 'Tbsp'];
+  if (ml.cmp(ML.gallon) < 0) return [roundTo(ml.div(ML.cup), F(1, 4)), 'cup'];
+  return [roundTo(ml.div(ML.quart), F(1, 4)), 'quart'];
+}
+
+function usWeight(grams) {
+  if (grams.cmp(GRAMS.lb) < 0) {
+    const ounces = grams.div(GRAMS.oz);
+    return [roundTo(ounces, ounces.cmp(F(4)) < 0 ? F(1, 4) : F(1, 2)), 'oz'];
+  }
+  return [roundTo(grams.div(GRAMS.lb), F(1, 4)), 'lb'];
+}
+
+/** [quantity, unit] in the given system; unchanged if the unit is not one that converts. */
+export function convertAmount(q, unit, system) {
+  if (system === 'metric') {
+    if (Object.hasOwn(ML, unit)) return metric(q.mul(ML[unit]), 'ml', 'l');
+    if (Object.hasOwn(GRAMS, unit)) return metric(q.mul(GRAMS[unit]), 'g', 'kg');
+  } else if (system === 'us') {
+    if (Object.hasOwn(METRIC_ML, unit)) return usVolume(q.mul(METRIC_ML[unit]));
+    if (Object.hasOwn(METRIC_G, unit)) return usWeight(q.mul(METRIC_G[unit]));
+  } else {
+    throw new Error(`Unknown unit system '${system}'.`);
+  }
+  return [q, unit];
+}
+
+/** A copy of the recipe with its measurable ingredients in the given system. */
+export function convertRecipe(recipe, system) {
+  if (!SYSTEMS.includes(system)) throw new Error(`Unknown unit system '${system}'.`);
+  const ings = recipe.ings.map((ing) => {
+    const copy = { ...ing };
+    if (copy.q != null && copy.q.n > 0n) [copy.q, copy.unit] = convertAmount(copy.q, copy.unit, system);
+    return copy;
+  });
+  return { ...recipe, ings };
 }
 
 // ---------------------------------------------------------- editor helpers

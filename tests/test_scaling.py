@@ -33,7 +33,8 @@ class ScalingTests(unittest.TestCase):
         self.assertEqual(text[4], "Salt to taste")
         self.assertEqual(text[6], "1 lb Beef")  # 16 oz promoted
         self.assertEqual(res.recipe.yield_quantity, F(8))
-        self.assertEqual(len(res.warnings), 1)
+        self.assertEqual(text[5], "4-6 Cheese")  # ranges scale at both ends
+        self.assertEqual(res.warnings, [])
 
     def test_target_servings(self):
         res = scale_recipe(make(), target_servings=6)
