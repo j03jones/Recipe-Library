@@ -108,13 +108,28 @@ const lib = { more: [], moreState: 'idle', base: [], mine: new Map(), all: [], b
 // files fetched one at a time, the first time a recipe in them is needed. The service worker keeps
 // whatever has been fetched, so it works offline afterwards.
 const more = { v: null, files: new Map(), failed: new Set() };
+/** Fetch a library file and keep a copy for offline use. The service worker does the same, but on a
+ *  first visit it is not in charge yet when these files are fetched, so the page saves them itself. */
+async function fetchKept(url, init) {
+  let cache = null;
+  try { cache = await caches.open('recipelib-more'); } catch { /* no cache storage (some private modes) */ }
+  try {
+    const res = await fetch(url, init);
+    if (res.ok && cache) cache.put(url, res.clone()).catch(() => {});
+    return res;
+  } catch (err) {
+    const saved = cache && await cache.match(url);
+    if (saved) return saved;
+    throw err;
+  }
+}
 async function loadMore() {
   if (navigator.connection?.saveData) return;            // the person asked their browser to save data
   lib.moreState = 'loading';
   try {
-    const info = await (await fetch('data/more.json', { cache: 'no-cache' })).json();
+    const info = await (await fetchKept('data/more.json', { cache: 'no-cache' })).json();
     if (!info?.v) throw new Error('no extra recipes published');
-    const res = await fetch(`data/more/${info.v}/index.json`);
+    const res = await fetchKept(`data/more/${info.v}/index.json`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const index = await res.json();
     more.v = info.v;
@@ -147,7 +162,7 @@ async function ensureFull(ids) {
   await Promise.all(prefixes.map((prefix) => {
     if (!more.files.has(prefix)) {
       more.files.set(prefix, (async () => {
-        const res = await fetch(`data/more/${more.v}/${prefix}.json`);
+        const res = await fetchKept(`data/more/${more.v}/${prefix}.json`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         for (const row of (await res.json()).recipes) {
           const r = lib.more.find((x) => x.id === row[0]);
@@ -206,8 +221,7 @@ async function refreshCloud() {
     else if (!lib.me) loadCloudCache();         // offline: fall back to what we saved last time
   }
   rebuild();
-  if (lib.me) await syncStars();
-  if (lib.me) await syncPlanner();
+  if (lib.me) await Promise.all([syncStars(), syncPlanner()]);   // independent of each other: no need to queue
 }
 
 // ---- stars follow the person between devices. This device pushes its list whenever it changes.
@@ -1794,7 +1808,8 @@ async function boot() {
     const hadAccount = !!lib.me;
     await refreshCloud();
     const view = document.body.dataset.view;
-    if (view === 'list' || (view === 'recipe' && !hadAccount) || (view === 'settings' && !ctx.recovery && !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '') && location.hash.indexOf('admin') < 0)) route();
+    const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '') && document.activeElement.value;
+    if ((['plan', 'shop', 'pantry', 'collection'].includes(view) && !typing && !document.querySelector('dialog[open]')) || view === 'list' || (view === 'recipe' && !hadAccount) || (view === 'settings' && !ctx.recovery && !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '') && location.hash.indexOf('admin') < 0)) route();
   }
 }
 

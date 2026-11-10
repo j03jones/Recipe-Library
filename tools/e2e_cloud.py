@@ -140,7 +140,11 @@ class Fake:
             if req.method == "GET":
                 return await ok([self.user_data[user["id"]]] if user["id"] in self.user_data else [])
             self.tick += 1
-            row = {"user_id": user["id"], "stars": body["stars"], "updated_at": f"2026-11-04T10:00:{self.tick:02d}Z"}
+            # an upsert that merges: only the columns sent are changed (stars, library_photos, planner)
+            row = {"stars": [], **self.user_data.get(user["id"], {}), **body, "user_id": user["id"],
+                   "updated_at": f"2026-11-04T10:00:{self.tick:02d}Z"}
+            if getattr(self, "no_planner", False) and "planner" in body:
+                return await ok({"message": "Could not find the 'planner' column of 'user_data' in the schema cache"}, 400)
             self.user_data[user["id"]] = row
             return await ok([row], 201)
         if path == "/rest/v1/profiles":
@@ -274,7 +278,7 @@ async def make_link(admin, who="student", restaurant=None):
 
 
 async def main():
-    server = subprocess.Popen([sys.executable, "-m", "http.server", str(PORT), "--directory", str(ROOT / "web")],
+    server = subprocess.Popen([sys.executable, "-m", "http.server", str(PORT), "--bind", "127.0.0.1", "--directory", str(ROOT / "web")],
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1)
     try:
@@ -484,7 +488,7 @@ async def run():
 
         # ---- stars follow the person to another device
         await st.goto(URL + "#/")
-        await st.fill("input[type=search]", "Secret")
+        await st.fill("input[type=search]", "Sam Secret Biscuits")
         await st.wait_for_timeout(300)
         await st.click(".rows .star >> nth=0")
         await st.wait_for_timeout(1500)
@@ -511,8 +515,57 @@ async def run():
         await dev2.goto(URL + "#/settings")
         await dev2.reload()
         await dev2.wait_for_selector("text=Starred recipes sync")
+        await dev2.wait_for_selector("text=Could not find the table", timeout=10000)
         check("a missing table is reported in Settings", await dev2.locator("text=Could not find the table").count() == 1)
         fake.no_table = False
+
+        # ---- the meal plan, shopping list, kitchen and collections follow the person too
+        await st.goto(URL + "#/plan")
+        await st.wait_for_selector(".planday")
+        await st.click(".planday >> nth=2 >> .addday")
+        await st.fill("dialog.pickdialog input[type=search]", "Sam Secret Biscuits")
+        await st.wait_for_timeout(300)
+        await st.click("dialog.pickdialog .picklist button >> nth=0")
+        await st.goto(URL + "#/shop")
+        await st.fill(".addextra input", "Paper towels")
+        await st.press(".addextra input", "Enter")
+        await st.goto(URL + "#/pantry")
+        await st.fill(".addextra input", "flour, eggs")
+        await st.press(".addextra input", "Enter")
+        await st.wait_for_timeout(1800)
+        doc = fake.user_data.get(sam_id, {}).get("planner", {})
+        check("the plan, list and kitchen are saved to the account",
+              len(doc.get("plan", {}).get("days", {})) == 1 and len(doc.get("shop", {}).get("extras", [])) == 1
+              and doc.get("pantry", {}).get("have") == ["flour", "eggs"], doc)
+        check("saving them leaves the stars alone", "stars" in fake.user_data[sam_id])
+        await dev2.goto(URL + "#/plan")
+        await dev2.reload()
+        await dev2.wait_for_selector(".planday .shoprecipes:has-text('Sam Secret Biscuits')", timeout=15000)
+        check("the plan shows up on a second device", True)
+        await dev2.goto(URL + "#/shop")
+        await dev2.wait_for_selector(".shoplist")
+        check("so does the shopping list", await dev2.locator(".shoplist li.extra:has-text('Paper towels')").count() == 1)
+        await dev2.click(".shoplist li.extra .icon-btn")           # take it off on the second device
+        await dev2.wait_for_timeout(1800)
+        await st.goto(URL + "#/shop")
+        await st.reload()
+        await st.wait_for_selector(".empty, .shoplist", timeout=15000)
+        await st.wait_for_timeout(1500)
+        check("a change on the second device comes back to the first", await st.locator("text=Paper towels").count() == 0)
+
+        fake.no_planner = True
+        await st.goto(URL + "#/plan")
+        await st.wait_for_selector(".planday")
+        await st.click(".planday >> nth=5 >> .addday")
+        await st.fill("dialog.pickdialog input[type=text]", "Leftovers")
+        await st.click("dialog.pickdialog form button")
+        await st.wait_for_timeout(1800)
+        await st.reload()
+        await st.wait_for_selector(".planday")
+        await st.wait_for_selector("text=Not saved to your account yet", timeout=10000)
+        check("a database without the planner column is explained, and the plan is kept on the device",
+              "add_planner.sql" in await st.inner_text("#app") and await st.locator(".plannote:has-text('Leftovers')").count() == 1)
+        fake.no_planner = False
 
         # ---- recipes made while signed out can be moved into the account
         lctx, loc = await new_page(b, fake)

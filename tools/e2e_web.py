@@ -21,6 +21,16 @@ SHOTS.mkdir(parents=True, exist_ok=True)
 PORT = 8791
 URL = f"http://127.0.0.1:{PORT}/"
 errors, results = [], []
+# how many recipes the app should show: the built-in set, plus the on-demand set once its index has loaded
+CORE = len(json.loads((ROOT / "web" / "data" / "recipes.json").read_text(encoding="utf-8"))["recipes"])
+_more = ROOT / "web" / "data" / "more.json"
+MORE = json.loads(_more.read_text(encoding="utf-8")) if _more.exists() else {"v": "", "count": 0}
+TOTAL = f"{CORE + MORE['count']:,}"
+
+
+async def whole_library(page):
+    """Wait until the list counts every recipe (the on-demand index loads in the background)."""
+    await page.wait_for_function(f"document.querySelector('.count')?.innerText.includes('{TOTAL} recipes')", timeout=30000)
 
 
 def check(name, cond, detail=""):
@@ -34,7 +44,7 @@ async def search(page, text):
 
 
 async def main():
-    server = subprocess.Popen([sys.executable, "-m", "http.server", str(PORT), "--directory", str(ROOT / "web")],
+    server = subprocess.Popen([sys.executable, "-m", "http.server", str(PORT), "--bind", "127.0.0.1", "--directory", str(ROOT / "web")],
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1)
     try:
@@ -54,10 +64,11 @@ async def run():
 
         await page.goto(URL)
         await page.wait_for_selector(".rc")
-        check("library loads with all recipes", "5,512 recipes" in await page.inner_text(".count"), await page.inner_text(".count"))
+        await whole_library(page)
+        check("library loads with all recipes", f"{TOTAL} recipes" in await page.inner_text(".count"), await page.inner_text(".count"))
         check("rows do not overflow the screen", await page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
         await page.wait_for_function("navigator.serviceWorker.controller !== null", timeout=30000)
-        cached = await page.evaluate("caches.keys().then(async ks => { const c = await caches.open(ks[0]); return (await c.keys()).length })")
+        cached = await page.evaluate("caches.keys().then(async ks => { const c = await caches.open(ks.find(k => !['recipelib-fonts', 'recipelib-more'].includes(k))); return (await c.keys()).length })")
         check("service worker cached app, fonts and data", cached >= 17, cached)
         check("heading font loaded", await page.evaluate("document.fonts.check('700 20px Poppins')"))
 
@@ -68,20 +79,20 @@ async def run():
         await page.click(".chips.groups >> text=Soups & Stews")
         await page.wait_for_timeout(300)
         soups = await page.inner_text(".count")
-        check("filter by a group", "291 of 5,512" in soups, soups)
+        check("filter by a group", f" of {TOTAL}" in soups and not soups.startswith(TOTAL), soups)
         await page.click(".chips.groups >> text=Soups & Stews")  # tap again to clear
         await page.wait_for_timeout(300)
-        check("tapping the group again clears it", "5,512 recipes" in await page.inner_text(".count"))
+        check("tapping the group again clears it", f"{TOTAL} recipes" in await page.inner_text(".count"))
         await page.click(".chips >> text=All")
         await search(page, "penndutch")
-        check("old label still searchable", "of 5,512" in await page.inner_text(".count"), await page.inner_text(".count"))
+        check("old label still searchable", f"of {TOTAL}" in await page.inner_text(".count"), await page.inner_text(".count"))
         await search(page, "zzzzqq")
         check("empty state offers a way out", await page.locator(".empty button:has-text('Clear search and filters')").count() == 1)
         await page.click(".empty button")
         await page.wait_for_timeout(300)
-        check("clearing restores the library", "5,512 recipes" in await page.inner_text(".count"))
+        check("clearing restores the library", f"{TOTAL} recipes" in await page.inner_text(".count"))
         await search(page, "garlic mushroom")
-        check("search narrows results", "of 5,512" in await page.inner_text(".count"))
+        check("search narrows results", f"of {TOTAL}" in await page.inner_text(".count"))
 
         # open a known recipe, tick things off, scale it
         await search(page, "Hearty Russian Beet Soup")
@@ -121,7 +132,8 @@ async def run():
         await ctx.set_offline(True)
         await page.goto(URL)
         await page.wait_for_selector(".rc", timeout=15000)
-        check("loads while offline", "5,512 recipes" in await page.inner_text(".count"))
+        await whole_library(page)      # the on-demand index was saved by the service worker too
+        check("loads while offline", f"{TOTAL} recipes" in await page.inner_text(".count"))
         await search(page, "biscotti")
         check("search works offline", (await page.locator(".rc").count()) > 0)
 
@@ -269,6 +281,100 @@ async def run():
             check("new version shows an update banner", "Update now" in await page.inner_text(".updatebar"))
         finally:
             sw.write_text(original)
+
+        # ---- meal plan, shopping list, What can I make?, collections and the on-demand library (a fresh device)
+        ctx4 = await b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2)
+        p4 = await ctx4.new_page()
+        p4.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+        p4.on("pageerror", lambda e: errors.append(str(e)))
+        await p4.goto(URL)
+        await p4.wait_for_selector(".rc")
+        await whole_library(p4)
+        await p4.wait_for_function("navigator.serviceWorker.controller !== null", timeout=30000)
+
+        async def plan_on(day, title):
+            await p4.click(f".planday >> nth={day} >> .addday")
+            await p4.fill("dialog.pickdialog input[type=search]", title)
+            await p4.wait_for_timeout(250)
+            await p4.click("dialog.pickdialog .picklist button >> nth=0")
+            await p4.wait_for_timeout(200)
+
+        await p4.click("a[data-tab=plan]")
+        await p4.wait_for_selector(".planday")
+        check("meal plan shows a week", await p4.locator(".planday").count() == 7)
+        await plan_on(1, "Hearty Russian Beet Soup")
+        await plan_on(3, "Hearty Russian Beet Soup")
+        check("a planned recipe is listed on its day", "Beet Soup" in await p4.inner_text(".planday >> nth=1"))
+        await p4.click(".planday >> nth=4 >> .addday")
+        await p4.fill("dialog.pickdialog input[type=text]", "Leftovers")
+        await p4.click("dialog.pickdialog form button")
+        check("a note can be planned", "Leftovers" in await p4.inner_text(".planday >> nth=4"))
+        check("no dialog is left open", await p4.locator("dialog[open]").count() == 0)
+        await p4.screenshot(path=str(SHOTS / "plan.png"))
+
+        await p4.click("button:has-text('Add this week to the shopping list')")
+        await p4.wait_for_selector(".shoplist")
+        check("the week goes to the shopping list, twice-planned counted twice", "×2" in await p4.inner_text(".shoprecipes"))
+        check("the list is grouped by aisle", await p4.locator("h3.aisle").count() >= 3, await p4.locator("h3.aisle").count())
+        check("the meal-plan button goes once the list matches", await p4.locator("button:has-text('Add my meal plan')").count() == 0)
+        await p4.fill(".addextra input", "Paper towels")
+        await p4.press(".addextra input", "Enter")
+        check("a typed item is added", await p4.locator(".shoplist li.extra:has-text('Paper towels')").count() == 1)
+        before = await p4.inner_text("[role=status]")
+        await p4.click(".shoplist .tick >> nth=0")
+        after = await p4.inner_text("[role=status]")
+        check("ticking counts down", "still to get" in after and before != after, after)
+        await p4.reload()
+        await p4.wait_for_selector(".shoplist")
+        check("the list survives a reload", "×2" in await p4.inner_text(".shoprecipes") and "still to get" in await p4.inner_text("[role=status]"))
+        await p4.screenshot(path=str(SHOTS / "shopping.png"))
+
+        await p4.goto(URL + "#/pantry")
+        await p4.fill(".addextra input", "beets, cabbage, potatoes, onions, carrots, beef")
+        await p4.press(".addextra input", "Enter")
+        await p4.wait_for_selector("ul.rows li")
+        status = await p4.inner_text("[role=status]")
+        check("what can I make finds recipes", "make now" in status or "need one or two" in status, status)
+        check("each result says what is missing", await p4.locator("ul.rows li .s:has-text('Needs'), ul.rows li .s:has-text('You have everything')").count() > 0)
+        await p4.click(".rowacts button:has-text('Plan it') >> nth=0")
+        await p4.click("dialog.pickdialog .picklist button >> nth=5")
+        check("a result can be planned", "Planned for" in await p4.inner_text("#toast"))
+        await p4.screenshot(path=str(SHOTS / "pantry.png"))
+        await p4.goto(URL + "#/shop")
+        await p4.wait_for_selector(".shoplist")
+        check("the list sets aside what is already in the kitchen", await p4.locator(".havebox").count() == 1)
+        check("and offers the newly planned recipe", await p4.locator("button:has-text('Add my meal plan')").count() == 1)
+
+        await p4.goto(URL + "#/")
+        await search(p4, "Hearty Russian Beet Soup")
+        await p4.click(".rc >> nth=0")
+        await p4.wait_for_selector(".dock")
+        await p4.click("button:has-text('Add to a collection')")
+        await p4.fill("dialog.pickdialog input[type=text]", "Soups I like")
+        await p4.press("dialog.pickdialog input[type=text]", "Enter")
+        await p4.click("dialog.pickdialog button:has-text('Done')")
+        check("a recipe can be put in a new collection", await p4.locator("button:has-text('Collections (1)')").count() == 1)
+        await p4.goto(URL + "#/starred")
+        await p4.click(".collrow .chip:has-text('Soups I like')")
+        await p4.wait_for_selector("ul.rows li")
+        check("the collection lists it", "Soups I like" in await p4.inner_text("h1") and await p4.locator("ul.rows li").count() == 1)
+
+        if MORE["count"]:
+            index = json.loads((ROOT / "web" / "data" / "more" / MORE["v"] / "index.json").read_text(encoding="utf-8"))["recipes"]
+            first = next(r for r in index if len(r[3]) >= 6)
+            other = next(r for r in index if r[0][:2] != first[0][:2])      # in a file that is never fetched here
+            await p4.goto(URL + f"#/r/{first[0]}")
+            await p4.wait_for_selector(".dock")
+            check("an on-demand recipe opens with its ingredients", await p4.locator("ul.ing li").count() >= len(first[3]),
+                  await p4.locator("ul.ing li").count())
+            await ctx4.set_offline(True)
+            await p4.reload()
+            await p4.wait_for_selector(".dock", timeout=15000)
+            check("an opened on-demand recipe works offline", first[1] in await p4.inner_text("h1"))
+            await p4.goto(URL + f"#/r/{other[0]}")
+            await p4.wait_for_selector("button:has-text('Try again')", timeout=15000)
+            check("an unopened one explains it needs a connection", "needs a connection" in await p4.inner_text("#app"))
+            await ctx4.set_offline(False)
 
         # dark mode renders
         ctx3 = await b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, color_scheme="dark")

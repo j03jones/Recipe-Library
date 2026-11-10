@@ -191,6 +191,10 @@ bottom of each recipe with a servings stepper. On a computer it switches to a si
     python3 -m http.server 8000 -d web                                         # try it at http://localhost:8000
     python3 tools/parity_check.py                                              # JS output == Python output
     python3 tools/e2e_web.py                                                   # click-through test in headless Chromium (needs Playwright)
+    python3 tools/e2e_cloud.py                                                 # the signed-in screens, against a fake server
+
+Both click-through tests run on every pull request (the `e2e` job). To run them yourself:
+`pip install playwright && python -m playwright install chromium`.
 
 `tools/export_web.py` also accepts `--mmf file1.mmf file2.mmf ...`. To publish: in the GitHub
 repo, Settings > Pages > Source: "GitHub Actions". Every push to `main` that touches `web/` is
