@@ -45,9 +45,10 @@ self.addEventListener('fetch', (event) => {
     // current, so the network is asked first; the files of a set never change, so a saved copy wins.
     event.respondWith((async () => {
       const cache = await caches.open('recipelib-more');
-      const fresh = () => fetch(req).then((res) => { if (res.ok) cache.put(req, res.clone()); return res; });
+      const fresh = (init) => fetch(req, init).then((res) => { if (res.ok) cache.put(req, res.clone()); return res; });
       if (url.pathname.endsWith('/data/more.json')) {
-        try { return await fresh(); } catch (err) { return (await cache.match(req)) || Response.error(); }
+        // 'no-cache' makes the browser check with the server, so a republished library shows up at once
+        try { return await fresh({ cache: 'no-cache' }); } catch (err) { return (await cache.match(req)) || Response.error(); }
       }
       return (await cache.match(req)) || fresh();
     })());
