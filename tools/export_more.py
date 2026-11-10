@@ -56,7 +56,7 @@ def index_row(row) -> list:
     return [row[0], row[1], row[2], names]
 
 
-def split(core_rows, library, progress=print):
+def split(core_rows, library, progress=print, level=duplicates.HIGH):
     """(core rows, possibly refreshed; extra rows; counts) from the built-in rows and a library."""
     core = [recipe_from_row(r) for r in core_rows]
     core_ids = {r[0] for r in core_rows}
@@ -72,7 +72,7 @@ def split(core_rows, library, progress=print):
     progress(f"{len(dropped):,} library recipes are exact copies of built-in ones")
     by_id = {r.id: r for r in core + library}
     for g in duplicates.find_duplicate_groups(core + [r for r in library if r.id not in dropped]):
-        if g.level != duplicates.HIGH:
+        if duplicates.LEVELS.index(g.level) > duplicates.LEVELS.index(level):
             continue
         built_in = [i for i in g.ids if i < 0]
         mine = [i for i in g.ids if i > 0]
@@ -94,6 +94,9 @@ def main(argv=None) -> int:
     ap.add_argument("--data", default=str(root / "web" / "data"), help="the web app's data folder")
     ap.add_argument("--refresh-core", action="store_true",
                     help="also update built-in recipes with the library's corrected text (ids are kept)")
+    ap.add_argument("--duplicates", choices=[duplicates.HIGH, duplicates.LIKELY], default=duplicates.HIGH,
+                    help="leave out library recipes that match a built-in one with this confidence or better "
+                         "(high: same recipe; likely: probably the same). Default: high")
     args = ap.parse_args(argv)
 
     data_dir = Path(args.data)
@@ -104,7 +107,7 @@ def main(argv=None) -> int:
     for r in library:
         if not r.tags:
             categories.apply(r)
-    core, extra, dropped, replace, by_id = split(core_doc["recipes"], library)
+    core, extra, dropped, replace, by_id = split(core_doc["recipes"], library, level=args.duplicates)
     print(f"{len(dropped):,} library recipes are already built in; {len(extra):,} extra recipes to export")
 
     if args.refresh_core and replace:
