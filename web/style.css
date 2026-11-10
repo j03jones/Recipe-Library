@@ -111,7 +111,7 @@ button:disabled { opacity: .45; cursor: default; }
 
 /* -------------------------------------------------------------------------------- navigation */
 .tabs {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; display: grid; grid-template-columns: repeat(4, 1fr);
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; display: grid; grid-template-columns: repeat(5, 1fr);
   background: var(--ridge); border-top: 1px solid rgb(255 255 255 / .08);
   padding: .1rem calc(.5rem + env(safe-area-inset-right)) calc(.2rem + env(safe-area-inset-bottom)) calc(.5rem + env(safe-area-inset-left));
 }
@@ -499,3 +499,13 @@ details.original ol { margin: .4rem 0 0; padding-left: 1.3rem; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---- units picker and shopping list */
+.unitpick { display: flex; align-items: center; gap: .6rem; font-weight: 600; }
+.unitpick select { flex: 1 1 auto; max-width: 16rem; }
+button[aria-pressed=true]:not(.chip):not(.tick):not(.icon-btn):not(.star) { border-color: var(--ridge); }
+.shoprecipes { list-style: none; margin: .2rem 0 1rem; padding: 0; }
+.shoprecipes li { display: flex; align-items: center; gap: .4rem; padding: .15rem 0; border-bottom: 1px solid var(--line); }
+.shoprecipes li a { flex: 1 1 auto; font-weight: 600; text-decoration: none; color: inherit; }
+.shoplist .what b { font-weight: 600; white-space: nowrap; }
+@media print { .shoprecipes .icon-btn { display: none !important; } }

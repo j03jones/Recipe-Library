@@ -1,7 +1,8 @@
 import {
-  Frac, UNIT_CHOICES, adaptedLine, amountForEditing, creditLine, factorForServings, formatIngredient, formatYield,
+  Frac, UNIT_CHOICES, adaptedLine, amountForEditing, convertRecipe, creditLine, factorForServings, formatIngredient, formatYield,
   ingredientFromFields, parseYield, recipeToText, scaleRecipe, splitCategories,
 } from './units.js';
+import * as shop from './shopping.js';
 import { fromRecord, fromRow, hasSource, isAdapted, toRecord } from './model.js';
 import { COLLECTIONS } from './linkdata.js';
 import { MAX_OVERLAP, VEGAN_GROUP, recipeFromSchema, wordingOverlap } from './webimport.js';
@@ -16,6 +17,7 @@ import * as photos from './photos.js';
 const $app = document.getElementById('app');
 const $toast = document.getElementById('toast');
 const PAGE = 60;
+const UNITS_KEY = 'recipelib.units';
 
 // ------------------------------------------------------------------- helpers
 
@@ -226,14 +228,28 @@ function thumb(r) {
 
 function rebuild() {
   const map = new Map(lib.base.map((r) => [r.id, r]));
+  // A record that is not the shape the app expects (a damaged backup, or a row someone wrote to
+  // the hosted database by hand) is skipped, so one bad recipe can never take the whole app down.
+  const read = (rec, source) => {
+    try {
+      if (typeof rec.title !== 'string' || !Array.isArray(rec.ings)) throw new TypeError('not a recipe record');
+      const r = fromRecord({ ...rec, categories: (Array.isArray(rec.categories) ? rec.categories : []).filter((c) => typeof c === 'string'),
+        tags: (Array.isArray(rec.tags) ? rec.tags : []).filter((t) => typeof t === 'string'),
+        yu: String(rec.yu ?? ''), yr: String(rec.yr ?? ''), dir: String(rec.dir ?? ''),
+        ings: rec.ings.filter(Array.isArray).map(([q, raw, unit, item, group]) => [q, String(raw ?? ''), String(unit ?? ''), String(item ?? ''), String(group ?? '')]).filter(([q, raw, , item]) => q || raw || item) }, source);
+      return r;
+    } catch (err) { console.warn('Skipped a recipe that could not be read:', rec?.id, err); return null; }
+  };
   for (const rec of lib.mine.values()) {
-    if (rec.deleted) map.delete(rec.id);
-    else map.set(rec.id, fromRecord(rec, lib.base.some((b) => b.id === rec.id) ? 'edited' : 'mine'));
+    if (rec.deleted) { map.delete(rec.id); continue; }
+    const r = read(rec, lib.base.some((b) => b.id === rec.id) ? 'edited' : 'mine');
+    if (r) map.set(rec.id, r);
   }
   for (const row of lib.cloud) {
     if (row.scope === 'private' && row.owner_id !== lib.me?.id) continue;          // admins can read these; the app never lists them
     const src = cloudSource(row);
-    const r = fromRecord({ ...row.body, id: row.id, title: row.title, categories: row.categories || [] }, src);
+    const r = read({ ...(row.body && typeof row.body === 'object' ? row.body : {}), id: row.id, title: row.title, categories: row.categories || [] }, src);
+    if (!r) continue;
     r.cloud = true; r.row = row;
     r.hidden = row.scope === 'community' && row.status !== 'approved' && row.owner_id !== lib.me?.id;   // pending items from others live in Admin tools
     map.set(row.id, r);
@@ -607,6 +623,20 @@ function viewRecipe(id) {
     disabled: !(r.yq && r.yq.n > 0n), value: r.yq ? num(r.yq, 2) : '',
   });
   const smartIn = h('input', { type: 'checkbox', checked: true, onchange: () => { smart = smartIn.checked; paint(); } });
+  // Units: as written, or converted (volume to volume, weight to weight). Remembered between recipes.
+  let units = '';
+  try { units = localStorage.getItem(UNITS_KEY) || ''; } catch { /* private mode */ }
+  if (!['', 'us', 'metric'].includes(units)) units = '';
+  const unitsIn = h('select', { 'aria-label': 'Units', value: units, onchange: () => {
+    units = unitsIn.value;
+    try { localStorage.setItem(UNITS_KEY, units); } catch { /* private mode */ }
+    paint();
+  } }, h('option', { value: '' }, 'As written'), h('option', { value: 'us' }, 'US (cups, oz)'), h('option', { value: 'metric' }, 'Metric (ml, g)'));
+  /** The recipe as shown: scaled, then in the chosen units. */
+  const shown = () => {
+    const res = scaleRecipe(r, factor, smart);
+    return units ? { ...res, recipe: convertRecipe(res.recipe, units) } : res;
+  };
   const ingBox = h('div');
   const dirBox = h('div');
   const yieldLabel = r.yu || (r.yq ? '' : 'servings');
@@ -636,7 +666,7 @@ function viewRecipe(id) {
   };
 
   function paint() {
-    const { recipe: s, warnings } = scaleRecipe(r, factor, smart);
+    const { recipe: s, warnings } = shown();
     for (const [f, b] of presets) b.setAttribute('aria-pressed', String(f.eq(factor)));
     const groups = [];
     for (const ing of s.ings) {
@@ -685,7 +715,7 @@ function viewRecipe(id) {
 
   // one step at a time, big text, swipe or tap to move on
   function cookMode() {
-    const s = scaleRecipe(r, factor, smart).recipe;
+    const s = shown().recipe;
     const steps = s.dir ? s.dir.split('\n').filter((l) => l.trim()) : [];
     if (!steps.length) return;
     let i = 0;
@@ -751,15 +781,32 @@ function viewRecipe(id) {
   }
 
   const copy = async () => {
-    const text = recipeToText(scaleRecipe(r, factor, smart).recipe);
+    const text = recipeToText(shown().recipe);
     toast(await copyText(text) ? 'Recipe copied' : 'Could not copy on this browser');
   };
-  const share = () => navigator.share({ title: r.title, text: recipeToText(scaleRecipe(r, factor, smart).recipe) }).catch(() => {});
+  const share = () => navigator.share({ title: r.title, text: recipeToText(shown().recipe) }).catch(() => {});
   const saveCopy = () => {
     const s = scaleRecipe(r, factor, smart).recipe;
     s.title = factor.eq(new Frac(1n)) ? `${r.title} (copy)` : `${r.title} (scaled)`;
     viewEdit(null, s);
   };
+
+  // shopping list: adds this recipe at the scale on screen; pressing again takes it off
+  const shopBtn = h('button', { type: 'button', onclick: () => {
+    const on = shop.has(r.id);
+    const ok = on ? shop.remove(r.id) : shop.add(r.id, factor);
+    if (!ok) { toast('Could not save the shopping list on this browser'); return; }
+    paintShop();
+    toast(on ? 'Taken off the shopping list' : 'Added to the shopping list');
+  } });
+  const shopLink = h('a', { class: 'linkbtn', href: '#/shop' }, 'Open the shopping list');
+  function paintShop() {
+    const on = shop.has(r.id);
+    shopBtn.textContent = on ? '✓ On the shopping list' : 'Add to shopping list';
+    shopBtn.setAttribute('aria-pressed', String(on));
+    shopLink.hidden = !on;
+  }
+  paintShop();
 
   const [primary, ...rest] = r.categories;
   fill($app,
@@ -792,6 +839,8 @@ function viewRecipe(id) {
       dirBox),
     h('section', { class: 'tools stack' },
       h('label', { class: 'check' }, smartIn, 'Smart units (8 Tbsp becomes ½ cup)'),
+      h('label', { class: 'unitpick' }, h('span', null, 'Units'), unitsIn),
+      r.ings.length > 0 && h('div', { class: 'row grow' }, shopBtn, shopLink),
       h('div', { class: 'row grow' },
         h('button', { onclick: copy }, 'Copy'),
         navigator.share && h('button', { onclick: share }, 'Share'),
@@ -938,6 +987,56 @@ function viewEdit(id, template) {
 // ------------------------------------------------------ outside collections and web import
 
 /** Recipe titles from an outside author, each opening on their own website (nothing is copied). */
+// The shopping list: every recipe added from its page, combined into one list to tick off.
+function viewShop() {
+  setView('shop', 'shop');
+  const body = h('div');
+  function paint() {
+    const list = shop.load();
+    const picks = list.items.map((i) => [lib.byId.get(i.id), Frac.parse(i.f) || new Frac(1n), i]).filter(([r]) => r && r.kind !== 'link');
+    if (!picks.length) {
+      fill(body, h('div', { class: 'empty' },
+        h('h2', null, 'Nothing on the list yet'),
+        h('p', { class: 'muted' }, 'Open a recipe and choose “Add to shopping list”. Add as many as you like: the same ingredient from different recipes is added up into one line.'),
+        h('a', { class: 'linkbtn', href: '#/' }, 'Browse the recipes')));
+      return;
+    }
+    const lines = shop.shoppingList(picks.map(([r, f]) => [r, f]));
+    const done = new Set(list.done);
+    const left = lines.filter((l) => !done.has(l.key)).length;
+    const text = () => `Shopping list\n${picks.map(([r, f]) => `${r.title}${f.eq(new Frac(1n)) ? '' : ` (×${num(f, 2)})`}`).join('\n')}\n\n${shop.toText(lines.filter((l) => !done.has(l.key)))}`;
+    fill(body,
+      h('ul', { class: 'shoprecipes' }, picks.map(([r, f]) => h('li', null,
+        h('a', { href: `#/r/${r.id}` }, r.title),
+        !f.eq(new Frac(1n)) && h('span', { class: 'muted' }, ` ×${num(f, 2)}`),
+        h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Take ${r.title} off the list`, title: 'Take off the list',
+          onclick: () => { shop.remove(r.id); paint(); } }, icon('close', { size: 18 }))))),
+      h('p', { class: 'muted small', role: 'status' }, left === lines.length
+        ? `${lines.length} ${lines.length === 1 ? 'thing' : 'things'} to get`
+        : `${left} of ${lines.length} still to get`),
+      h('ul', { class: 'ing shoplist' }, lines.map((l) => {
+        const btn = h('button', { class: 'tick', type: 'button', 'aria-pressed': String(done.has(l.key)),
+          title: l.recipes.join(', '),
+          onclick: () => { shop.setDone(l.key, btn.getAttribute('aria-pressed') !== 'true'); buzz(6); paint(); } },
+        h('span', { class: 'box' }, icon('check', { size: 16 })),
+        h('span', { class: 'what' }, l.name, (l.amounts.length > 0 || l.notes.length > 0) && h('b', null, ` ${[...l.amounts, ...l.notes].join(' + ')}`)));
+        return h('li', null, btn);
+      })),
+      h('section', { class: 'tools stack' },
+        h('div', { class: 'row grow' },
+          h('button', { type: 'button', onclick: async () => toast(await copyText(text()) ? 'Shopping list copied' : 'Could not copy on this browser') }, 'Copy'),
+          navigator.share && h('button', { type: 'button', onclick: () => navigator.share({ title: 'Shopping list', text: text() }).catch(() => {}) }, 'Share'),
+          h('button', { type: 'button', onclick: () => window.print() }, 'Print'),
+          h('button', { type: 'button', onclick: async () => {
+            if (await confirmDialog('Clear the whole shopping list?', 'Clear list', true)) { shop.clear(); paint(); }
+          } }, 'Clear list')),
+        h('p', { class: 'muted small' }, 'Amounts are added up when they are the same kind of measure (cups with tablespoons, pounds with ounces). The list is kept on this device.')));
+  }
+  fill($app, pageHead('Shopping list', 'Everything for the recipes you picked, in one list'), body);
+  paint();
+  window.scrollTo(0, 0);
+}
+
 function viewLinks(collectionId) {
   const c = COLLECTIONS.find((x) => x.id === collectionId);
   if (!c) return viewMissing();
@@ -1162,6 +1261,7 @@ function route() {
   if (kind === 'admin') return viewAdmin(ctx);
   if (kind === 'join') return viewJoin(ctx, id);
   if (kind === 'starred') return viewList(true);
+  if (kind === 'shop') return viewShop();
   return viewList();
 }
 

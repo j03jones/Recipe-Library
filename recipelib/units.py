@@ -88,6 +88,34 @@ def parse_quantity(text: str) -> Optional[Fraction]:
     return None
 
 
+_NUM = r"(?:\d+\s+\d+/\d+|\d+/\d+|\d*\.\d+|\d+)"
+_RANGE_RE = re.compile(rf"^({_NUM})\s*(?:-|\u2013|to)\s*({_NUM})$", re.IGNORECASE)
+
+
+def parse_range(text: str):
+    """'2-3', '1/2 to 1', '1 1/2-2' -> (low, high) as Fractions; None if not a rising range."""
+    m = _RANGE_RE.match(text.strip())
+    if not m:
+        return None
+    low, high = parse_quantity(m.group(1)), parse_quantity(m.group(2))
+    if low is None or high is None or high <= low:
+        return None
+    return low, high
+
+
+def format_range(low: Fraction, high: Fraction) -> str:
+    return f"{format_quantity(low)}-{format_quantity(high)}"
+
+
+def format_plain(q: Fraction) -> str:
+    """Exact text for an amount: '3', '1/2', '1 1/2' (no rounding, unlike format_quantity)."""
+    whole = int(q)
+    rest = q - whole
+    if rest == 0:
+        return str(whole)
+    return f"{whole} {rest}" if whole else str(rest)
+
+
 def format_quantity(q: Optional[Fraction]) -> str:
     """Mixed fraction when close to a kitchen-friendly fraction, else a short decimal."""
     if q is None:

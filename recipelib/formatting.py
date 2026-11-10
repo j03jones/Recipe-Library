@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .models import Ingredient, Recipe
-from .units import display_unit, format_quantity
+from .units import display_unit, format_quantity, parse_range
 
 
 def format_ingredient(ing: Ingredient) -> str:
@@ -12,7 +12,11 @@ def format_ingredient(ing: Ingredient) -> str:
     elif ing.raw_quantity:
         parts.append(ing.raw_quantity)
     if ing.unit:
-        parts.append(display_unit(ing.unit, ing.quantity))
+        amount = ing.quantity
+        if amount is None and ing.raw_quantity:   # "2-3 cups": the top of the range decides
+            rng = parse_range(ing.raw_quantity)
+            amount = rng[1] if rng else None
+        parts.append(display_unit(ing.unit, amount))
     parts.append(ing.item)
     return " ".join(p for p in parts if p)
 

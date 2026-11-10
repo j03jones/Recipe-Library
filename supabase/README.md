@@ -120,3 +120,11 @@ Add the secret **RESEND_API_KEY** (Edge Functions > Secrets) with a Resend key t
 on, anyone can create a free student account without a code, the Request tab is hidden, and invite
 links and restaurant codes still work.
 
+## Function access tidy-up
+`tighten_function_access.sql` (run after everything above, safe to run again) removes grants the
+Supabase security advisor flags: signed-out visitors could call `admin_list_invites()` (it refused
+them, so nothing leaked), and trigger functions were listed as callable. New projects get this from
+`schema.sql`; existing projects run it once in the SQL Editor.
+
+The advisor also suggests switching on **Authentication > Sign In / Providers > Email > Leaked password
+protection**, which rejects passwords known from data breaches. That is a dashboard switch, not SQL.
