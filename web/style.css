@@ -557,3 +557,15 @@ h3.aisle { margin: 1.2rem 0 .2rem; font-size: .8rem; letter-spacing: .12em; text
 .havebox summary { cursor: pointer; font-weight: 600; }
 .havelist { margin: .5rem 0 .2rem; padding-left: 1.1rem; color: var(--muted); }
 @media print { .havebox, .rowacts { display: none !important; } }
+
+/* ---- your notes: rating, cook log, private note */
+.mylog { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.mylog h2 { margin-top: 0; }
+.ratingrow { display: flex; align-items: center; gap: .1rem; margin-bottom: .7rem; }
+.ratestar { border: 0; background: none; padding: .25rem; color: var(--muted); border-radius: 50%; }
+.ratestar[aria-pressed=true] { color: var(--clay); }
+.ratingrow .muted { margin-left: .5rem; }
+.mylog .row { margin-bottom: .7rem; }
+.mylog textarea { width: 100%; }
+.linklike { border: 0; background: none; padding: .2rem .3rem; text-decoration: underline; color: var(--muted); font-size: .85rem; }
+@media print { .mylog { display: none !important; } }

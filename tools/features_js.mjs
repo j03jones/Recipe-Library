@@ -7,8 +7,9 @@ import { aisleFor, combine, shoppingList, toText, toTextByAisle } from '../web/j
 import * as planner from '../web/js/planner.js';
 import * as pantry from '../web/js/pantry.js';
 import * as collections from '../web/js/collections.js';
+import * as cooklog from '../web/js/cooklog.js';
 
-const { rows, factors, picks, names = [], plan = null, have = null, colls = null } = JSON.parse(readFileSync(0, 'utf8'));
+const { rows, factors, picks, names = [], plan = null, have = null, colls = null, log = null } = JSON.parse(readFileSync(0, 'utf8'));
 const recipes = rows.map(fromRow);
 const out = { convert: {}, scale: {}, shop: [] };
 for (const r of recipes) {
@@ -34,4 +35,9 @@ if (have) {
     pantry.match(recipes, list, { maxMissing, assumeStaples }).map((m) => [m.recipe.id, m.missing, m.used]));
 }
 if (colls) out.colls = { cleaned: collections.clean(colls.raw), merged: collections.merge(colls.raw, colls.other) };
+if (log) {
+  const cleaned = cooklog.clean(log.raw);
+  out.log = { cleaned, merged: cooklog.merge(log.raw, log.other), recent: cooklog.recent(cleaned).map(([id]) => id),
+    summary: cooklog.summary(cleaned.a) };
+}
 process.stdout.write(JSON.stringify(out));

@@ -289,3 +289,24 @@ class CommandLine(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TidyTitles(unittest.TestCase):
+    def test_capitals_become_title_case(self):
+        from recipelib.tidy import tidy_title
+        cases = {
+            "PEPPERY RICE": "Peppery Rice",
+            "MOM'S BBQ RIBS WITH SAUCE": "Mom's BBQ Ribs with Sauce",
+            "HORS D'OEUVRES A LA KING": "Hors D'Oeuvres a la King",
+            "STIR-FRY: THE BASICS": "Stir-Fry: The Basics",
+            "O'BRIEN POTATOES II": "O'Brien Potatoes II",
+            "VEAL ROUNDS (WITH VEGETABLES)": "Veal Rounds (With Vegetables)",
+            "THE BEST CHILI": "The Best Chili",
+        }
+        for given, want in cases.items():
+            self.assertEqual(tidy_title(given), want)
+
+    def test_other_titles_are_left_alone(self):
+        from recipelib.tidy import tidy_title
+        for title in ["Coq au Vin", "BBQ", "Mom's BBQ Ribs", "mixed CASE Title", "", "1-2-3"]:
+            self.assertEqual(tidy_title(title), title)
