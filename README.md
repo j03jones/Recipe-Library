@@ -45,6 +45,26 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## The full library, on demand (v0.16)
+
+The phone app ships with a built-in set of recipes (`web/data/recipes.json`) that works offline from the
+first visit. The rest of the library is published next to it in small files the app fetches only when
+needed, so the site can offer every recipe without a large first download:
+
+- `web/data/more.json` names the current set.
+- `web/data/more/<version>/index.json` has each extra recipe's title, categories and ingredient names.
+  The app loads it in the background, so search and What can I make? cover every recipe.
+- `web/data/more/<version>/<xx>.json` (256 files) hold the full recipes. One is fetched the first time a
+  recipe in it is opened, planned or shopped for, and kept for offline use after that.
+
+To publish a library:
+
+    python3 tools/export_more.py --db ~/.local/share/recipe-library/recipes.db --refresh-core
+
+Recipes already in the built-in set are left out. `--refresh-core` also gives built-in recipes the
+library's corrected text where it has a same-titled copy, keeping their ids so stars and edits made on
+phones stay attached. A browser set to save data skips the extra library.
+
 ## What can I make? and collections (v0.15)
 
 - **What can I make?** (on the Recipes page) Type what is in your kitchen. You get the recipes you can
