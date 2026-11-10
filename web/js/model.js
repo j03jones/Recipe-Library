@@ -14,6 +14,15 @@ export function fromRow(row) {
   };
 }
 
+/** A recipe from the on-demand index: enough to list, search and match by ingredient. The amounts,
+ *  directions and yield arrive later (see app.js ensureFull), so `stub` is true until then. */
+export function fromIndexRow([id, title, categories, names]) {
+  return {
+    id, title, categories: categories || [], tags: [], yq: null, yu: '', yr: '', dir: '', source: 'base', stub: true,
+    ings: (names || []).map((item) => ({ q: null, raw: '', unit: '', item, group: '' })),
+  };
+}
+
 export function toRecord(r) {
   return {
     id: r.id, title: r.title, categories: r.categories, tags: r.tags || [],

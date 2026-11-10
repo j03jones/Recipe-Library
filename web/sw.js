@@ -21,7 +21,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('recipelib-') && k !== CACHE && k !== 'recipelib-fonts').map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('recipelib-') && k !== CACHE && k !== 'recipelib-fonts' && k !== 'recipelib-more').map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });
@@ -40,6 +40,19 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   if (req.method !== 'GET' || url.origin !== self.location.origin) return;
+  if (url.pathname.endsWith('/data/more.json') || url.pathname.includes('/data/more/')) {
+    // the on-demand part of the library, kept across app versions. more.json says which set is
+    // current, so the network is asked first; the files of a set never change, so a saved copy wins.
+    event.respondWith((async () => {
+      const cache = await caches.open('recipelib-more');
+      const fresh = () => fetch(req).then((res) => { if (res.ok) cache.put(req, res.clone()); return res; });
+      if (url.pathname.endsWith('/data/more.json')) {
+        try { return await fresh(); } catch (err) { return (await cache.match(req)) || Response.error(); }
+      }
+      return (await cache.match(req)) || fresh();
+    })());
+    return;
+  }
   event.respondWith((async () => {
     const cached = await caches.match(req, { ignoreSearch: true });
     if (cached) return cached;

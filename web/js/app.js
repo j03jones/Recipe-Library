@@ -6,7 +6,7 @@ import * as shop from './shopping.js';
 import * as planner from './planner.js';
 import * as pantry from './pantry.js';
 import * as collections from './collections.js';
-import { fromRecord, fromRow, hasSource, isAdapted, toRecord } from './model.js';
+import { fromIndexRow, fromRecord, fromRow, hasSource, isAdapted, toRecord } from './model.js';
 import { COLLECTIONS } from './linkdata.js';
 import { MAX_OVERLAP, VEGAN_GROUP, recipeFromSchema, wordingOverlap } from './webimport.js';
 import * as store from './store.js';
@@ -20,6 +20,7 @@ import * as photos from './photos.js';
 const $app = document.getElementById('app');
 const $toast = document.getElementById('toast');
 const PAGE = 60;
+const collator = new Intl.Collator(undefined, { sensitivity: 'base' });   // much faster than localeCompare over 28,000 titles
 const UNITS_KEY = 'recipelib.units';
 
 // ------------------------------------------------------------------- helpers
@@ -99,7 +100,81 @@ const num = (f, places) => trim0(f.toNumber().toFixed(places));
 
 // ------------------------------------------------------------------- library
 
-const lib = { base: [], mine: new Map(), all: [], byId: new Map(), cats: [], cloud: [], me: null, restaurants: [], syncError: '', planSyncError: '', libPhotos: {}, avatars: {} };
+const lib = { more: [], moreState: 'idle', base: [], mine: new Map(), all: [], byId: new Map(), cats: [], cloud: [], me: null, restaurants: [], syncError: '', planSyncError: '', libPhotos: {}, avatars: {} };
+
+// ---- the rest of the library: on-demand files next to the built-in recipes (tools/export_more.py).
+// data/more.json names the current set; its index gives every extra recipe's title, categories and
+// ingredient names (so search and "What can I make?" cover them); the full recipes are in 256
+// files fetched one at a time, the first time a recipe in them is needed. The service worker keeps
+// whatever has been fetched, so it works offline afterwards.
+const more = { v: null, files: new Map(), failed: new Set() };
+async function loadMore() {
+  if (navigator.connection?.saveData) return;            // the person asked their browser to save data
+  lib.moreState = 'loading';
+  try {
+    const info = await (await fetch('data/more.json')).json();
+    if (!info?.v) throw new Error('no extra recipes published');
+    const res = await fetch(`data/more/${info.v}/index.json`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const index = await res.json();
+    more.v = info.v;
+    lib.more = index.recipes.map(fromIndexRow);
+    lib.moreState = 'ready';
+    tidyMoreCache(info.v);
+  } catch (err) {
+    lib.moreState = 'unavailable';                       // offline before the first full load: built-in recipes only
+    console.info('The full library is not available right now:', err.message || err);
+  }
+  rebuild();
+  // show the bigger library where it matters, without disturbing someone who is typing or reading
+  const view = document.body.dataset.view;
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '') && document.activeElement.value;
+  if (!document.querySelector('dialog[open]') && !typing && ['list', 'loading', 'shop', 'plan', 'collection', 'pantry'].includes(view)) route();
+}
+/** Forget files from an earlier export of the library. */
+async function tidyMoreCache(v) {
+  try {
+    const cache = await caches.open('recipelib-more');
+    for (const req of await cache.keys()) {
+      if (req.url.includes('/data/more/') && !req.url.includes(`/data/more/${v}/`)) cache.delete(req);
+    }
+  } catch { /* no cache storage */ }
+}
+/** Make sure these recipes have their amounts and directions. Resolves to the ids that could not be fetched. */
+async function ensureFull(ids) {
+  const stubs = ids.map((id) => lib.byId.get(id)).filter((r) => r?.stub);
+  const prefixes = [...new Set(stubs.map((r) => r.id.slice(0, 2)))];
+  await Promise.all(prefixes.map((prefix) => {
+    if (!more.files.has(prefix)) {
+      more.files.set(prefix, (async () => {
+        const res = await fetch(`data/more/${more.v}/${prefix}.json`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        for (const row of (await res.json()).recipes) {
+          const r = lib.more.find((x) => x.id === row[0]);
+          if (!r || !r.stub) continue;
+          Object.assign(r, fromRow(row), { stub: false });
+          delete r._keys;
+          r._hay = [r.title, r.categories.join(' '), (r.tags || []).join(' '), r.ings.map((i) => i.item).join(' '), r.dir].join('\n').toLowerCase();
+        }
+      })().catch((err) => { more.files.delete(prefix); throw err; }));   // a failed fetch can be tried again later
+    }
+    return more.files.get(prefix).catch(() => {});
+  }));
+  return stubs.filter((r) => r.stub).map((r) => r.id);
+}
+/** Placeholder while a recipe's file is on its way (or could not be fetched). */
+function viewFetching(id, again) {
+  setView('loading', 'list');
+  fill($app, pageHead(lib.byId.get(id)?.title || 'One moment'), h('div', { class: 'sk' }), h('div', { class: 'sk' }), h('div', { class: 'sk' }));
+  ensureFull([id]).then((missing) => {
+    if (location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent).includes(id) === false) return;   // moved on
+    if (!missing.length) return again();
+    fill($app, pageHead(lib.byId.get(id)?.title || 'Recipe'),
+      h('p', null, 'This recipe has not been opened on this device before, so it needs a connection the first time. Connect and try again; after that it works offline.'),
+      h('div', { class: 'row' }, h('button', { class: 'primary', type: 'button', onclick: () => route() }, 'Try again'),
+        h('a', { class: 'linkbtn', href: '#/' }, 'Back to the library')));
+  });
+}
 
 // ---- hosted account data (cached so it still opens offline)
 const CACHE_KEY = 'recipelib.cloudcache';
@@ -295,6 +370,7 @@ function thumb(r) {
 
 function rebuild() {
   const map = new Map(lib.base.map((r) => [r.id, r]));
+  for (const r of lib.more) if (!map.has(r.id)) map.set(r.id, r);     // the rest of the library, fetched on demand
   // A record that is not the shape the app expects (a damaged backup, or a row someone wrote to
   // the hosted database by hand) is skipped, so one bad recipe can never take the whole app down.
   const read = (rec, source) => {
@@ -307,9 +383,10 @@ function rebuild() {
       return r;
     } catch (err) { console.warn('Skipped a recipe that could not be read:', rec?.id, err); return null; }
   };
+  const builtIn = new Set(map.keys());
   for (const rec of lib.mine.values()) {
     if (rec.deleted) { map.delete(rec.id); continue; }
-    const r = read(rec, lib.base.some((b) => b.id === rec.id) ? 'edited' : 'mine');
+    const r = read(rec, builtIn.has(rec.id) ? 'edited' : 'mine');
     if (r) map.set(rec.id, r);
   }
   for (const row of lib.cloud) {
@@ -322,7 +399,7 @@ function rebuild() {
     map.set(row.id, r);
   }
   lib.byId = map;
-  lib.all = [...map.values()].filter((r) => !r.hidden).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+  lib.all = [...map.values()].filter((r) => !r.hidden).sort((a, b) => collator.compare(a.title, b.title));
   const cats = new Map();
   for (const r of lib.all) {
     r._hay = [r.title, r.categories.join(' '), (r.tags || []).join(' '), r.ings.map((i) => i.item).join(' '), r.dir].join('\n').toLowerCase();
@@ -685,6 +762,7 @@ function viewLinkCard(r) {
 function viewRecipe(id) {
   const r = lib.byId.get(id);
   if (!r) return viewMissing();
+  if (r.stub) return viewFetching(id, () => viewRecipe(id));
   if (r.kind === 'link') return viewLinkCard(r);
   setView('recipe', 'list');
   let factor = new Frac(1n);
@@ -941,6 +1019,7 @@ function viewEdit(id, template) {
   setView('edit', 'new');
   const existing = id ? lib.byId.get(id) : null;
   if (id && !existing) return viewMissing();
+  if (existing?.stub) return viewFetching(id, () => viewEdit(id));
   if (existing && !canEdit(existing)) { fill($app, pageHead('Read only'), h('p', { class: 'muted' }, 'This recipe belongs to someone else. Open it and use “Save scaled copy” to make your own version.'), h('p', null, h('a', { href: `#/r/${existing.id}` }, 'Back to the recipe'))); return; }
   const r = existing || template || { title: '', categories: [], tags: [], yq: null, yu: '', yr: '', dir: '', ings: [], source: 'mine' };
 
@@ -1233,8 +1312,17 @@ function viewShop() {
   };
   function paint() {
     const list = shop.load();
-    const picks = list.items.map((i) => [lib.byId.get(i.id), Frac.parse(i.f) || new Frac(1n)]).filter(([r]) => r && r.kind !== 'link');
-    if (!picks.length && !list.extras.length) {
+    let picks = list.items.map((i) => [lib.byId.get(i.id), Frac.parse(i.f) || new Frac(1n)]).filter(([r]) => r && r.kind !== 'link');
+    // recipes from the on-demand library need their amounts before they can be added up
+    const waiting = picks.filter(([r]) => r.stub && !more.failed.has(r.id));
+    if (waiting.length) {
+      fill(body, h('p', { class: 'muted', role: 'status' }, 'Getting the recipes…'));
+      ensureFull(waiting.map(([r]) => r.id)).then((missing) => { missing.forEach((id) => more.failed.add(id)); if (document.body.dataset.view === 'shop') paint(); });
+      return;
+    }
+    const offline = picks.filter(([r]) => r.stub);
+    picks = picks.filter(([r]) => !r.stub);
+    if (!picks.length && !list.extras.length && !offline.length) {
       fill(body, h('div', { class: 'empty' },
         h('h2', null, 'Nothing on the list yet'),
         h('p', { class: 'muted' }, 'Open a recipe and choose “Add to shopping list”, or plan your week and add it all at once. The same ingredient from different recipes is added up into one line.'),
@@ -1261,7 +1349,9 @@ function viewShop() {
         !f.eq(new Frac(1n)) && h('span', { class: 'muted' }, ` ${timesLabel(f)}`),
         h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Take ${r.title} off the list`, title: 'Take off the list',
           onclick: () => { shop.remove(r.id); paint(); } }, icon('close', { size: 18 }))))),
-      planAhead().some(([id, f]) => !picks.some(([r, pf]) => r.id === id && pf.eq(f))) && planButton(),
+      offline.length > 0 && h('p', { class: 'note' }, `Not counted yet (needs a connection the first time): ${offline.map(([r]) => r.title).join(', ')}. `,
+        h('button', { type: 'button', onclick: () => { more.failed.clear(); paint(); } }, 'Try again')),
+      planAhead().some(([id, f]) => !list.items.some((i) => i.id === id && (Frac.parse(i.f) || new Frac(1n)).eq(f))) && planButton(),
       h('p', { class: 'muted small', role: 'status' }, left.length === lines.length
         ? `${lines.length} ${lines.length === 1 ? 'thing' : 'things'} to get`
         : `${left.length} of ${lines.length} still to get`),
@@ -1498,6 +1588,11 @@ function viewImport() {
 }
 
 function viewMissing() {
+  if (lib.moreState === 'loading') {     // it may be one of the recipes still on its way
+    setView('loading', 'list');
+    fill($app, pageHead('One moment'), h('div', { class: 'sk' }), h('div', { class: 'sk' }));
+    return;
+  }
   setView('list', 'list');
   fill($app, pageHead('Recipe not found'), h('p', null, h('a', { href: '#/' }, 'Back to the library')));
 }
@@ -1683,6 +1778,7 @@ async function boot() {
   });
   route();
   registerWorker();
+  loadMore();
   if (linkType === 'recovery') ctx.recovery = true;
   if (linkType === 'invite') ctx.recovery = 'invite';      // signed in by the invite email: choose a password
   if (linkType?.startsWith('error:')) {
