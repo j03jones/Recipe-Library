@@ -292,3 +292,10 @@ kept for offline use by the service worker). New in the app:
 - Animations and feedback: the header lines draw themselves, lists glide in, stars pop, ticked ingredients
   strike through, a little confetti when a recipe is finished. All of it switches off for people who ask their
   device to reduce motion.
+
+## License
+
+Free for noncommercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE). Using this software
+to make money needs a separate commercial license from the author: see [NOTICE.md](NOTICE.md), which also
+explains what the license does not cover (the recipes, third-party code and fonts) and that versions up to
+v0.17.0 were published under the GPL v3.
