@@ -4,6 +4,8 @@ import {
 } from './units.js';
 import * as shop from './shopping.js';
 import * as planner from './planner.js';
+import * as pantry from './pantry.js';
+import * as collections from './collections.js';
 import { fromRecord, fromRow, hasSource, isAdapted, toRecord } from './model.js';
 import { COLLECTIONS } from './linkdata.js';
 import { MAX_OVERLAP, VEGAN_GROUP, recipeFromSchema, wordingOverlap } from './webimport.js';
@@ -178,7 +180,7 @@ async function pushPlanner() {
   const sync = readPlanSync();
   const at = sync.at || Date.now();
   try {
-    await cloud.savePlanner({ at, plan: planner.load(), shop: shop.load() });
+    await cloud.savePlanner({ at, plan: planner.load(), shop: shop.load(), pantry: pantry.load(), collections: collections.load() });
     const now = readPlanSync();
     if (now.at === at || !now.at) writePlanSync({ uid: lib.me.id, at, dirty: false });   // unless it changed again meanwhile
     lib.planSyncError = '';
@@ -192,13 +194,16 @@ function plannerChanged() {
 }
 planner.onChange(plannerChanged);
 shop.onChange(plannerChanged);
+pantry.onChange(plannerChanged);
+collections.onChange(plannerChanged);
 async function syncPlanner() {
   try {
     const sync = readPlanSync();
     const remote = await cloud.loadPlanner();
     const theirs = remote && typeof remote === 'object' && remote.at ? remote : null;
-    const mine = { plan: planner.load(), shop: shop.load() };
-    const haveLocal = Object.keys(mine.plan.days).length > 0 || mine.shop.items.length > 0 || mine.shop.extras.length > 0;
+    const mine = { plan: planner.load(), shop: shop.load(), pantry: pantry.load(), collections: collections.load() };
+    const haveLocal = Object.keys(mine.plan.days).length > 0 || mine.shop.items.length > 0 || mine.shop.extras.length > 0
+      || mine.pantry.have.length > 0 || mine.collections.length > 0;
     if (sync.uid !== lib.me.id) {
       // first time this device meets this account: keep both sides
       if (theirs) {
@@ -208,14 +213,19 @@ async function syncPlanner() {
         for (const x of mine.shop.extras) if (!s.extras.some((y) => y.text.toLowerCase() === x.text.toLowerCase())) s.extras.push(x);
         s.done = [...new Set([...s.done, ...mine.shop.done])];
         shop.replace(s);
+        pantry.replace(pantry.merge(theirs.pantry, mine.pantry));
+        collections.replace(collections.merge(theirs.collections, mine.collections));
       }
       writePlanSync({ uid: lib.me.id, at: haveLocal || !theirs ? Date.now() : theirs.at, dirty: haveLocal });
       if (haveLocal) await pushPlanner();
     } else if (sync.dirty) await pushPlanner();          // this device has unsent changes
     else if (theirs && theirs.at !== sync.at) {          // another device changed it
       planner.replace(theirs.plan); shop.replace(theirs.shop);
+      // a copy saved by an older version of the app has no pantry or collections: keep this device's
+      if ('pantry' in theirs) pantry.replace(theirs.pantry);
+      if ('collections' in theirs) collections.replace(theirs.collections);
       writePlanSync({ uid: lib.me.id, at: theirs.at, dirty: false });
-      if (['plan', 'shop'].includes(document.body.dataset.view)) route();
+      if (['plan', 'shop', 'pantry', 'collection'].includes(document.body.dataset.view)) route();
     }
     if (!readPlanSync().dirty) lib.planSyncError = '';
   } catch (err) { lib.planSyncError = planSyncMessage(err); }
@@ -519,6 +529,12 @@ function viewList(starredOnly = false) {
       h('h1', null, starredOnly ? 'Starred' : 'What are we cooking?'),
       h('p', { class: 'sub' }, starredOnly ? 'Your go-to recipes, one tap away.' : `${lib.all.length.toLocaleString()} recipes to search, scale and cook.`)),
     searchbar,
+    !starredOnly && h('a', { class: 'promo card', href: '#/pantry' },
+      h('span', { class: 'tile', 'aria-hidden': 'true', 'data-sec': 3 }, '🧺'),
+      h('span', null, h('strong', null, 'What can I make?'), h('span', { class: 'muted small' }, 'Find recipes from what you have on hand.'))),
+    starredOnly && collections.load().length > 0 && h('div', { class: 'collrow' },
+      h('h2', null, 'Collections'),
+      h('div', { class: 'chips' }, collections.load().map((c) => h('a', { class: 'chip', href: `#/c/${c.id}` }, c.name, h('span', { class: 'muted' }, ` ${c.ids.length}`))))),
     !starredOnly && srcRow, !starredOnly && secRow, !starredOnly && groupsRow, promo, count, ul, empty, more);
   chipState();
   paint();
@@ -863,6 +879,12 @@ function viewRecipe(id) {
     if (!planner.add(day, { id: r.id, f: String(factor) })) { toast('Could not save the meal plan on this browser'); return; }
     toast(`Planned for ${day === planner.isoDate(new Date()) ? 'today' : DAY_FMT.format(planner.parseDate(day))}`);
   } }, 'Add to meal plan');
+  const collBtn = h('button', { type: 'button', onclick: () => collectionsDialog(r, paintColl) });
+  function paintColl() {
+    const n = collections.load().filter((c) => c.ids.includes(r.id)).length;
+    collBtn.textContent = n ? `Collections (${n})` : 'Add to a collection';
+  }
+  paintColl();
   function paintShop() {
     const on = shop.has(r.id);
     shopBtn.textContent = on ? '✓ On the shopping list' : 'Add to shopping list';
@@ -903,7 +925,7 @@ function viewRecipe(id) {
     h('section', { class: 'tools stack' },
       h('label', { class: 'check' }, smartIn, 'Smart units (8 Tbsp becomes ½ cup)'),
       h('label', { class: 'unitpick' }, h('span', null, 'Units'), unitsIn),
-      h('div', { class: 'row grow' }, planBtn, r.ings.length > 0 && shopBtn, r.ings.length > 0 && shopLink),
+      h('div', { class: 'row grow' }, planBtn, collBtn, r.ings.length > 0 && shopBtn, r.ings.length > 0 && shopLink),
       h('div', { class: 'row grow' },
         h('button', { onclick: copy }, 'Copy'),
         navigator.share && h('button', { onclick: share }, 'Share'),
@@ -1159,7 +1181,7 @@ function viewPlan() {
       h('section', { class: 'tools stack' },
         h('div', { class: 'row grow' },
           h('button', { class: 'primary', type: 'button', disabled: !planned.length, onclick: () => {
-            for (const [id, f] of planned) shop.addMore(id, f);
+            for (const [id, f] of planned) shop.add(id, f);   // the amount the plan says, so pressing twice doesn't double it
             toast(`${planned.length} ${planned.length === 1 ? 'recipe' : 'recipes'} added to the shopping list`);
             location.hash = '#/shop';
           } }, 'Add this week to the shopping list'),
@@ -1178,6 +1200,10 @@ function viewPlan() {
 
 // The shopping list: every recipe added from its page or from the meal plan, combined into one
 // list grouped by aisle, plus anything typed in by hand.
+const SKIP_HAVE_KEY = 'recipelib.shop.skiphave';
+const skipHave = () => { try { return localStorage.getItem(SKIP_HAVE_KEY) !== '0'; } catch { return true; } };
+const setSkipHave = (on) => { try { localStorage.setItem(SKIP_HAVE_KEY, on ? '1' : '0'); } catch { /* private mode */ } };
+
 function viewShop() {
   setView('shop', 'plan');
   const body = h('div');
@@ -1190,6 +1216,21 @@ function viewShop() {
     paint();
     extraIn.focus();
   } }, extraIn, h('button', { type: 'submit' }, 'Add'));
+  // the meal plan from today through the next six days, ready to drop onto the list
+  const planAhead = () => {
+    const today = planner.isoDate(new Date());
+    return planner.recipesOn(planner.load(), planner.weekDates(today)).filter(([id]) => lib.byId.get(id));
+  };
+  const importPlan = () => {
+    const planned = planAhead();
+    for (const [id, f] of planned) shop.add(id, f);     // sets the amount to what the plan says, so tapping twice doesn't double it
+    toast(`${planned.length} ${planned.length === 1 ? 'recipe' : 'recipes'} from your meal plan`);
+    paint();
+  };
+  const planButton = (cls = '') => {
+    const n = planAhead().length;
+    return n > 0 && h('button', { class: cls, type: 'button', onclick: importPlan }, `Add my meal plan (${n} ${n === 1 ? 'recipe' : 'recipes'}, next 7 days)`);
+  };
   function paint() {
     const list = shop.load();
     const picks = list.items.map((i) => [lib.byId.get(i.id), Frac.parse(i.f) || new Frac(1n)]).filter(([r]) => r && r.kind !== 'link');
@@ -1197,14 +1238,22 @@ function viewShop() {
       fill(body, h('div', { class: 'empty' },
         h('h2', null, 'Nothing on the list yet'),
         h('p', { class: 'muted' }, 'Open a recipe and choose “Add to shopping list”, or plan your week and add it all at once. The same ingredient from different recipes is added up into one line.'),
-        h('div', { class: 'row', style: 'justify-content:center' },
+        planButton('primary'),
+        h('div', { class: 'row', style: 'justify-content:center; margin-top:.8rem' },
           h('a', { class: 'linkbtn', href: '#/plan' }, 'Plan the week'),
           h('a', { class: 'linkbtn', href: '#/' }, 'Browse the recipes'))));
       return;
     }
-    const lines = [...shop.shoppingList(picks), ...shop.extraLines(list.extras)];
+    const all = [...shop.shoppingList(picks), ...shop.extraLines(list.extras)];
+    // things listed under "What can I make?" are already in the kitchen: set them aside, don't buy them
+    const kitchen = pantry.load();
+    const mine = skipHave() ? pantry.terms(kitchen.have) : [];
+    const isHave = (l) => !l.extra && mine.length > 0 && pantry.covers(l.key, mine);
+    const lines = all.filter((l) => !isHave(l));
+    const have = all.filter(isHave);
     const done = new Set(list.done);
     const left = lines.filter((l) => !done.has(l.key));
+    const skipIn = h('input', { type: 'checkbox', checked: skipHave(), onchange: () => { setSkipHave(skipIn.checked); paint(); } });
     const text = () => `Shopping list\n${picks.map(([r, f]) => `${r.title}${f.eq(new Frac(1n)) ? '' : ` (${timesLabel(f)})`}`).join('\n')}\n\n${shop.toTextByAisle(left)}`;
     fill(body,
       picks.length > 0 && h('ul', { class: 'shoprecipes' }, picks.map(([r, f]) => h('li', null,
@@ -1212,6 +1261,7 @@ function viewShop() {
         !f.eq(new Frac(1n)) && h('span', { class: 'muted' }, ` ${timesLabel(f)}`),
         h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Take ${r.title} off the list`, title: 'Take off the list',
           onclick: () => { shop.remove(r.id); paint(); } }, icon('close', { size: 18 }))))),
+      planAhead().some(([id, f]) => !picks.some(([r, pf]) => r.id === id && pf.eq(f))) && planButton(),
       h('p', { class: 'muted small', role: 'status' }, left.length === lines.length
         ? `${lines.length} ${lines.length === 1 ? 'thing' : 'things'} to get`
         : `${left.length} of ${lines.length} still to get`),
@@ -1227,6 +1277,11 @@ function viewShop() {
             l.extra && h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Remove ${l.name}`, title: 'Remove',
               onclick: () => { shop.removeExtra(l.key); paint(); } }, icon('close', { size: 18 })));
         }))]),
+      kitchen.have.length > 0 && h('label', { class: 'check', style: 'margin-top:1.2rem' }, skipIn, 'Leave out what I already have ',
+        h('a', { href: '#/pantry' }, '(my kitchen)')),
+      have.length > 0 && h('details', { class: 'havebox' },
+        h('summary', null, `${have.length} ${have.length === 1 ? 'thing' : 'things'} you already have`),
+        h('ul', { class: 'havelist' }, have.map((l) => h('li', null, l.name, (l.amounts.length > 0 || l.notes.length > 0) && h('span', { class: 'muted' }, ` ${[...l.amounts, ...l.notes].join(' + ')}`))))),
       h('section', { class: 'tools stack' },
         h('div', { class: 'row grow' },
           h('button', { type: 'button', onclick: async () => toast(await copyText(text()) ? 'Shopping list copied' : 'Could not copy on this browser') }, 'Copy'),
@@ -1241,6 +1296,126 @@ function viewShop() {
   }
   fill($app, pageHead('Shopping list', 'Everything for the recipes you picked, in one list'), planSeg('shop'), extraForm, body);
   paint();
+  window.scrollTo(0, 0);
+}
+
+// What can I make? Type what is in the kitchen; recipes are ranked by how little is missing.
+function viewPantry() {
+  setView('pantry', 'list');
+  const body = h('div');
+  const input = h('input', { type: 'text', class: 'full', maxlength: '200', placeholder: 'chicken, rice, onions…', 'aria-label': 'Ingredients you have', autocapitalize: 'off', autocomplete: 'off' });
+  const form = h('form', { class: 'row addextra', onsubmit: (e) => {
+    e.preventDefault();
+    if (!input.value.trim()) return;
+    if (!pantry.add(input.value)) toast('Could not save on this browser');
+    input.value = '';
+    paint();
+    input.focus();
+  } }, input, h('button', { type: 'submit' }, 'Add'));
+  let shown = PAGE;
+  function paint() {
+    const p = pantry.load();
+    const staplesIn = h('input', { type: 'checkbox', checked: p.staples, onchange: () => { pantry.setStaples(staplesIn.checked); paint(); } });
+    const chips = h('div', { class: 'chips have', role: 'group', 'aria-label': 'Ingredients you have' }, p.have.map((name) =>
+      h('button', { class: 'chip', type: 'button', 'aria-label': `Remove ${name}`, title: 'Remove', onclick: () => { pantry.remove(name); paint(); } }, name, h('span', { 'aria-hidden': 'true' }, ' ×'))));
+    if (!p.have.length) {
+      fill(body, h('div', { class: 'empty' },
+        h('h2', null, 'What is in your kitchen?'),
+        h('p', { class: 'muted' }, 'Add the main things you have, a few at a time or separated by commas. You will see the recipes you can make now, then the ones that need one or two more things.')));
+      return;
+    }
+    const found = pantry.match(lib.all.filter((r) => r.kind !== 'link'), p.have, { assumeStaples: p.staples, limit: 400 });
+    const ready = found.filter((m) => !m.missing.length).length;
+    fill(body, chips,
+      h('label', { class: 'check' }, staplesIn, `I have the basics (${pantry.STAPLES.join(', ')})`),
+      h('p', { class: 'count muted small', role: 'status' }, found.length
+        ? `${ready ? `${ready.toLocaleString()} you can make now` : 'Nothing you can make with only these'}${found.length > ready ? `, ${(found.length - ready).toLocaleString()} more need one or two things` : ''}`
+        : 'No recipes use these yet. Add a few more things.'),
+      h('ul', { class: 'rows' }, found.slice(0, shown).map(({ recipe: r, missing }) => h('li', null,
+        h('a', { class: 'rc', href: `#/r/${r.id}` }, thumb(r),
+          h('span', { class: 'txt' }, h('span', { class: 't' }, r.title),
+            h('span', { class: `s ${missing.length ? '' : 'ready'}` }, missing.length ? `Needs ${missing.join(' and ')}` : 'You have everything'))),
+        h('div', { class: 'rowacts' },
+          h('button', { type: 'button', 'aria-label': `Add ${r.title} to the meal plan`, onclick: async () => {
+            const day = await pickDay(r.title);
+            if (day && planner.add(day, { id: r.id, f: '1' })) toast(`Planned for ${day === planner.isoDate(new Date()) ? 'today' : DAY_FMT.format(planner.parseDate(day))}`);
+          } }, 'Plan it'),
+          missing.length > 0 && h('button', { type: 'button', 'aria-label': `Put what ${r.title} needs on the shopping list`, onclick: (e) => {
+            if (!shop.has(r.id)) shop.add(r.id, new Frac(1n));
+            e.currentTarget.textContent = '✓ On the list';
+            toast(`On the shopping list: you only need ${missing.join(' and ')}`);
+          } }, shop.has(r.id) ? '✓ On the list' : `Shop for ${missing.length === 1 ? 'it' : 'them'}`))))),
+      found.length > shown && h('button', { class: 'more', onclick: () => { shown += PAGE; paint(); } }, 'Show more'),
+      h('div', { class: 'row', style: 'margin-top:1rem' },
+        h('button', { type: 'button', onclick: async () => {
+          if (await confirmDialog('Clear everything you listed?', 'Clear', true)) { pantry.save({ have: [], staples: p.staples }); shown = PAGE; paint(); }
+        } }, 'Start over')));
+  }
+  fill($app, pageHead('What can I make?', 'Recipes from what you have on hand'), form, body);
+  paint();
+  window.scrollTo(0, 0);
+}
+
+/** Choose which collections a recipe is in (and make new ones). */
+function collectionsDialog(r, onDone) {
+  const listBox = h('ul', { class: 'picklist' });
+  const nameIn = h('input', { type: 'text', class: 'full', maxlength: '60', placeholder: 'New collection: Weeknight dinners…', 'aria-label': 'New collection name' });
+  let closed = false;
+  const close = () => { if (closed) return; closed = true; if (dlg.open) dlg.close(); dlg.remove(); onDone?.(); };
+  const dlg = h('dialog', { class: 'pickdialog', 'aria-labelledby': 'col-title' },
+    h('h2', { id: 'col-title' }, 'Collections'),
+    h('p', { class: 'muted small' }, r.title),
+    listBox,
+    h('form', { class: 'row', onsubmit: (e) => {
+      e.preventDefault();
+      const id = collections.create(nameIn.value);
+      if (id) { collections.toggle(id, r.id, true); nameIn.value = ''; paint(); }
+    } }, nameIn, h('button', { type: 'submit' }, 'Create')),
+    h('div', { class: 'row' }, h('button', { class: 'primary', type: 'button', onclick: close }, 'Done')));
+  function paint() {
+    const all = collections.load();
+    fill(listBox, all.length
+      ? all.map((c) => {
+        const on = c.ids.includes(r.id);
+        return h('li', null, h('button', { type: 'button', 'aria-pressed': String(on), onclick: () => { collections.toggle(c.id, r.id, !on); paint(); } },
+          h('span', { class: 'e', 'aria-hidden': 'true' }, on ? '✓' : '＋'), c.name, h('span', { class: 'muted small' }, `  ·  ${c.ids.length}`)));
+      })
+      : h('li', { class: 'muted small' }, 'No collections yet. Name your first one below.'));
+  }
+  dlg.addEventListener('close', close);
+  document.body.append(dlg);
+  paint();
+  dlg.showModal();
+}
+
+// One collection: its recipes, with rename and delete.
+function viewCollection(id) {
+  const c = collections.get(id);
+  if (!c) return viewMissing();
+  setView('collection', 'starred');
+  const recipes = c.ids.map((rid) => lib.byId.get(rid)).filter(Boolean);
+  fill($app,
+    band('page', h('h1', null, c.name), h('p', { class: 'sub' }, `${recipes.length} ${recipes.length === 1 ? 'recipe' : 'recipes'}`)),
+    h('p', null, h('a', { class: 'linkbtn', href: '#/starred' }, '‹ Starred and collections')),
+    recipes.length
+      ? h('ul', { class: 'rows' }, recipes.map((r) => h('li', null,
+        h('a', { class: 'rc', href: `#/r/${r.id}` }, thumb(r), h('span', { class: 'txt' }, h('span', { class: 't' }, r.title), h('span', { class: 's' }, r.source === 'base' ? r.categories.slice(0, 2).join(' · ') : badgeText(r)))),
+        h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Take ${r.title} out of ${c.name}`, title: 'Take out of this collection',
+          onclick: () => { collections.toggle(c.id, r.id, false); viewCollection(id); } }, icon('close', { size: 18 })))))
+      : h('div', { class: 'empty' }, h('h2', null, 'Nothing in here yet'),
+        h('p', { class: 'muted' }, 'Open a recipe and choose “Collections” to add it.'),
+        h('a', { class: 'linkbtn', href: '#/' }, 'Browse the recipes')),
+    h('section', { class: 'tools stack' }, h('div', { class: 'row grow' },
+      h('button', { type: 'button', onclick: () => {
+        const dlgName = h('input', { type: 'text', class: 'full', maxlength: '60', value: c.name, 'aria-label': 'Collection name' });
+        const dlg = h('dialog', null, h('form', { onsubmit: (e) => { e.preventDefault(); if (collections.rename(c.id, dlgName.value)) { dlg.close(); dlg.remove(); viewCollection(id); } } },
+          h('h2', { style: 'margin-top:0' }, 'Rename collection'), dlgName,
+          h('div', { class: 'row' }, h('button', { type: 'button', onclick: () => { dlg.close(); dlg.remove(); } }, 'Cancel'), h('button', { class: 'primary', type: 'submit' }, 'Save'))));
+        document.body.append(dlg); dlg.showModal(); dlgName.select();
+      } }, 'Rename'),
+      h('button', { type: 'button', onclick: async () => {
+        if (await confirmDialog(`Delete the collection “${c.name}”? The recipes themselves stay in the library.`, 'Delete collection', true)) { collections.remove(c.id); location.hash = '#/starred'; }
+      } }, 'Delete collection'))));
   window.scrollTo(0, 0);
 }
 
@@ -1470,6 +1645,8 @@ function route() {
   if (kind === 'starred') return viewList(true);
   if (kind === 'shop') return viewShop();
   if (kind === 'plan') return viewPlan();
+  if (kind === 'pantry') return viewPantry();
+  if (kind === 'c' && id) return viewCollection(id);
   return viewList();
 }
 

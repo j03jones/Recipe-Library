@@ -45,6 +45,20 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## What can I make? and collections (v0.15)
+
+- **What can I make?** (on the Recipes page) Type what is in your kitchen. You get the recipes you can
+  make now, then the ones that need one or two more things, each with **Plan it** and **Shop for it**.
+  An ingredient counts as on hand when every word you typed is in its name ("soy sauce" covers "Dark
+  soy sauce", not "Soy milk"); basics like water, salt and flour can be assumed.
+  From the command line: `python -m recipelib pantry chicken rice "soy sauce"`.
+- **The shopping list knows your kitchen.** Things you listed under What can I make? are set aside under
+  "things you already have" instead of being put on the list to buy (switch: "Leave out what I already have").
+- **Add my meal plan** on the shopping list page brings in everything planned for the next 7 days in one tap.
+- **Collections.** Your own named sets of recipes ("Weeknight dinners"). Use **Add to a collection** on a
+  recipe; they are listed on the Starred page.
+- Signed in, your kitchen list and collections are saved with the account alongside the plan and the list.
+
 ## Meal plan (v0.14)
 
 The **Plan** tab in the phone app has two pages: **Meal plan** and **Shopping list**.

@@ -4,6 +4,7 @@
     python -m recipelib export -o mine.mmf [ids]   (MealMaster file; every recipe if no ids)
     python -m recipelib shopping 3 17 42:2         (one combined list; ID:FACTOR scales a recipe)
     python -m recipelib show 1 --units metric      (or --units us; also works with scale)
+    python -m recipelib pantry chicken rice onion  (what can I make with these?)
     python -m recipelib list [search words]
     python -m recipelib show 1
     python -m recipelib scale 1 --servings 12      (or --factor 2)
@@ -48,6 +49,11 @@ def main(argv=None) -> int:
     p.add_argument("--remove", choices=list(duplicates.LEVELS),
                    help="merge groups of this confidence or better into their best copy")
     p.add_argument("--yes", action="store_true", help="don't ask before removing")
+    p = sub.add_parser("pantry", help="what can I make? recipes from the ingredients you have")
+    p.add_argument("have", nargs="+", help='what you have, e.g. chicken rice "soy sauce"')
+    p.add_argument("--missing", type=int, default=2, help="allow up to this many missing ingredients (default 2)")
+    p.add_argument("--no-basics", action="store_true", help="don't assume water, salt, pepper, sugar, flour, oil, butter")
+    p.add_argument("--limit", type=int, default=40)
     p = sub.add_parser("list"); p.add_argument("search", nargs="*")
     p = sub.add_parser("show"); p.add_argument("id", type=int)
     p.add_argument("--units", choices=convert.SYSTEMS, help="show amounts in metric or US units")
@@ -153,6 +159,16 @@ def main(argv=None) -> int:
             backup = db.backup()
             removed = sum(duplicates.merge_group(db, g.keep_id, g.ids[1:]) for g in chosen)
             print(f"Removed {removed:,} duplicates." + (f" Backup: {backup}" if backup else ""))
+        elif args.cmd == "pantry":
+            from . import pantry
+            recipes = [db.get_recipe(x.id) for x in db.list_recipes()]
+            found = pantry.match(recipes, args.have, max_missing=args.missing,
+                                 assume_staples=not args.no_basics, limit=args.limit)
+            if not found:
+                print("No recipes use these. Try naming a few more things you have.")
+            for m in found:
+                need = f"needs {' and '.join(m.missing)}" if m.missing else "you have everything"
+                print(f"{m.recipe.id:>5}  {m.recipe.title}  ({need})")
         elif args.cmd == "list":
             for s in db.list_recipes(search=" ".join(args.search)):
                 print(f"{s.id:>5}  {s.title}  [{', '.join(s.categories)}]")

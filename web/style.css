@@ -542,3 +542,18 @@ h3.aisle { margin: 1.2rem 0 .2rem; font-size: .8rem; letter-spacing: .12em; text
 .shoplist li { display: flex; align-items: center; }
 .shoplist li .tick { flex: 1 1 auto; }
 @media print { .planseg, .addextra, .weeknav, .addday, .shoplist .icon-btn { display: none !important; } }
+
+/* ---- what can I make, collections */
+.chips.have { margin: .2rem 0 .6rem; }
+.rc .s.ready { color: var(--herb); font-weight: 600; }
+.collrow h2 { font-size: 1rem; margin: .8rem 0 .3rem; }
+.collrow .chip { text-decoration: none; }
+.rows li { position: relative; }
+.rows li > .icon-btn { position: absolute; right: .2rem; top: 50%; transform: translateY(-50%); }
+.picklist button[aria-pressed=true] { font-weight: 700; }
+.rowacts { display: flex; gap: .4rem; margin: .3rem 0 .7rem; }
+.rowacts button { padding: .3rem .7rem; font-size: .85rem; }
+.havebox { margin-top: .8rem; border: 1px solid var(--line); border-radius: var(--radius); padding: .5rem .8rem; }
+.havebox summary { cursor: pointer; font-weight: 600; }
+.havelist { margin: .5rem 0 .2rem; padding-left: 1.1rem; color: var(--muted); }
+@media print { .havebox, .rowacts { display: none !important; } }

@@ -5,7 +5,7 @@ const VERSION = 'dev';
 const CACHE = `recipelib-${VERSION}`;
 const ASSETS = [
   './', 'index.html', 'style.css', 'manifest.webmanifest',
-  'js/app.js', 'js/units.js', 'js/unitdata.js', 'js/groups.js', 'js/linkdata.js', 'js/webimport.js', 'js/qr.js', 'js/model.js', 'js/store.js', 'js/ui.js', 'js/timers.js', 'js/config.js', 'js/cloud.js', 'js/account.js', 'js/photos.js', 'js/shopping.js', 'js/aisledata.js', 'js/planner.js',
+  'js/app.js', 'js/units.js', 'js/unitdata.js', 'js/groups.js', 'js/linkdata.js', 'js/webimport.js', 'js/qr.js', 'js/model.js', 'js/store.js', 'js/ui.js', 'js/timers.js', 'js/config.js', 'js/cloud.js', 'js/account.js', 'js/photos.js', 'js/shopping.js', 'js/aisledata.js', 'js/planner.js', 'js/pantry.js', 'js/collections.js',
   'data/recipes.json',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
   'icons/icon-maskable-512.png', 'icons/apple-touch-icon.png',
