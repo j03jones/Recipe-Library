@@ -5,8 +5,10 @@ import { Frac, convertRecipe, formatIngredient, scaleRecipe } from '../web/js/un
 import { fromRow } from '../web/js/model.js';
 import { aisleFor, combine, shoppingList, toText, toTextByAisle } from '../web/js/shopping.js';
 import * as planner from '../web/js/planner.js';
+import * as pantry from '../web/js/pantry.js';
+import * as collections from '../web/js/collections.js';
 
-const { rows, factors, picks, names = [], plan = null } = JSON.parse(readFileSync(0, 'utf8'));
+const { rows, factors, picks, names = [], plan = null, have = null, colls = null } = JSON.parse(readFileSync(0, 'utf8'));
 const recipes = rows.map(fromRow);
 const out = { convert: {}, scale: {}, shop: [] };
 for (const r of recipes) {
@@ -27,4 +29,9 @@ if (plan) {
     merged: planner.merge(cleaned, plan.other),
   };
 }
+if (have) {
+  out.pantry = have.map(([list, maxMissing, assumeStaples]) =>
+    pantry.match(recipes, list, { maxMissing, assumeStaples }).map((m) => [m.recipe.id, m.missing, m.used]));
+}
+if (colls) out.colls = { cleaned: collections.clean(colls.raw), merged: collections.merge(colls.raw, colls.other) };
 process.stdout.write(JSON.stringify(out));

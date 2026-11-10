@@ -6,7 +6,7 @@ import unittest
 from fractions import Fraction
 from pathlib import Path
 
-from recipelib import convert, shopping
+from recipelib import convert, pantry, shopping
 from recipelib.formatting import format_ingredient
 from recipelib.mealmaster import parse_file
 from recipelib.models import Ingredient, Recipe
@@ -27,6 +27,19 @@ PLAN = {
         "2026-11-20": [{"id": "z", "f": "3"}],
         "2026-02-30": [{"id": "x"}], "2020-01-01": [{"id": "old"}], "junk": "nope"}},
     "other": {"days": {"2026-11-09": [{"id": "a", "f": "2"}, {"id": "d", "f": "1"}], "2026-11-10": [{"note": "Out"}]}},
+}
+
+
+HAVE = [
+    [["flour", "Eggs", "butter", "chocolate chips", "sugar", "baking soda", "salt"], 2, True],
+    [["Tomatoes", "beans", "water", "puff pastry", "beets"], 2, False],
+    [["milk", "beef", "cheese", "potatoes", "stock"], 3, True],
+    [["nothing that exists"], 2, True],
+]
+COLLS = {
+    "raw": [{"id": "c1", "name": " Weeknight ", "ids": ["a", "b", "a", 7]}, {"id": "c1", "name": "Dup id", "ids": []},
+            {"id": "c2", "name": "", "ids": ["x"]}, {"id": "c3", "name": "Holiday", "ids": "nope"}, "junk"],
+    "other": [{"id": "z9", "name": "weeknight", "ids": ["b", "c"]}, {"id": "c3", "name": "Baking", "ids": ["q"]}],
 }
 
 
@@ -68,7 +81,7 @@ class JavaScriptTwins(unittest.TestCase):
         cls.recipes = recipes()
         proc = subprocess.run(["node", str(ROOT / "tools" / "features_js.mjs")], capture_output=True, text=True,
                               input=json.dumps({"rows": [row(r) for r in cls.recipes], "factors": FACTORS, "picks": PICKS,
-                                                "names": NAMES, "plan": PLAN}))
+                                                "names": NAMES, "plan": PLAN, "have": HAVE, "colls": COLLS}))
         if proc.returncode != 0:
             raise AssertionError(proc.stderr)
         cls.js = json.loads(proc.stdout)
@@ -99,6 +112,22 @@ class JavaScriptTwins(unittest.TestCase):
         js = (ROOT / "web" / "js" / "aisledata.js").read_text(encoding="utf-8")
         start = js.index("AISLE_TERMS = ") + len("AISLE_TERMS = ")
         self.assertEqual(json.loads(js[start:js.rindex("}") + 1]), shopping.AISLE_TERMS, "run python3 tools/gen_unitdata.py")
+
+    def test_what_can_i_make(self):
+        for n, (have, max_missing, staples) in enumerate(HAVE):
+            want = [[str(m.recipe.id), m.missing, m.used]
+                    for m in pantry.match(self.recipes, have, max_missing=max_missing, assume_staples=staples)]
+            self.assertEqual(self.js["pantry"][n], want, have)
+        self.assertTrue(self.js["pantry"][0], "expected at least one recipe from the baking ingredients")
+        self.assertEqual(self.js["pantry"][3], [])
+
+    def test_collections_storage(self):
+        self.assertEqual(self.js["colls"]["cleaned"], [{"id": "c1", "name": "Weeknight", "ids": ["a", "b"]},
+                                                       {"id": "c3", "name": "Holiday", "ids": []}])
+        # same name (any capitals) is one collection; a different collection that reuses an id gets a new id
+        self.assertEqual(self.js["colls"]["merged"], [{"id": "c1", "name": "Weeknight", "ids": ["a", "b", "c"]},
+                                                      {"id": "c3", "name": "Holiday", "ids": []},
+                                                      {"id": "c3b", "name": "Baking", "ids": ["q"]}])
 
     def test_meal_plan_storage(self):
         plan = self.js["plan"]

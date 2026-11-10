@@ -7,7 +7,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from fractions import Fraction as F
 from pathlib import Path
 
-from recipelib import convert, shopping
+from recipelib import convert, pantry, shopping
 from recipelib.__main__ import main
 from recipelib.db import RecipeDB
 from recipelib.formatting import format_ingredient
@@ -192,6 +192,37 @@ class ShoppingList(unittest.TestCase):
         self.assertEqual(shopping.item_key("Cherry Tomatoes, halved"), "cherry tomato")
         self.assertEqual(shopping.item_key("Berries (fresh)"), "berry")
         self.assertEqual(shopping.item_key("Swiss cheese"), "swiss cheese")
+
+
+class WhatCanIMake(unittest.TestCase):
+    def recipes(self):
+        def r(title, *items):
+            return Recipe(title=title, ingredients=[Ingredient(item=i) for i in items])
+        return [r("Fried rice", "Cooked rice", "Eggs; beaten", "Soy sauce", "Green onions, sliced", "Oil"),
+                r("Omelette", "Eggs", "Butter", "Salt", "Pepper"),
+                r("Soy milk pudding", "Soy milk", "Sugar", "Cornstarch"),
+                r("Roast chicken", "Whole chicken", "Lemon", "Thyme", "Garlic", "Butter"),
+                r("Plain rice", "Rice"),
+                r("Rice and eggs", "Rice", "Eggs", "Eggs; extra")]
+
+    def test_ranked_by_what_is_missing(self):
+        found = pantry.match(self.recipes(), ["rice", "eggs", "soy sauce"])
+        self.assertEqual([(m.recipe.title, m.missing) for m in found],
+                         [("Rice and eggs", []), ("Omelette", []), ("Fried rice", ["Green onions"])])
+
+    def test_whole_term_must_match(self):
+        # "soy sauce" is not "soy milk"; a one-ingredient recipe is not listed
+        titles = [m.recipe.title for m in pantry.match(self.recipes(), ["soy sauce", "rice"], max_missing=3)]
+        self.assertNotIn("Soy milk pudding", titles)
+        self.assertNotIn("Plain rice", titles)
+
+    def test_basics_and_limits(self):
+        with_basics = pantry.match(self.recipes(), ["eggs"], max_missing=0)
+        without = pantry.match(self.recipes(), ["eggs"], max_missing=0, assume_staples=False)
+        self.assertEqual([m.recipe.title for m in with_basics], ["Omelette"])
+        self.assertEqual(without, [])
+        self.assertEqual(pantry.match(self.recipes(), []), [])
+        self.assertEqual(len(pantry.match(self.recipes(), ["chicken", "lemon", "thyme", "garlic"], limit=1)), 1)
 
 
 class BigLibrary(unittest.TestCase):

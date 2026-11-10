@@ -179,14 +179,6 @@ export function add(id, factor) {
   return save(list);
 }
 
-/** Add a recipe on top of what is there: a recipe planned twice is bought for twice. */
-export function addMore(id, factor) {
-  const list = load();
-  const at = list.items.find((i) => i.id === id);
-  if (at) at.f = String((Frac.parse(at.f) || F(1)).add(factor)); else list.items.push({ id, f: String(factor) });
-  return save(list);
-}
-
 export function remove(id) {
   const list = load();
   list.items = list.items.filter((i) => i.id !== id);
