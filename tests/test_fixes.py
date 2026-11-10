@@ -176,6 +176,18 @@ class ShoppingList(unittest.TestCase):
         self.assertEqual(lines["onion"].recipes, ["A", "B"])
         self.assertEqual(lines["parsley"].notes, ["4-6 Tbsp"])
 
+    def test_aisles(self):
+        cases = {"Onions; chopped": "Produce", "Chicken broth": "Pantry", "Peanut butter": "Pantry",
+                 "Garlic powder": "Spices & Seasonings", "Green pepper, diced": "Produce",
+                 "Red pepper flakes": "Spices & Seasonings", "Ice cream": "Frozen", "Chicken breasts": "Meat & Seafood",
+                 "Cream cheese": "Dairy & Eggs", "All-purpose flour": "Baking", "Bread crumbs": "Bakery",
+                 "Dry white wine": "Drinks", "paper towels": "Other"}
+        for name, aisle in cases.items():
+            self.assertEqual(shopping.aisle_for(name), aisle, name)
+        groups = shopping.by_aisle(shopping.combine(self.recipes()))
+        self.assertEqual([a for a, _ in groups], [a for a in shopping.AISLE_ORDER if a in dict(groups)])
+        self.assertEqual(sum(len(g) for _, g in groups), 7)
+
     def test_keys(self):
         self.assertEqual(shopping.item_key("Cherry Tomatoes, halved"), "cherry tomato")
         self.assertEqual(shopping.item_key("Berries (fresh)"), "berry")

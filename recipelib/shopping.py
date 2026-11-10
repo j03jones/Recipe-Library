@@ -31,6 +31,71 @@ _FAMILIES: Dict[str, Tuple[str, Fraction]] = {
 _FAMILY_ORDER = ["", "volume", "weight", "metric volume", "metric weight"]
 
 
+# Where things are in a shop: aisle -> comma-separated terms (singular, lower case; a term can be
+# one word or a phrase). To file an ingredient, the longest term found in its name wins, and
+# between terms of the same length the one nearest the end of the name wins, because the last
+# word is usually what the thing is ("chicken broth" is a broth, "garlic powder" is a powder).
+# tools/gen_unitdata.py copies this table to web/js/aisledata.js so the phone app agrees.
+AISLES = [
+    ("Produce", "apple, apricot, artichoke, arugula, asparagus, avocado, banana, basil, bean sprout, beet, berry, "
+     "blueberry, broccoli, cabbage, cantaloupe, carrot, cauliflower, celery, chard, cherry, chile, chili, chive, "
+     "cilantro, cranberry, cucumber, dill, eggplant, endive, fennel, fig, garlic, garlic clove, clove garlic, ginger, "
+     "ginger root, grape, grapefruit, green bean, green onion, green pepper, bell pepper, red pepper, "
+     "yellow pepper, hot pepper, sweet pepper, chile pepper, chili pepper, jalapeno, kale, kiwi, leek, lemon, "
+     "lemon juice, lemon peel, lemon rind, lemon zest, lettuce, lime, lime juice, mango, melon, mint, mushroom, "
+     "nectarine, okra, onion, orange, orange peel, orange rind, orange zest, papaya, parsley, parsnip, pea, peach, "
+     "pear, pineapple, plum, potato, pumpkin, radish, raspberry, rhubarb, romaine, rosemary, rutabaga, sage, "
+     "scallion, shallot, spinach, sprout, squash, strawberry, sweet potato, tangerine, tarragon, thyme, "
+     "tomatillo, tomato, turnip, watercress, watermelon, yam, zucchini, herb, salad green"),
+    ("Meat & Seafood", "anchovy, bacon, beef, bratwurst, brisket, chicken, chop, chuck, clam, cod, crab, crabmeat, "
+     "duck, fillet, filet, fish, flounder, goose, haddock, halibut, ham, hamburger, hot dog, kielbasa, lamb, liver, "
+     "lobster, meat, mussel, oyster, pancetta, pepperoni, pork, prawn, prosciutto, rib, roast, salami, salmon, "
+     "sausage, scallop, shrimp, sirloin, snapper, sole, steak, tenderloin, trout, tuna, turkey, veal, venison"),
+    ("Dairy & Eggs", "butter, buttermilk, cheddar, cheese, cream, cream cheese, creme fraiche, egg, egg white, "
+     "egg yolk, feta, half and half, margarine, mascarpone, milk, mozzarella, parmesan, ricotta, sour cream, "
+     "whipping cream, whipped cream, yogurt, yoghurt"),
+    ("Bakery", "bagel, baguette, bread, bun, crouton, english muffin, pita, roll, tortilla, pie crust, pie shell, "
+     "pastry, pizza dough, bread crumb, breadcrumb"),
+    ("Baking", "baking powder, baking soda, brown sugar, chocolate, cocoa, coconut, cornmeal, cornstarch, "
+     "corn starch, corn syrup, cream of tartar, flour, gelatin, honey, molasses, powdered sugar, shortening, sugar, "
+     "syrup, vanilla, extract, yeast, food coloring, marshmallow, graham cracker, evaporated milk, "
+     "condensed milk, nut, almond, pecan, walnut, hazelnut, cashew, pistachio, peanut, raisin, date, currant"),
+    ("Spices & Seasonings", "allspice, basil leaf, bay leaf, bouillon, caraway, cardamom, cayenne, chili powder, "
+     "cinnamon, clove, cumin, curry, dried basil, dried oregano, dried thyme, dried parsley, dried dill, flake, "
+     "garlic powder, garlic salt, marjoram, msg, mustard seed, nutmeg, onion powder, onion salt, oregano, paprika, "
+     "pepper, peppercorn, poppy seed, powder, saffron, salt, seasoning, sesame seed, spice, turmeric, dry mustard, "
+     "red pepper flake, pepper flake, ground ginger, celery seed, celery salt, dill weed, dill seed, fennel seed, coriander, seed"),
+    ("Pantry", "barley, bean, broth, stock, bulgur, caper, cereal, chip, couscous, cracker, dressing, jam, jelly, "
+     "ketchup, catsup, lentil, macaroni, mayonnaise, mix, mustard, noodle, oat, oatmeal, oil, olive, paste, pasta, "
+     "peanut butter, pickle, preserve, quinoa, relish, rice, salsa, sauce, tomato juice, canned tomato, soup, "
+     "spaghetti, tahini, tofu, vinegar, coconut milk, split pea, water chestnut, bamboo shoot, pimiento, pimento, "
+     "artichoke heart, sauerkraut, applesauce, puree"),
+    ("Frozen", "ice cream, sherbet, sorbet, frozen, frozen pea, frozen corn, frozen spinach, frozen broccoli, "
+     "frozen strawberry, frozen raspberry, frozen orange juice, frozen vegetable, whipped topping, cool whip, ice"),
+    ("Drinks", "ale, beer, bourbon, brandy, champagne, cider, club soda, coffee, cola, cognac, ginger ale, juice, "
+     "lemonade, liqueur, rum, sherry, soda, tea, tequila, vermouth, vodka, whiskey, wine, kahlua, amaretto"),
+]
+OTHER_AISLE = "Other"
+AISLE_ORDER = [name for name, _ in AISLES] + [OTHER_AISLE]
+# term -> aisle. A term given in two aisles belongs to the later (more specific) one.
+AISLE_TERMS: Dict[str, str] = {term.strip(): aisle for aisle, terms in AISLES for term in terms.split(",")}
+
+
+def aisle_for(item: str) -> str:
+    """The aisle an ingredient is found in, from its name ('Onions; chopped' -> 'Produce')."""
+    words = item_key(item).split(" ")
+    best = None   # (words in the term, position of its last word)
+    aisle = OTHER_AISLE
+    for size in range(min(3, len(words)), 0, -1):
+        for start in range(len(words) - size + 1):
+            term = " ".join(words[start:start + size])
+            if term in AISLE_TERMS and (best is None or (size, start + size) > best):
+                best, aisle = (size, start + size), AISLE_TERMS[term]
+        if best is not None:
+            break
+    return aisle
+
+
 @dataclass
 class ShoppingLine:
     key: str                     # stable id for ticking the line off
@@ -38,6 +103,7 @@ class ShoppingLine:
     amounts: List[str] = field(default_factory=list)   # ["2 cups", "1 lb"]
     notes: List[str] = field(default_factory=list)     # ["2-3 cloves"], amounts that can't be added
     recipes: List[str] = field(default_factory=list)   # titles that use it
+    aisle: str = OTHER_AISLE     # "Produce", "Dairy & Eggs", ...
 
     @property
     def text(self) -> str:
@@ -61,7 +127,7 @@ def item_key(item: str) -> str:
             w = w[:-3] + "y"
         elif len(w) > 3 and w.endswith("oes"):
             w = w[:-2]
-        elif len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
+        elif len(w) > 3 and w.endswith("s") and not w.endswith(("ss", "us", "is")):   # not asparagus, couscous
             w = w[:-1]
         words.append(w)
     return " ".join(words)
@@ -98,7 +164,7 @@ def combine(recipes: Iterable[Recipe]) -> List[ShoppingLine]:
                 continue
             line = lines.get(key)
             if line is None:
-                line = lines[key] = ShoppingLine(key=key, name=_title(item_name(ing.item)))
+                line = lines[key] = ShoppingLine(key=key, name=_title(item_name(ing.item)), aisle=aisle_for(ing.item))
                 totals[key] = {}
             if recipe.title not in line.recipes:
                 line.recipes.append(recipe.title)
@@ -128,3 +194,15 @@ def shopping_list(picks: Iterable[Tuple[Recipe, Fraction]]) -> List[ShoppingLine
 
 def to_text(lines: Iterable[ShoppingLine]) -> str:
     return "\n".join(f"[ ] {line.text}" for line in lines)
+
+
+def by_aisle(lines: Iterable[ShoppingLine]) -> List[Tuple[str, List[ShoppingLine]]]:
+    """[(aisle, lines)] in shop order, leaving out aisles with nothing in them."""
+    groups: Dict[str, List[ShoppingLine]] = {}
+    for line in lines:
+        groups.setdefault(line.aisle, []).append(line)
+    return [(aisle, groups[aisle]) for aisle in AISLE_ORDER if aisle in groups]
+
+
+def to_text_by_aisle(lines: Iterable[ShoppingLine]) -> str:
+    return "\n\n".join(f"{aisle}\n{to_text(group)}" for aisle, group in by_aisle(lines))

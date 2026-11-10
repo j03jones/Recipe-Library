@@ -45,6 +45,20 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Meal plan (v0.14)
+
+The **Plan** tab in the phone app has two pages: **Meal plan** and **Shopping list**.
+
+- **Meal plan.** A week at a time. Add recipes (search, or pick from your starred ones) or a note such
+  as "Leftovers" to any day, or use **Add to meal plan** on a recipe page, which keeps the scale on screen.
+- **Add this week to the shopping list** puts every planned recipe on the list. A recipe planned twice
+  is bought for twice.
+- **Shopping list** is grouped by aisle (Produce, Meat & Seafood, Dairy & Eggs, ...), and you can type in
+  anything else you need ("paper towels"). The aisle table is in `recipelib/shopping.py`; after changing
+  it run `python3 tools/gen_unitdata.py`.
+- Signed in, the plan and the list are saved with the account and follow you between phone and computer
+  (the latest change wins). This needs `supabase/add_planner.sql`. Signed out, they stay on the device.
+
 ## Shopping list, units and export (v0.13)
 
 **Shopping list.** In the phone app, open a recipe and choose **Add to shopping list** (it is added at

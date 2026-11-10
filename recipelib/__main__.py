@@ -110,7 +110,8 @@ def main(argv=None) -> int:
                 picks.append((recipe, f))
             print("Shopping list for: " + "; ".join(
                 r.title + (f" (x{f})" if f != 1 else "") for r, f in picks))
-            print(shopping.to_text(shopping.shopping_list(picks)))
+            print()
+            print(shopping.to_text_by_aisle(shopping.shopping_list(picks)))
         elif args.cmd == "import-url":
             from . import webimport
             try:

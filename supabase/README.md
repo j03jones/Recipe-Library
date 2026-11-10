@@ -128,3 +128,9 @@ them, so nothing leaked), and trigger functions were listed as callable. New pro
 
 The advisor also suggests switching on **Authentication > Sign In / Providers > Email > Leaked password
 protection**, which rejects passwords known from data breaches. That is a dashboard switch, not SQL.
+
+## Meal plan and shopping list
+`add_planner.sql` (run after `add_user_data.sql`, safe to run again) adds one column, `user_data.planner`:
+a JSON document per person holding their meal plan and shopping list. Only its owner can read or write
+it (the existing `user_data_own` rule). Until it is run, the app keeps plans and lists on the device and
+shows "the database needs supabase/add_planner.sql" under the plan when signed in.

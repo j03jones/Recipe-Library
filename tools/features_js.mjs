@@ -3,9 +3,10 @@
 import { readFileSync } from 'node:fs';
 import { Frac, convertRecipe, formatIngredient, scaleRecipe } from '../web/js/units.js';
 import { fromRow } from '../web/js/model.js';
-import { combine, shoppingList, toText } from '../web/js/shopping.js';
+import { aisleFor, combine, shoppingList, toText, toTextByAisle } from '../web/js/shopping.js';
+import * as planner from '../web/js/planner.js';
 
-const { rows, factors, picks } = JSON.parse(readFileSync(0, 'utf8'));
+const { rows, factors, picks, names = [], plan = null } = JSON.parse(readFileSync(0, 'utf8'));
 const recipes = rows.map(fromRow);
 const out = { convert: {}, scale: {}, shop: [] };
 for (const r of recipes) {
@@ -14,4 +15,16 @@ for (const r of recipes) {
 }
 out.shop.push(toText(combine(recipes)));
 out.shop.push(toText(shoppingList(picks.map(([n, f]) => [recipes[n], Frac.parse(f)]))));
+out.shop.push(toTextByAisle(combine(recipes)));
+out.aisles = names.map(aisleFor);
+if (plan) {
+  // meal-plan storage rules (no browser needed: clean/merge/recipesOn are pure)
+  const cleaned = planner.clean(plan.raw, plan.today);
+  out.plan = {
+    cleaned,
+    week: planner.weekDates(planner.weekStart(plan.today)),
+    recipes: planner.recipesOn(cleaned, planner.weekDates(planner.weekStart(plan.today))).map(([id, f]) => [id, String(f)]),
+    merged: planner.merge(cleaned, plan.other),
+  };
+}
 process.stdout.write(JSON.stringify(out));
