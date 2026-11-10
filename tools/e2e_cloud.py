@@ -752,7 +752,9 @@ async def run():
         octx, o = await new_page(b, fake)
         await o.goto(URL + "#/settings")
         await o.wait_for_selector("button[role=tab]:has-text('New account')")
-        await o.wait_for_timeout(500)
+        # the form repaints once the app has asked whether sign-up is open; wait for that, however slow the machine
+        await o.wait_for_function("![...document.querySelectorAll('button[role=tab]')].some(b => b.textContent.includes('Request'))", timeout=15000)
+        await o.wait_for_timeout(300)
         check("with open sign-up there is no Request tab", await o.locator("button[role=tab]:has-text('Request')").count() == 0)
         await o.click("button[role=tab]:has-text('New account')")
         await o.fill("input[aria-label='Your name']", "Val")

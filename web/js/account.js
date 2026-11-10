@@ -149,7 +149,13 @@ export function accountCard(ctx) {
   function paintSignedOut() {
     if (ctx.signupOpen === undefined) {    // ask once whether sign-up needs an invite code
       ctx.signupOpen = false;
-      cloud.signupOpen().then((open) => { if (open) { ctx.signupOpen = true; if (!cloud.isSignedIn() && card.isConnected) paint(); } }).catch(() => {});
+      cloud.signupOpen().then((open) => {
+        if (!open) return;
+        ctx.signupOpen = true;
+        // repaint to drop the invite-code field, unless the person has already started typing (it would wipe that)
+        const typed = [...card.querySelectorAll('input')].some((i) => i.value);
+        if (!cloud.isSignedIn() && card.isConnected && !typed) paint();
+      }).catch(() => {});
     }
     const open = ctx.signupOpen === true;
     if (open && mode === 'ask') mode = 'up';
