@@ -112,7 +112,7 @@ async function loadMore() {
   if (navigator.connection?.saveData) return;            // the person asked their browser to save data
   lib.moreState = 'loading';
   try {
-    const info = await (await fetch('data/more.json')).json();
+    const info = await (await fetch('data/more.json', { cache: 'no-cache' })).json();
     if (!info?.v) throw new Error('no extra recipes published');
     const res = await fetch(`data/more/${info.v}/index.json`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
