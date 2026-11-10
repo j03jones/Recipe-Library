@@ -43,6 +43,13 @@ COLLS = {
 }
 
 
+LOG = {
+    "raw": {"a": {"made": ["2026-11-01", "2026-10-20", "2026-11-01", "soon"], "rating": 4, "note": "  Less salt  "},
+            "b": {"made": [], "rating": 9, "note": ""}, "c": {"made": ["2026-11-05"]}, "d": "junk"},
+    "other": {"a": {"made": ["2026-11-08"], "rating": 2, "note": "Doubles well"}, "z": {"rating": 5}},
+}
+
+
 def recipes():
     out = parse_file(ROOT / "samples" / "realworld.mmf").recipes + parse_file(ROOT / "samples" / "sample.mmf").recipes
     out.append(Recipe(title="Odds and ends", yield_quantity=Fraction(4), yield_unit="servings", ingredients=[
@@ -81,7 +88,7 @@ class JavaScriptTwins(unittest.TestCase):
         cls.recipes = recipes()
         proc = subprocess.run(["node", str(ROOT / "tools" / "features_js.mjs")], capture_output=True, text=True,
                               input=json.dumps({"rows": [row(r) for r in cls.recipes], "factors": FACTORS, "picks": PICKS,
-                                                "names": NAMES, "plan": PLAN, "have": HAVE, "colls": COLLS}))
+                                                "names": NAMES, "plan": PLAN, "have": HAVE, "colls": COLLS, "log": LOG}))
         if proc.returncode != 0:
             raise AssertionError(proc.stderr)
         cls.js = json.loads(proc.stdout)
@@ -128,6 +135,18 @@ class JavaScriptTwins(unittest.TestCase):
         self.assertEqual(self.js["colls"]["merged"], [{"id": "c1", "name": "Weeknight", "ids": ["a", "b", "c"]},
                                                       {"id": "c3", "name": "Holiday", "ids": []},
                                                       {"id": "c3b", "name": "Baking", "ids": ["q"]}])
+
+    def test_cook_log_storage(self):
+        log = self.js["log"]
+        # each day once and in order; ratings outside 1-5 and empty entries dropped; notes trimmed
+        self.assertEqual(log["cleaned"], {"a": {"made": ["2026-10-20", "2026-11-01"], "rating": 4, "note": "Less salt"},
+                                          "c": {"made": ["2026-11-05"], "rating": 0, "note": ""}})
+        self.assertEqual(log["summary"], {"times": 2, "last": "2026-11-01"})
+        self.assertEqual(log["recent"], ["c", "a"])
+        # first sign-in: days from both, this account's rating wins, both notes kept
+        self.assertEqual(log["merged"]["a"], {"made": ["2026-10-20", "2026-11-01", "2026-11-08"], "rating": 4,
+                                              "note": "Less salt\nDoubles well"})
+        self.assertEqual(log["merged"]["z"], {"made": [], "rating": 5, "note": ""})
 
     def test_meal_plan_storage(self):
         plan = self.js["plan"]
