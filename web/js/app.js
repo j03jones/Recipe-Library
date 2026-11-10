@@ -3,6 +3,7 @@ import {
   ingredientFromFields, parseYield, recipeToText, scaleRecipe, splitCategories,
 } from './units.js';
 import * as shop from './shopping.js';
+import * as planner from './planner.js';
 import { fromRecord, fromRow, hasSource, isAdapted, toRecord } from './model.js';
 import { COLLECTIONS } from './linkdata.js';
 import { MAX_OVERLAP, VEGAN_GROUP, recipeFromSchema, wordingOverlap } from './webimport.js';
@@ -96,7 +97,7 @@ const num = (f, places) => trim0(f.toNumber().toFixed(places));
 
 // ------------------------------------------------------------------- library
 
-const lib = { base: [], mine: new Map(), all: [], byId: new Map(), cats: [], cloud: [], me: null, restaurants: [], syncError: '', libPhotos: {}, avatars: {} };
+const lib = { base: [], mine: new Map(), all: [], byId: new Map(), cats: [], cloud: [], me: null, restaurants: [], syncError: '', planSyncError: '', libPhotos: {}, avatars: {} };
 
 // ---- hosted account data (cached so it still opens offline)
 const CACHE_KEY = 'recipelib.cloudcache';
@@ -129,6 +130,7 @@ async function refreshCloud() {
   }
   rebuild();
   if (lib.me) await syncStars();
+  if (lib.me) await syncPlanner();
 }
 
 // ---- stars follow the person between devices. This device pushes its list whenever it changes.
@@ -162,6 +164,61 @@ async function syncStars() {
     else if (row.updated_at !== sync.at) { replaceStars(row.stars); writeSync({ ...sync, at: row.updated_at }); }
     if (!lib.syncError || !/\boffline\b/i.test(lib.syncError)) lib.syncError = lib.syncError || '';
   } catch (err) { lib.syncError = err.status === 0 ? 'Offline. Will retry.' : err.message; }
+}
+
+// ---- the meal plan and shopping list follow the person too: one document, last change wins.
+const PLAN_SYNC_KEY = 'recipelib.plansync';
+const readPlanSync = () => { try { return JSON.parse(localStorage.getItem(PLAN_SYNC_KEY) || '{}'); } catch { return {}; } };
+const writePlanSync = (v) => { try { localStorage.setItem(PLAN_SYNC_KEY, JSON.stringify(v)); } catch { /* ignore */ } };
+const planSyncMessage = (err) => (err.status === 0 ? 'Offline. Will retry.'
+  : /planner/i.test(err.message || '') ? 'the database needs supabase/add_planner.sql' : err.message);
+let planPushTimer;
+async function pushPlanner() {
+  if (!lib.me || !cloud.isSignedIn()) return;
+  const sync = readPlanSync();
+  const at = sync.at || Date.now();
+  try {
+    await cloud.savePlanner({ at, plan: planner.load(), shop: shop.load() });
+    const now = readPlanSync();
+    if (now.at === at || !now.at) writePlanSync({ uid: lib.me.id, at, dirty: false });   // unless it changed again meanwhile
+    lib.planSyncError = '';
+  } catch (err) { lib.planSyncError = planSyncMessage(err); }
+}
+function plannerChanged() {
+  if (!lib.me) return;   // signed out: stays on this device, and is offered to the account at the next sign-in
+  writePlanSync({ uid: lib.me.id, at: Date.now(), dirty: true });
+  clearTimeout(planPushTimer);
+  planPushTimer = setTimeout(pushPlanner, 900);
+}
+planner.onChange(plannerChanged);
+shop.onChange(plannerChanged);
+async function syncPlanner() {
+  try {
+    const sync = readPlanSync();
+    const remote = await cloud.loadPlanner();
+    const theirs = remote && typeof remote === 'object' && remote.at ? remote : null;
+    const mine = { plan: planner.load(), shop: shop.load() };
+    const haveLocal = Object.keys(mine.plan.days).length > 0 || mine.shop.items.length > 0 || mine.shop.extras.length > 0;
+    if (sync.uid !== lib.me.id) {
+      // first time this device meets this account: keep both sides
+      if (theirs) {
+        planner.replace(planner.merge(theirs.plan, mine.plan));
+        const s = shop.clean(theirs.shop);
+        for (const i of mine.shop.items) if (!s.items.some((x) => x.id === i.id)) s.items.push(i);
+        for (const x of mine.shop.extras) if (!s.extras.some((y) => y.text.toLowerCase() === x.text.toLowerCase())) s.extras.push(x);
+        s.done = [...new Set([...s.done, ...mine.shop.done])];
+        shop.replace(s);
+      }
+      writePlanSync({ uid: lib.me.id, at: haveLocal || !theirs ? Date.now() : theirs.at, dirty: haveLocal });
+      if (haveLocal) await pushPlanner();
+    } else if (sync.dirty) await pushPlanner();          // this device has unsent changes
+    else if (theirs && theirs.at !== sync.at) {          // another device changed it
+      planner.replace(theirs.plan); shop.replace(theirs.shop);
+      writePlanSync({ uid: lib.me.id, at: theirs.at, dirty: false });
+      if (['plan', 'shop'].includes(document.body.dataset.view)) route();
+    }
+    if (!readPlanSync().dirty) lib.planSyncError = '';
+  } catch (err) { lib.planSyncError = planSyncMessage(err); }
 }
 
 const restaurantName = (id) => {
@@ -800,6 +857,12 @@ function viewRecipe(id) {
     toast(on ? 'Taken off the shopping list' : 'Added to the shopping list');
   } });
   const shopLink = h('a', { class: 'linkbtn', href: '#/shop' }, 'Open the shopping list');
+  const planBtn = h('button', { type: 'button', onclick: async () => {
+    const day = await pickDay(r.title);
+    if (!day) return;
+    if (!planner.add(day, { id: r.id, f: String(factor) })) { toast('Could not save the meal plan on this browser'); return; }
+    toast(`Planned for ${day === planner.isoDate(new Date()) ? 'today' : DAY_FMT.format(planner.parseDate(day))}`);
+  } }, 'Add to meal plan');
   function paintShop() {
     const on = shop.has(r.id);
     shopBtn.textContent = on ? '✓ On the shopping list' : 'Add to shopping list';
@@ -840,7 +903,7 @@ function viewRecipe(id) {
     h('section', { class: 'tools stack' },
       h('label', { class: 'check' }, smartIn, 'Smart units (8 Tbsp becomes ½ cup)'),
       h('label', { class: 'unitpick' }, h('span', null, 'Units'), unitsIn),
-      r.ings.length > 0 && h('div', { class: 'row grow' }, shopBtn, shopLink),
+      h('div', { class: 'row grow' }, planBtn, r.ings.length > 0 && shopBtn, r.ings.length > 0 && shopLink),
       h('div', { class: 'row grow' },
         h('button', { onclick: copy }, 'Copy'),
         navigator.share && h('button', { onclick: share }, 'Share'),
@@ -987,41 +1050,183 @@ function viewEdit(id, template) {
 // ------------------------------------------------------ outside collections and web import
 
 /** Recipe titles from an outside author, each opening on their own website (nothing is copied). */
-// The shopping list: every recipe added from its page, combined into one list to tick off.
-function viewShop() {
-  setView('shop', 'shop');
+// ---- meal plan and shopping list: two pages under the Plan tab
+
+const planSeg = (on) => h('div', { class: 'seg planseg', role: 'group', 'aria-label': 'Plan or shopping list' },
+  h('a', { class: 'segbtn', href: '#/plan', 'aria-current': on === 'plan' ? 'page' : null }, 'Meal plan'),
+  h('a', { class: 'segbtn', href: '#/shop', 'aria-current': on === 'shop' ? 'page' : null }, 'Shopping list'));
+
+const timesLabel = (f) => (f.eq(new Frac(1n)) ? '' : `×${num(f, 2)}`);
+const DAY_FMT = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
+const DATE_FMT = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
+/** Pick a recipe (or type a note) for a day of the meal plan. Resolves to a plan entry or null. */
+function pickForPlan(dayLabel) {
+  return new Promise((resolve) => {
+    // settle at once on a choice; the dialog's own 'close' event (Esc, Cancel) can arrive late
+    let settled = false;
+    const done = (value) => { if (settled) return; settled = true; if (dlg.open) dlg.close(); dlg.remove(); resolve(value); };
+    const search = h('input', { type: 'search', class: 'full', placeholder: 'Search recipes', 'aria-label': 'Search recipes', autocomplete: 'off' });
+    const results = h('ul', { class: 'picklist' });
+    const note = h('input', { type: 'text', class: 'full', maxlength: '80', placeholder: 'Or a note: Leftovers, Eating out…', 'aria-label': 'Note' });
+    const dlg = h('dialog', { class: 'pickdialog', 'aria-labelledby': 'pick-title' },
+      h('h2', { id: 'pick-title' }, `Add to ${dayLabel}`),
+      search, results,
+      h('form', { class: 'row', onsubmit: (e) => { e.preventDefault(); if (note.value.trim()) done({ note: note.value }); } },
+        note, h('button', { type: 'submit' }, 'Add note')),
+      h('div', { class: 'row' }, h('button', { type: 'button', onclick: () => done(null) }, 'Cancel')));
+    function paint() {
+      const q = search.value.trim();
+      // nothing typed yet: starred recipes are the likeliest picks
+      const found = (q ? matches(q, '') : lib.all.filter((r) => isStarred(r.id))).filter((r) => r.kind !== 'link').slice(0, 40);
+      fill(results, found.length
+        ? found.map((r) => h('li', null, h('button', { type: 'button', onclick: () => done({ id: r.id, f: '1' }) },
+          h('span', { class: 'e', 'aria-hidden': 'true' }, emojiFor(r.categories[0])), r.title)))
+        : h('li', { class: 'muted small' }, q ? 'No recipes match.' : 'Type to search, or star recipes to see them here.'));
+    }
+    search.addEventListener('input', paint);
+    dlg.addEventListener('close', () => done(null));
+    document.body.append(dlg);
+    paint();
+    dlg.showModal();
+  });
+}
+
+/** Pick a day (today and the next two weeks) for a recipe. Resolves to 'YYYY-MM-DD' or null. */
+function pickDay(title) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (value) => { if (settled) return; settled = true; if (dlg.open) dlg.close(); dlg.remove(); resolve(value); };
+    const today = planner.isoDate(new Date());
+    const plan = planner.load();
+    const dlg = h('dialog', { class: 'pickdialog', 'aria-labelledby': 'day-title' },
+      h('h2', { id: 'day-title' }, 'Which day?'),
+      h('p', { class: 'muted small' }, title),
+      h('ul', { class: 'picklist' }, Array.from({ length: 14 }, (_, n) => planner.addDays(today, n)).map((d) => {
+        const n = (plan.days[d] || []).length;
+        return h('li', null, h('button', { type: 'button', onclick: () => done(d) },
+          h('strong', null, d === today ? 'Today' : DAY_FMT.format(planner.parseDate(d))), ` ${DATE_FMT.format(planner.parseDate(d))}`,
+          n > 0 && h('span', { class: 'muted small' }, `  ·  ${n} planned`)));
+      })),
+      h('div', { class: 'row' }, h('button', { type: 'button', onclick: () => done(null) }, 'Cancel')));
+    dlg.addEventListener('close', () => done(null));
+    document.body.append(dlg);
+    dlg.showModal();
+  });
+}
+
+let planWeek = null;   // Monday of the week on screen; stays put while you move between pages
+
+// The meal plan: a week at a time, a few recipes or notes on each day.
+function viewPlan() {
+  setView('plan', 'plan');
+  const today = planner.isoDate(new Date());
+  if (!planWeek) planWeek = planner.weekStart(today);
   const body = h('div');
+  const sub = h('p', { class: 'sub' });
+  function paint() {
+    const plan = planner.load();
+    const dates = planner.weekDates(planWeek);
+    const thisWeek = planWeek === planner.weekStart(today);
+    sub.textContent = thisWeek ? 'This week' : `Week of ${DATE_FMT.format(planner.parseDate(planWeek))}`;
+    const planned = planner.recipesOn(plan, dates).filter(([id]) => lib.byId.get(id));
+    fill(body,
+      h('div', { class: 'row weeknav' },
+        h('button', { type: 'button', 'aria-label': 'Previous week', onclick: () => { planWeek = planner.addDays(planWeek, -7); paint(); } }, '‹ Earlier'),
+        h('button', { type: 'button', disabled: thisWeek, onclick: () => { planWeek = planner.weekStart(today); paint(); } }, 'This week'),
+        h('button', { type: 'button', 'aria-label': 'Next week', onclick: () => { planWeek = planner.addDays(planWeek, 7); paint(); } }, 'Later ›')),
+      dates.map((d) => {
+        const label = `${DAY_FMT.format(planner.parseDate(d))} ${DATE_FMT.format(planner.parseDate(d))}`;
+        const entries = plan.days[d] || [];
+        return h('section', { class: `planday${d === today ? ' today' : ''}${d < today ? ' past' : ''}` },
+          h('h2', null, DAY_FMT.format(planner.parseDate(d)), h('span', { class: 'muted' }, ` ${DATE_FMT.format(planner.parseDate(d))}`), d === today && h('span', { class: 'label' }, 'Today')),
+          entries.length > 0 && h('ul', { class: 'shoprecipes' }, entries.map((e, n) => {
+            const r = e.id ? lib.byId.get(e.id) : null;
+            return h('li', null,
+              e.note ? h('span', { class: 'plannote' }, e.note)
+                : r ? h('a', { href: `#/r/${r.id}` }, r.title)
+                  : h('span', { class: 'muted' }, 'A recipe that is no longer in the library'),
+              r && h('span', { class: 'muted' }, ` ${timesLabel(Frac.parse(e.f) || new Frac(1n))}`),
+              h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Take ${e.note || r?.title || 'this'} off ${label}`, title: 'Take off the plan',
+                onclick: () => { planner.removeAt(d, n); paint(); } }, icon('close', { size: 18 })));
+          })),
+          h('button', { class: 'addday', type: 'button', 'aria-label': `Add to ${label}`, onclick: async () => {
+            const entry = await pickForPlan(label);
+            if (entry && !planner.add(d, entry)) toast('Could not save the meal plan on this browser');
+            paint();
+          } }, icon('plus', { size: 18 }), 'Add'));
+      }),
+      h('section', { class: 'tools stack' },
+        h('div', { class: 'row grow' },
+          h('button', { class: 'primary', type: 'button', disabled: !planned.length, onclick: () => {
+            for (const [id, f] of planned) shop.addMore(id, f);
+            toast(`${planned.length} ${planned.length === 1 ? 'recipe' : 'recipes'} added to the shopping list`);
+            location.hash = '#/shop';
+          } }, 'Add this week to the shopping list'),
+          h('button', { type: 'button', disabled: !dates.some((d) => plan.days[d]), onclick: async () => {
+            if (await confirmDialog('Clear every meal planned for this week?', 'Clear week', true)) { planner.clearDates(dates); paint(); }
+          } }, 'Clear week')),
+        h('p', { class: 'muted small' }, lib.me
+          ? 'Your meal plan and shopping list are saved with your account, so they follow you between your phone and computer.'
+          : 'Your meal plan is kept on this device. Sign in (Settings) to have it follow you between your phone and computer.'),
+        lib.planSyncError && h('p', { class: 'note' }, `Not saved to your account yet: ${lib.planSyncError}`)));
+  }
+  fill($app, band('page', h('h1', null, 'Meal plan'), sub), planSeg('plan'), body);
+  paint();
+  window.scrollTo(0, 0);
+}
+
+// The shopping list: every recipe added from its page or from the meal plan, combined into one
+// list grouped by aisle, plus anything typed in by hand.
+function viewShop() {
+  setView('shop', 'plan');
+  const body = h('div');
+  const extraIn = h('input', { type: 'text', class: 'full', maxlength: '120', placeholder: 'Add something else: paper towels, coffee…', 'aria-label': 'Add an item' });
+  const extraForm = h('form', { class: 'row addextra', onsubmit: (e) => {
+    e.preventDefault();
+    if (!extraIn.value.trim()) return;
+    if (!shop.addExtra(extraIn.value)) toast('Could not save the shopping list on this browser');
+    extraIn.value = '';
+    paint();
+    extraIn.focus();
+  } }, extraIn, h('button', { type: 'submit' }, 'Add'));
   function paint() {
     const list = shop.load();
-    const picks = list.items.map((i) => [lib.byId.get(i.id), Frac.parse(i.f) || new Frac(1n), i]).filter(([r]) => r && r.kind !== 'link');
-    if (!picks.length) {
+    const picks = list.items.map((i) => [lib.byId.get(i.id), Frac.parse(i.f) || new Frac(1n)]).filter(([r]) => r && r.kind !== 'link');
+    if (!picks.length && !list.extras.length) {
       fill(body, h('div', { class: 'empty' },
         h('h2', null, 'Nothing on the list yet'),
-        h('p', { class: 'muted' }, 'Open a recipe and choose “Add to shopping list”. Add as many as you like: the same ingredient from different recipes is added up into one line.'),
-        h('a', { class: 'linkbtn', href: '#/' }, 'Browse the recipes')));
+        h('p', { class: 'muted' }, 'Open a recipe and choose “Add to shopping list”, or plan your week and add it all at once. The same ingredient from different recipes is added up into one line.'),
+        h('div', { class: 'row', style: 'justify-content:center' },
+          h('a', { class: 'linkbtn', href: '#/plan' }, 'Plan the week'),
+          h('a', { class: 'linkbtn', href: '#/' }, 'Browse the recipes'))));
       return;
     }
-    const lines = shop.shoppingList(picks.map(([r, f]) => [r, f]));
+    const lines = [...shop.shoppingList(picks), ...shop.extraLines(list.extras)];
     const done = new Set(list.done);
-    const left = lines.filter((l) => !done.has(l.key)).length;
-    const text = () => `Shopping list\n${picks.map(([r, f]) => `${r.title}${f.eq(new Frac(1n)) ? '' : ` (×${num(f, 2)})`}`).join('\n')}\n\n${shop.toText(lines.filter((l) => !done.has(l.key)))}`;
+    const left = lines.filter((l) => !done.has(l.key));
+    const text = () => `Shopping list\n${picks.map(([r, f]) => `${r.title}${f.eq(new Frac(1n)) ? '' : ` (${timesLabel(f)})`}`).join('\n')}\n\n${shop.toTextByAisle(left)}`;
     fill(body,
-      h('ul', { class: 'shoprecipes' }, picks.map(([r, f]) => h('li', null,
+      picks.length > 0 && h('ul', { class: 'shoprecipes' }, picks.map(([r, f]) => h('li', null,
         h('a', { href: `#/r/${r.id}` }, r.title),
-        !f.eq(new Frac(1n)) && h('span', { class: 'muted' }, ` ×${num(f, 2)}`),
+        !f.eq(new Frac(1n)) && h('span', { class: 'muted' }, ` ${timesLabel(f)}`),
         h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Take ${r.title} off the list`, title: 'Take off the list',
           onclick: () => { shop.remove(r.id); paint(); } }, icon('close', { size: 18 }))))),
-      h('p', { class: 'muted small', role: 'status' }, left === lines.length
+      h('p', { class: 'muted small', role: 'status' }, left.length === lines.length
         ? `${lines.length} ${lines.length === 1 ? 'thing' : 'things'} to get`
-        : `${left} of ${lines.length} still to get`),
-      h('ul', { class: 'ing shoplist' }, lines.map((l) => {
-        const btn = h('button', { class: 'tick', type: 'button', 'aria-pressed': String(done.has(l.key)),
-          title: l.recipes.join(', '),
-          onclick: () => { shop.setDone(l.key, btn.getAttribute('aria-pressed') !== 'true'); buzz(6); paint(); } },
-        h('span', { class: 'box' }, icon('check', { size: 16 })),
-        h('span', { class: 'what' }, l.name, (l.amounts.length > 0 || l.notes.length > 0) && h('b', null, ` ${[...l.amounts, ...l.notes].join(' + ')}`)));
-        return h('li', null, btn);
-      })),
+        : `${left.length} of ${lines.length} still to get`),
+      shop.byAisle(lines).map(([aisle, group]) => [
+        h('h3', { class: 'aisle' }, aisle),
+        h('ul', { class: 'ing shoplist' }, group.map((l) => {
+          const btn = h('button', { class: 'tick', type: 'button', 'aria-pressed': String(done.has(l.key)),
+            title: l.recipes.join(', '),
+            onclick: () => { shop.setDone(l.key, btn.getAttribute('aria-pressed') !== 'true'); buzz(6); paint(); } },
+          h('span', { class: 'box' }, icon('check', { size: 16 })),
+          h('span', { class: 'what' }, l.name, (l.amounts.length > 0 || l.notes.length > 0) && h('b', null, ` ${[...l.amounts, ...l.notes].join(' + ')}`)));
+          return h('li', { class: l.extra ? 'extra' : null }, btn,
+            l.extra && h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Remove ${l.name}`, title: 'Remove',
+              onclick: () => { shop.removeExtra(l.key); paint(); } }, icon('close', { size: 18 })));
+        }))]),
       h('section', { class: 'tools stack' },
         h('div', { class: 'row grow' },
           h('button', { type: 'button', onclick: async () => toast(await copyText(text()) ? 'Shopping list copied' : 'Could not copy on this browser') }, 'Copy'),
@@ -1030,9 +1235,11 @@ function viewShop() {
           h('button', { type: 'button', onclick: async () => {
             if (await confirmDialog('Clear the whole shopping list?', 'Clear list', true)) { shop.clear(); paint(); }
           } }, 'Clear list')),
-        h('p', { class: 'muted small' }, 'Amounts are added up when they are the same kind of measure (cups with tablespoons, pounds with ounces). The list is kept on this device.')));
+        h('p', { class: 'muted small' }, 'Amounts are added up when they are the same kind of measure (cups with tablespoons, pounds with ounces). ',
+          lib.me ? 'The list is saved with your account.' : 'The list is kept on this device; sign in to have it follow you.'),
+        lib.planSyncError && h('p', { class: 'note' }, `Not saved to your account yet: ${lib.planSyncError}`)));
   }
-  fill($app, pageHead('Shopping list', 'Everything for the recipes you picked, in one list'), body);
+  fill($app, pageHead('Shopping list', 'Everything for the recipes you picked, in one list'), planSeg('shop'), extraForm, body);
   paint();
   window.scrollTo(0, 0);
 }
@@ -1262,6 +1469,7 @@ function route() {
   if (kind === 'join') return viewJoin(ctx, id);
   if (kind === 'starred') return viewList(true);
   if (kind === 'shop') return viewShop();
+  if (kind === 'plan') return viewPlan();
   return viewList();
 }
 

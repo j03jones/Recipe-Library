@@ -197,6 +197,18 @@ export async function loadUserData() {
   const [row] = await authed(`/rest/v1/user_data?user_id=eq.${enc(u.id)}&select=stars,library_photos,updated_at`);
   return row || null;
 }
+// meal plan and shopping list: one document, asked for on its own so that a project which has not
+// run supabase/add_planner.sql yet still syncs stars and photos
+export async function loadPlanner() {
+  const [row] = await authed(`/rest/v1/user_data?user_id=eq.${enc(currentUser().id)}&select=planner`);
+  return row ? row.planner : null;
+}
+export async function savePlanner(doc) {
+  await authed('/rest/v1/user_data', {
+    method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: { user_id: currentUser().id, planner: doc },
+  });
+}
 export async function saveLibraryPhotos(map) {
   await authed('/rest/v1/user_data', {
     method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },

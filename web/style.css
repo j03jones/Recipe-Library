@@ -509,3 +509,36 @@ button[aria-pressed=true]:not(.chip):not(.tick):not(.icon-btn):not(.star) { bord
 .shoprecipes li a { flex: 1 1 auto; font-weight: 600; text-decoration: none; color: inherit; }
 .shoplist .what b { font-weight: 600; white-space: nowrap; }
 @media print { .shoprecipes .icon-btn { display: none !important; } }
+
+/* ---- meal plan */
+.planseg { display: flex; gap: .4rem; margin: 0 0 1rem; }
+.planseg .segbtn { flex: 1 1 0; text-align: center; padding: .6rem .5rem; border: 1px solid var(--line); border-radius: var(--radius); text-decoration: none; color: inherit; font-weight: 600; background: var(--card); }
+.planseg .segbtn[aria-current=page] { background: var(--ridge); border-color: var(--ridge); color: var(--cream); }
+.weeknav { justify-content: space-between; margin-bottom: .6rem; }
+.weeknav button { flex: 1 1 0; }
+.planday { padding: .7rem 0 .5rem; border-top: 1px solid var(--line); }
+.planday h2 { font-size: 1.05rem; margin: 0 0 .2rem; display: flex; align-items: baseline; gap: .4rem; }
+.planday h2 .muted { font-family: inherit; font-weight: 400; font-size: .9rem; }
+.planday h2 .label { margin-left: auto; }
+.planday.today { border-top: 2px solid var(--clay); }
+.planday.past { opacity: .6; }
+.planday .shoprecipes { margin: 0 0 .3rem; }
+.planday .shoprecipes li:last-child { border-bottom: 0; }
+.plannote { flex: 1 1 auto; font-style: italic; }
+.addday { display: inline-flex; align-items: center; gap: .3rem; padding: .35rem .7rem; font-size: .9rem; }
+.pickdialog { width: min(92vw, 460px); }
+.pickdialog h2 { margin-top: 0; }
+.picklist { list-style: none; margin: .6rem 0; padding: 0; max-height: 46vh; overflow-y: auto; border-top: 1px solid var(--line); }
+.picklist li { border-bottom: 1px solid var(--line); }
+.picklist li.muted { padding: .7rem .2rem; }
+.picklist button { display: block; width: 100%; text-align: left; border: 0; border-radius: 0; background: none; padding: .65rem .3rem; font-weight: 500; }
+.picklist button .e { margin-right: .5rem; }
+.pickdialog form.row { flex-wrap: nowrap; margin-top: .4rem; }
+.pickdialog form.row input { flex: 1 1 auto; min-width: 0; }
+/* ---- shopping list by aisle */
+.addextra { flex-wrap: nowrap; margin-bottom: 1rem; }
+.addextra input { flex: 1 1 auto; min-width: 0; }
+h3.aisle { margin: 1.2rem 0 .2rem; font-size: .8rem; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.shoplist li { display: flex; align-items: center; }
+.shoplist li .tick { flex: 1 1 auto; }
+@media print { .planseg, .addextra, .weeknav, .addday, .shoplist .icon-btn { display: none !important; } }
