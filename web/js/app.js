@@ -6,6 +6,7 @@ import * as shop from './shopping.js';
 import * as planner from './planner.js';
 import * as pantry from './pantry.js';
 import * as collections from './collections.js';
+import * as cooklog from './cooklog.js';
 import { fromIndexRow, fromRecord, fromRow, hasSource, isAdapted, toRecord } from './model.js';
 import { COLLECTIONS } from './linkdata.js';
 import { MAX_OVERLAP, VEGAN_GROUP, recipeFromSchema, wordingOverlap } from './webimport.js';
@@ -269,7 +270,7 @@ async function pushPlanner() {
   const sync = readPlanSync();
   const at = sync.at || Date.now();
   try {
-    await cloud.savePlanner({ at, plan: planner.load(), shop: shop.load(), pantry: pantry.load(), collections: collections.load() });
+    await cloud.savePlanner({ at, plan: planner.load(), shop: shop.load(), pantry: pantry.load(), collections: collections.load(), log: cooklog.load() });
     const now = readPlanSync();
     if (now.at === at || !now.at) writePlanSync({ uid: lib.me.id, at, dirty: false });   // unless it changed again meanwhile
     lib.planSyncError = '';
@@ -285,14 +286,15 @@ planner.onChange(plannerChanged);
 shop.onChange(plannerChanged);
 pantry.onChange(plannerChanged);
 collections.onChange(plannerChanged);
+cooklog.onChange(plannerChanged);
 async function syncPlanner() {
   try {
     const sync = readPlanSync();
     const remote = await cloud.loadPlanner();
     const theirs = remote && typeof remote === 'object' && remote.at ? remote : null;
-    const mine = { plan: planner.load(), shop: shop.load(), pantry: pantry.load(), collections: collections.load() };
+    const mine = { plan: planner.load(), shop: shop.load(), pantry: pantry.load(), collections: collections.load(), log: cooklog.load() };
     const haveLocal = Object.keys(mine.plan.days).length > 0 || mine.shop.items.length > 0 || mine.shop.extras.length > 0
-      || mine.pantry.have.length > 0 || mine.collections.length > 0;
+      || mine.pantry.have.length > 0 || mine.collections.length > 0 || Object.keys(mine.log).length > 0;
     if (sync.uid !== lib.me.id) {
       // first time this device meets this account: keep both sides
       if (theirs) {
@@ -304,6 +306,7 @@ async function syncPlanner() {
         shop.replace(s);
         pantry.replace(pantry.merge(theirs.pantry, mine.pantry));
         collections.replace(collections.merge(theirs.collections, mine.collections));
+        cooklog.replace(cooklog.merge(theirs.log, mine.log));
       }
       writePlanSync({ uid: lib.me.id, at: haveLocal || !theirs ? Date.now() : theirs.at, dirty: haveLocal });
       if (haveLocal) await pushPlanner();
@@ -313,8 +316,9 @@ async function syncPlanner() {
       // a copy saved by an older version of the app has no pantry or collections: keep this device's
       if ('pantry' in theirs) pantry.replace(theirs.pantry);
       if ('collections' in theirs) collections.replace(theirs.collections);
+      if ('log' in theirs) cooklog.replace(theirs.log);
       writePlanSync({ uid: lib.me.id, at: theirs.at, dirty: false });
-      if (['plan', 'shop', 'pantry', 'collection'].includes(document.body.dataset.view)) route();
+      if (['plan', 'shop', 'pantry', 'collection', 'cooked'].includes(document.body.dataset.view)) route();
     }
     if (!readPlanSync().dirty) lib.planSyncError = '';
   } catch (err) { lib.planSyncError = planSyncMessage(err); }
@@ -623,9 +627,11 @@ function viewList(starredOnly = false) {
     !starredOnly && h('a', { class: 'promo card', href: '#/pantry' },
       h('span', { class: 'tile', 'aria-hidden': 'true', 'data-sec': 3 }, '🧺'),
       h('span', null, h('strong', null, 'What can I make?'), h('span', { class: 'muted small' }, 'Find recipes from what you have on hand.'))),
-    starredOnly && collections.load().length > 0 && h('div', { class: 'collrow' },
+    starredOnly && (collections.load().length > 0 || cooklog.recent(cooklog.load()).length > 0) && h('div', { class: 'collrow' },
       h('h2', null, 'Collections'),
-      h('div', { class: 'chips' }, collections.load().map((c) => h('a', { class: 'chip', href: `#/c/${c.id}` }, c.name, h('span', { class: 'muted' }, ` ${c.ids.length}`))))),
+      h('div', { class: 'chips' },
+        cooklog.recent(cooklog.load()).length > 0 && h('a', { class: 'chip', href: '#/cooked' }, 'Cooked', h('span', { class: 'muted' }, ` ${cooklog.recent(cooklog.load()).length}`)),
+        collections.load().map((c) => h('a', { class: 'chip', href: `#/c/${c.id}` }, c.name, h('span', { class: 'muted' }, ` ${c.ids.length}`))))),
     !starredOnly && srcRow, !starredOnly && secRow, !starredOnly && groupsRow, promo, count, ul, empty, more);
   chipState();
   paint();
@@ -985,6 +991,46 @@ function viewRecipe(id) {
   }
   paintShop();
 
+  // your own record of this recipe: rating, when you made it, private notes
+  const logBox = h('section', { class: 'mylog', 'aria-label': 'Your notes on this recipe' });
+  const noteIn = h('textarea', { rows: '3', maxlength: '2000', placeholder: 'Private notes: use less salt, doubles well…', 'aria-label': 'Private notes' });
+  noteIn.value = cooklog.get(r.id).note;
+  let noteTimer;
+  const saveNote = () => { clearTimeout(noteTimer); if (noteIn.value.trim() !== cooklog.get(r.id).note) cooklog.setNote(r.id, noteIn.value); };
+  noteIn.addEventListener('input', () => { clearTimeout(noteTimer); noteTimer = setTimeout(saveNote, 900); });
+  noteIn.addEventListener('blur', saveNote);
+  function paintLog() {
+    const e = cooklog.get(r.id);
+    const { times, last } = cooklog.summary(e);
+    const today = planner.isoDate(new Date());
+    fill(logBox,
+      h('h2', null, 'Your notes'),
+      h('div', { class: 'ratingrow', role: 'group', 'aria-label': 'Your rating' }, [1, 2, 3, 4, 5].map((n) =>
+        h('button', { class: 'ratestar', type: 'button', 'aria-pressed': String(e.rating >= n), 'aria-label': `${n} ${n === 1 ? 'star' : 'stars'}`,
+          onclick: () => { cooklog.setRating(r.id, n); buzz(6); paintLog(); } }, icon('star', { size: 26, fill: e.rating >= n }))),
+        h('span', { class: 'muted small' }, e.rating ? `${e.rating} of 5` : 'Not rated')),
+      h('div', { class: 'row' },
+        h('button', { type: 'button', class: e.made.includes(today) ? '' : 'primary', disabled: e.made.includes(today),
+          onclick: () => { cooklog.markMade(r.id, today); celebrate(); paintLog(); } }, e.made.includes(today) ? '✓ Made today' : 'I made this'),
+        h('span', { class: 'muted small madeline' }, times
+          ? `Made ${times === 1 ? 'once' : `${times} times`}, last ${last === today ? 'today' : `on ${DATE_FMT.format(planner.parseDate(last))}`}`
+          : 'Not made yet'),
+        times > 0 && h('button', { class: 'linklike', type: 'button', onclick: () => { cooklog.unmarkLast(r.id); paintLog(); } }, 'Undo')),
+      noteIn,
+      h('p', { class: 'muted small' }, lib.me ? 'Only you see these. Saved with your account.' : 'Only you see these. Kept on this device.'));
+  }
+  paintLog();
+  // leaving the recipe, closing the tab or switching apps: don't lose a note still being typed
+  const prevRelease = releaseWake;
+  window.addEventListener('pagehide', saveNote);
+  document.addEventListener('visibilitychange', saveNote);
+  releaseWake = () => {
+    saveNote();
+    window.removeEventListener('pagehide', saveNote);
+    document.removeEventListener('visibilitychange', saveNote);
+    prevRelease?.();
+  };
+
   const [primary, ...rest] = r.categories;
   fill($app,
     band('rband',
@@ -1014,6 +1060,7 @@ function viewRecipe(id) {
             : h('p', { class: 'note', style: 'margin:.5rem .3rem .1rem' }, 'No yield is listed, so scale with the multiplier.')),
         ingBox),
       dirBox),
+    logBox,
     h('section', { class: 'tools stack' },
       h('label', { class: 'check' }, smartIn, 'Smart units (8 Tbsp becomes ½ cup)'),
       h('label', { class: 'unitpick' }, h('span', null, 'Units'), unitsIn),
@@ -1492,6 +1539,27 @@ function collectionsDialog(r, onDone) {
   dlg.showModal();
 }
 
+// What you have cooked, most recent first.
+function viewCooked() {
+  setView('cooked', 'starred');
+  const log = cooklog.load();
+  const today = planner.isoDate(new Date());
+  const rows = cooklog.recent(log).map(([id, e]) => [lib.byId.get(id), e]).filter(([r]) => r);
+  fill($app,
+    band('page', h('h1', null, 'Cooked'), h('p', { class: 'sub' }, `${rows.length} ${rows.length === 1 ? 'recipe' : 'recipes'} you have made`)),
+    h('p', null, h('a', { class: 'linkbtn', href: '#/starred' }, '‹ Starred and collections')),
+    rows.length
+      ? h('ul', { class: 'rows' }, rows.map(([r, e]) => {
+        const { times, last } = cooklog.summary(e);
+        return h('li', null, h('a', { class: 'rc', href: `#/r/${r.id}` }, thumb(r), h('span', { class: 'txt' }, h('span', { class: 't' }, r.title),
+          h('span', { class: 's' }, `${e.rating ? `${'★'.repeat(e.rating)} · ` : ''}${times === 1 ? 'Made once' : `Made ${times} times`}, last ${last === today ? 'today' : DATE_FMT.format(planner.parseDate(last))}`))));
+      }))
+      : h('div', { class: 'empty' }, h('h2', null, 'Nothing cooked yet'),
+        h('p', { class: 'muted' }, 'Open a recipe and tap “I made this” to start your cook log.'),
+        h('a', { class: 'linkbtn', href: '#/' }, 'Browse the recipes')));
+  window.scrollTo(0, 0);
+}
+
 // One collection: its recipes, with rename and delete.
 function viewCollection(id) {
   const c = collections.get(id);
@@ -1756,6 +1824,7 @@ function route() {
   if (kind === 'plan') return viewPlan();
   if (kind === 'pantry') return viewPantry();
   if (kind === 'c' && id) return viewCollection(id);
+  if (kind === 'cooked') return viewCooked();
   return viewList();
 }
 

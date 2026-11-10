@@ -45,6 +45,16 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Cook log, ratings and private notes (v0.17)
+
+Every recipe page has a **Your notes** section: a 1 to 5 star rating, an **I made this** button that
+keeps count and remembers the last date, and a box for private notes ("use less salt"). Only you see
+them. Recipes you have made are listed, most recent first, under **Cooked** on the Starred page. Signed
+in, all of it is saved with the account.
+
+Titles typed in capitals in old collections ("PEPPERY RICE") are shown in title case on the site
+(`recipelib/tidy.py`); the library file itself is not changed.
+
 ## The full library, on demand (v0.16)
 
 The phone app ships with a built-in set of recipes (`web/data/recipes.json`) that works offline from the

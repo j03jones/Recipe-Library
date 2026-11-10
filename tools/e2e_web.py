@@ -359,6 +359,26 @@ async def run():
         await p4.wait_for_selector("ul.rows li")
         check("the collection lists it", "Soups I like" in await p4.inner_text("h1") and await p4.locator("ul.rows li").count() == 1)
 
+        # cook log: rate it, mark it made, keep a private note
+        await p4.goto(URL + "#/")
+        await search(p4, "Hearty Russian Beet Soup")
+        await p4.click(".rc >> nth=0")
+        await p4.wait_for_selector(".mylog")
+        await p4.click(".ratestar >> nth=3")
+        check("a recipe can be rated", "4 of 5" in await p4.inner_text(".ratingrow"))
+        await p4.click(".mylog button:has-text('I made this')")
+        check("and marked as made", "Made once, last today" in await p4.inner_text(".mylog"))
+        await p4.fill(".mylog textarea", "Use less salt next time")
+        await p4.reload()
+        await p4.wait_for_selector(".mylog")
+        check("rating, cook log and note survive a reload",
+              "4 of 5" in await p4.inner_text(".ratingrow") and "Made once" in await p4.inner_text(".mylog")
+              and await p4.input_value(".mylog textarea") == "Use less salt next time")
+        await p4.goto(URL + "#/starred")
+        await p4.click(".collrow .chip:has-text('Cooked')")
+        await p4.wait_for_selector("ul.rows li")
+        check("the Cooked page lists it with its rating", "★★★★" in await p4.inner_text("ul.rows") and "Made once" in await p4.inner_text("ul.rows"))
+
         if MORE["count"]:
             index = json.loads((ROOT / "web" / "data" / "more" / MORE["v"] / "index.json").read_text(encoding="utf-8"))["recipes"]
             first = next(r for r in index if len(r[3]) >= 6)

@@ -34,6 +34,7 @@ from recipelib import categories, duplicates  # noqa: E402
 from recipelib.db import RecipeDB, content_hash  # noqa: E402
 from recipelib.models import Ingredient, Recipe  # noqa: E402
 from recipelib.shopping import item_name  # noqa: E402
+from recipelib.tidy import tidy_title  # noqa: E402
 from tools.export_web import recipe_to_row  # noqa: E402
 
 
@@ -110,7 +111,7 @@ def main(argv=None) -> int:
     core, extra, dropped, replace, by_id = split(core_doc["recipes"], library, level=args.duplicates)
     print(f"{len(dropped):,} library recipes are already built in; {len(extra):,} extra recipes to export")
 
-    if args.refresh_core and replace:
+    if args.refresh_core:
         rows = []
         for n, row in enumerate(core_doc["recipes"]):
             new = replace.get(-(n + 1))
@@ -119,7 +120,10 @@ def main(argv=None) -> int:
                 fresh[0] = row[0]                 # keep the id phones already know
                 fresh[2] = row[2] or fresh[2]     # and the categories it is filed under
                 row = fresh
+            row[1] = tidy_title(row[1])          # "PEPPERY RICE" -> "Peppery Rice"
             rows.append(row)
+        rows.sort(key=lambda r: r[1].lower())
+        core_doc["recipes"] = rows
         core_path.write_text(json.dumps({"v": core_doc.get("v", 1), "recipes": rows}, ensure_ascii=False,
                                         separators=(",", ":")), encoding="utf-8")
         print(f"Refreshed the text of {len(replace):,} built-in recipes ({core_path.stat().st_size / 1e6:.1f} MB)")
@@ -137,7 +141,9 @@ def main(argv=None) -> int:
         rows.append(row)
     rows.sort(key=lambda row: row[1].lower())
 
-    version = hashlib.sha1("".join(row[0] for row in rows).encode()).hexdigest()[:8]
+    # the version names the folder, and phones keep a folder's files for good, so it must change
+    # whenever anything in them does (a tidied title as much as a new recipe)
+    version = hashlib.sha1(json.dumps(rows, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:8]
     more_dir = data_dir / "more"
     if more_dir.exists():
         shutil.rmtree(more_dir)
