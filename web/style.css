@@ -623,3 +623,22 @@ details.notcounted ul { margin: .2rem 0; padding-left: 1.2rem; }
 .pricebook { display: grid; gap: .8rem; margin-top: 1rem; }
 .pricebook .costlines { margin: 0; }
 @media print { details.nutri, details.costcard { display: none !important; } }
+
+/* import and export, and the printable book */
+.transfer textarea { font: inherit; padding: .6rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card, #fff); color: inherit; resize: vertical; }
+.foundlist label { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
+.printbook { display: none; }
+@media print {
+  body.bookprinting > *:not(.printbook) { display: none !important; }
+  body.bookprinting .printbook { display: block; font-family: Georgia, serif; color: #000; font-size: 11pt; line-height: 1.4; }
+  .printbook .bookcover { text-align: center; padding-top: 30vh; break-after: page; }
+  .printbook .bookcover h1 { font-size: 36pt; margin: 0; }
+  .printbook .bookindex { break-after: page; }
+  .printbook .bookindex ol { columns: 2; }
+  .printbook .bookrecipe { break-after: page; }
+  .printbook .bookrecipe h2 { font-size: 20pt; margin: 0 0 .2rem; }
+  .printbook .bookmeta { color: #444; margin: 0 0 .8rem; font-size: 10pt; }
+  .printbook ul { list-style: none; padding: 0; margin: 0 0 1rem; }
+  .printbook .bookgroup { font-weight: 700; margin-top: .5rem; }
+  .printbook ol li { margin-bottom: .4rem; }
+}

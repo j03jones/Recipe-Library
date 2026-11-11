@@ -45,6 +45,18 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Import and export formats (v0.20)
+
+Settings → *Import and export recipes* (also linked from the Add page). Everything runs in the browser; nothing is uploaded.
+
+- **In:** Paprika (`.paprikarecipes`), Mealie (JSON or its zip export), Tandoor (JSON or its nested zip export),
+  Cooklang (`.cook`), any saved web page or JSON that carries schema.org recipe data, and plain pasted text.
+  You see what was found and untick anything before it is added. Imports go to your account when you are signed in,
+  otherwise to this device. Credit (author and link) is kept when the file has it.
+- **Out:** a Paprika file, schema.org JSON (opens in Mealie, Tandoor and most tools), Markdown, and a printable book
+  (contents page plus one recipe per page; choose *Save as PDF* in the print dialog). Choose your own recipes or your stars.
+- The code is `web/js/transfer.js` (no screens, tested in Node by `tests/test_transfer.py`) and `web/js/transferui.js`.
+
 ## Nutrition and food cost (v0.19)
 
 Every recipe page has two cards under the method.

@@ -9,6 +9,7 @@ import * as collections from './collections.js';
 import * as cooklog from './cooklog.js';
 import * as prices from './prices.js';
 import { priceBook, recipeCosting } from './costui.js';
+import { transferPage } from './transferui.js';
 import { fromIndexRow, fromRecord, fromRow, hasSource, isAdapted, toRecord } from './model.js';
 import { COLLECTIONS } from './linkdata.js';
 import { MAX_OVERLAP, VEGAN_GROUP, recipeFromSchema, wordingOverlap } from './webimport.js';
@@ -1245,7 +1246,8 @@ function viewEdit(id, template) {
 
   fill($app, 
     pageHead(existing ? 'Edit recipe' : adapting ? 'Make your own version' : template?.imported ? 'Check and save' : template ? 'Save as new recipe' : 'New recipe'),
-    !existing && !template && h('p', null, h('a', { class: 'linkbtn', href: '#/import' }, '⤓ Import a recipe from a web page')),
+    !existing && !template && h('p', { class: 'row grow' }, h('a', { class: 'linkbtn', href: '#/import' }, '⤓ Import a recipe from a web page'),
+      h('a', { class: 'linkbtn', href: '#/transfer' }, '⤓ Import files (Paprika, Mealie…)')),
     adapting && h('p', { class: 'muted' }, 'Keep or change the ingredients, then write the method in your own words. Your version can be shared with the Community and will say “Adapted from” with a link to the original.'),
     h('label', { class: 'field' }, h('span', null, 'Title'), title),
     h('label', { class: 'field' }, h('span', null, 'Categories'), cats),
@@ -1609,6 +1611,41 @@ function collectionsDialog(r, onDone) {
 }
 
 // Every ingredient price you have saved (see costui.js).
+/** Saves recipes read from a file: to the account when signed in, else on this device. Resolves to how many were saved. */
+async function addImported(recs) {
+  const online = !!lib.me && cloud.isSignedIn();
+  let n = 0;
+  try {
+    for (const r of recs) {
+      const rec = toRecord({ ...r, id: `u-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, source: 'mine' });
+      if (online) await cloud.createRecipe(rec); else await saveRecord(rec);
+      n++;
+    }
+  } catch (err) {
+    if (n) { if (online) await refreshCloud(); err.message = `${err.message} (${n} added before that)`; }
+    throw err;
+  }
+  if (online) await refreshCloud();
+  return n;
+}
+
+function viewTransfer() {
+  setView('transfer', 'settings');
+  fill($app,
+    band('page',
+      h('div', { class: 'topbar' },
+        h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Back', onclick: () => goBack('#/settings') }, icon('back')),
+        h('span', { class: 'sp' })),
+      h('h1', null, 'Import and export'),
+      h('p', { class: 'sub' }, 'Paprika, Mealie, Tandoor, Cooklang and more')),
+    transferPage({
+      h, fill, toast, add: addImported, signedIn: !!lib.me && cloud.isSignedIn(),
+      mine: () => lib.all.filter((r) => SOURCE_GROUP[r.source] === 'mine'),
+      starred: () => lib.all.filter((r) => isStarred(r.id)),
+    }));
+  window.scrollTo(0, 0);
+}
+
 function viewPrices() {
   setView('prices', 'settings');
   fill($app,
@@ -1862,6 +1899,7 @@ async function viewSettings() {
         h('button', { class: 'primary', onclick: exportBackup }, 'Export backup'),
         h('button', { onclick: () => fileIn.click() }, 'Import backup'),
         counts.removed > 0 && h('button', { onclick: restoreRemoved }, 'Restore removed')),
+      h('p', null, h('a', { class: 'linkbtn', href: '#/transfer' }, 'Import and export recipes (Paprika, Mealie, Tandoor, PDF book)')),
       fileIn),
     h('h2', null, 'Install on your phone'),
     h('section', { class: 'card' },
@@ -1915,6 +1953,7 @@ function route() {
   if (kind === 'c' && id) return viewCollection(id);
   if (kind === 'cooked') return viewCooked();
   if (kind === 'prices') return viewPrices();
+  if (kind === 'transfer') return viewTransfer();
   return viewList();
 }
 
