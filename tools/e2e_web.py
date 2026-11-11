@@ -511,6 +511,7 @@ async def run():
         await page.set_input_files(".transfer input[type=file]", str(cook))
         await page.wait_for_selector(".foundlist li:has-text('pan toast')")
         check("a Cooklang file is read", "Cooklang" in await page.inner_text(".transfer [role=status]"))
+        await page.locator("button:has-text('Add 1 recipe')").evaluate("e => e.scrollIntoView({ block: 'center' })")   # clear of the bottom tab bar
         await page.click("button:has-text('Add 1 recipe')")
         await page.wait_for_selector(".transfer [role=status]:has-text('Added 1 recipe')")
         await page.goto(URL + "#/")
@@ -520,6 +521,7 @@ async def run():
         await page.goto(URL + "#/transfer")
         await page.wait_for_selector(".transfer")
         async with page.expect_download() as dl:
+            await page.locator("button:has-text('Paprika file')").evaluate("e => e.scrollIntoView({ block: 'center' })")
             await page.click("button:has-text('Paprika file')")
         pk_path = Path(await (await dl.value).path())
         check("the Paprika export is a zip", pk_path.read_bytes()[:2] == b"PK")
@@ -528,6 +530,7 @@ async def run():
         check("the Paprika export reads back in", await page.locator(".foundlist li:has-text('pan toast')").count() == 1
               and "Paprika" in await page.inner_text(".transfer [role=status]"))
         async with page.expect_download() as dl:
+            await page.locator("button:has-text('Markdown')").evaluate("e => e.scrollIntoView({ block: 'center' })")
             await page.click("button:has-text('Markdown')")
         check("Markdown export has the ingredients", "## Ingredients" in Path(await (await dl.value).path()).read_text())
         await page.goto(URL + "#/")
