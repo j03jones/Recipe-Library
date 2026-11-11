@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from .models import Ingredient, Recipe
+from .tidy import tidy_recipe
 from .units import canonical_unit, format_plain, parse_quantity
 
 _START_RE = re.compile(r"^(?:m{5}|-{5,}).*meal[\s-]?master", re.IGNORECASE)
@@ -505,6 +506,7 @@ def _parse_block(lines: List[str]) -> Tuple[Optional[Recipe], List[str]]:
     )
     if not ingredients:
         warnings.append(f"'{title}': no ingredients found.")
+    tidy_recipe(recipe)   # unmarked wrapped lines, section labels and stray steps in the ingredient list
     return recipe, warnings
 
 

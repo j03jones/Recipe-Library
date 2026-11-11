@@ -49,6 +49,9 @@ def main(argv=None) -> int:
     p.add_argument("--remove", choices=list(duplicates.LEVELS),
                    help="merge groups of this confidence or better into their best copy")
     p.add_argument("--yes", action="store_true", help="don't ask before removing")
+    p = sub.add_parser("tidy", help="clean up ingredient lists: rejoin wrapped lines, turn labels into sections")
+    p.add_argument("--preview", action="store_true", help="show what would change, change nothing")
+    p.add_argument("--limit", type=int, default=5, help="recipes to show with --preview (default 5)")
     p = sub.add_parser("pantry", help="what can I make? recipes from the ingredients you have")
     p.add_argument("have", nargs="+", help='what you have, e.g. chicken rice "soy sauce"')
     p.add_argument("--missing", type=int, default=2, help="allow up to this many missing ingredients (default 2)")
@@ -159,6 +162,27 @@ def main(argv=None) -> int:
             backup = db.backup()
             removed = sum(duplicates.merge_group(db, g.keep_id, g.ids[1:]) for g in chosen)
             print(f"Removed {removed:,} duplicates." + (f" Backup: {backup}" if backup else ""))
+        elif args.cmd == "tidy":
+            from .formatting import format_ingredient
+            from .tidy import tidy_recipe
+            ids = [x.id for x in db.list_recipes()]
+            changed, shown = [], 0
+            for rid in ids:
+                recipe = db.get_recipe(rid)
+                before = [format_ingredient(i) for i in recipe.ingredients]
+                if tidy_recipe(recipe):
+                    changed.append(recipe)
+                    if args.preview and shown < args.limit:
+                        shown += 1
+                        print(f"\n{recipe.title}\n  before: " + " | ".join(before)
+                              + "\n  after:  " + " | ".join(format_ingredient(i) for i in recipe.ingredients))
+            if args.preview:
+                print(f"\n{len(changed):,} of {len(ids):,} recipes would be tidied. Nothing was changed.")
+            else:
+                backup = db.backup()
+                for recipe in changed:
+                    db.update_recipe(recipe)
+                print(f"Tidied {len(changed):,} of {len(ids):,} recipes." + (f" Backup: {backup}" if backup else ""))
         elif args.cmd == "pantry":
             from . import pantry
             recipes = [db.get_recipe(x.id) for x in db.list_recipes()]

@@ -8,6 +8,7 @@ Writes web/data/recipes.json (override with --out). Duplicates (same content) ar
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 from pathlib import Path
@@ -17,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from recipelib import categories  # noqa: E402
 from recipelib.db import RecipeDB, content_hash  # noqa: E402
 from recipelib.mealmaster import parse_file  # noqa: E402
-from recipelib.tidy import tidy_title  # noqa: E402
+from recipelib.tidy import tidy_recipe, tidy_title  # noqa: E402
 
 
 def recipe_to_row(r) -> list:
@@ -26,12 +27,15 @@ def recipe_to_row(r) -> list:
     right recipe even when the library is re-exported. Titles typed in capitals are shown in title
     case (the id still comes from the original). ingredient = [qty ("9/4" or ""),
     raw_qty, unit, item, group]."""
+    rid = content_hash(r)[:10]     # from the recipe as stored, so tidying never changes an id
+    r = copy.deepcopy(r)
+    tidy_recipe(r)
     ings = [
         [str(i.quantity) if i.quantity is not None else "", i.raw_quantity, i.unit, i.item, i.group]
         for i in r.ingredients
     ]
     yq = str(r.yield_quantity) if r.yield_quantity is not None else ""
-    return [content_hash(r)[:10], tidy_title(r.title), categories.in_display_order(r.categories), yq, r.yield_unit, r.yield_raw, ings, r.directions, list(r.tags)]
+    return [rid, tidy_title(r.title), categories.in_display_order(r.categories), yq, r.yield_unit, r.yield_raw, ings, r.directions, list(r.tags)]
 
 
 def main() -> int:

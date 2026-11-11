@@ -120,6 +120,10 @@ def main(argv=None) -> int:
                 fresh[0] = row[0]                 # keep the id phones already know
                 fresh[2] = row[2] or fresh[2]     # and the categories it is filed under
                 row = fresh
+            if new is None:                      # not replaced above: tidy the built-in text itself
+                tidied = recipe_to_row(recipe_from_row(row))
+                tidied[0], tidied[2] = row[0], row[2]
+                row = tidied
             row[1] = tidy_title(row[1])          # "PEPPERY RICE" -> "Peppery Rice"
             rows.append(row)
         rows.sort(key=lambda r: r[1].lower())
