@@ -512,6 +512,9 @@ async def run():
         await page.wait_for_selector(".foundlist li:has-text('pan toast')")
         check("a Cooklang file is read", "Cooklang" in await page.inner_text(".transfer [role=status]"))
         await page.locator("button:has-text('Add 1 recipe')").evaluate("e => e.scrollIntoView({ block: 'center' })")   # clear of the bottom tab bar
+        print("DEBUG", await page.evaluate("""() => { const b = [...document.querySelectorAll('button')].find((x) => x.textContent.startsWith('Add ')); const r = b.getBoundingClientRect();
+          const e = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return JSON.stringify({ btn: [r.x, r.y, r.width, r.height], vh: innerHeight, vw: innerWidth, sy: scrollY, doc: document.documentElement.scrollHeight,
+          hit: e && [e.tagName, e.className, e.parentElement && e.parentElement.className, e.outerHTML.slice(0, 200)], dlg: !!document.querySelector('dialog[open]') }); }"""), flush=True)
         await page.click("button:has-text('Add 1 recipe')")
         await page.wait_for_selector(".transfer [role=status]:has-text('Added 1 recipe')")
         await page.goto(URL + "#/")
