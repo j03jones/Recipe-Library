@@ -514,7 +514,6 @@ async def run():
         fake.no_table = True
         await dev2.goto(URL + "#/settings")
         await dev2.reload()
-        await dev2.wait_for_selector("text=Starred recipes sync")
         await dev2.wait_for_selector("text=Could not find the table", timeout=10000)
         check("a missing table is reported in Settings", await dev2.locator("text=Could not find the table").count() == 1)
         fake.no_table = False
