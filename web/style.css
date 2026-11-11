@@ -588,3 +588,38 @@ h3.aisle { margin: 1.2rem 0 .2rem; font-size: .8rem; letter-spacing: .12em; text
   .srccredit { background: none !important; padding: 0 !important; margin: 0 0 3mm !important; font-size: 10pt; }
   .printfoot { display: block; margin-top: 8mm; padding-top: 3mm; border-top: 1px solid #999; font: 9pt var(--slab); color: #555; text-align: center; }
 }
+
+/* ---------------------------------------------------------------------------------- nutrition and food cost */
+details.nutri, details.costcard { margin: 1.2rem 0 0; padding: 0; }
+details.nutri > summary, details.costcard > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .8rem; padding: .9rem 1rem; min-height: var(--tap); }
+details.nutri > summary::-webkit-details-marker, details.costcard > summary::-webkit-details-marker { display: none; }
+details.nutri > summary strong, details.costcard > summary strong { font-family: var(--slab); font-size: 1.2rem; color: var(--head); }
+details.nutri > summary::after, details.costcard > summary::after { content: "▾"; margin-left: auto; color: var(--muted); transition: transform .2s; }
+details.nutri[open] > summary::after, details.costcard[open] > summary::after { transform: rotate(180deg); }
+details.nutri > :not(summary), details.costcard > :not(summary) { margin-left: 1rem; margin-right: 1rem; }
+details.nutri > :last-child, details.costcard > :last-child { margin-bottom: 1rem; }
+.nstats { display: grid; grid-template-columns: repeat(5, 1fr); gap: .4rem; text-align: center; margin-top: .2rem; }
+.nstats div { background: var(--stone); border-radius: 8px; padding: .55rem .2rem; }
+.nstats strong { display: block; font-family: var(--slab); font-size: 1.25rem; color: var(--head); line-height: 1.1; }
+.nstats strong em { font-style: normal; font-family: var(--sans); font-size: .7rem; font-weight: 500; color: var(--muted); margin-left: .1rem; }
+.nstats span { font-size: .72rem; color: var(--muted); }
+.cl-what strong { font-family: var(--sans); font-weight: 600; font-size: .98rem; }
+@media (max-width: 380px) { .nstats { grid-template-columns: repeat(3, 1fr); } }
+details.notcounted ul { margin: .2rem 0; padding-left: 1.2rem; }
+.costlines { list-style: none; margin: .2rem 1rem 0; padding: 0; }
+.costline { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .3rem .8rem; padding: .6rem 0; border-top: 1px solid var(--line); }
+.costline:first-child { border-top: 0; }
+.cl-what { flex: 1 1 12rem; min-width: 0; }
+.cl-price { display: inline-flex; align-items: center; gap: .35rem; }
+.pin { width: 5.2rem; min-height: 2.5rem; text-align: right; font: inherit; border: 1.5px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); padding: 0 .5rem; }
+.cl-price select { min-height: 2.5rem; }
+.cl-cost { min-width: 3.6rem; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cl-cost.warn { color: var(--danger); font-weight: 500; font-size: .85rem; }
+.costtotals { margin-top: .8rem; padding-top: .6rem; border-top: 2px solid var(--head); }
+.ctline { display: flex; align-items: center; justify-content: space-between; gap: .8rem; margin: .35rem 0; }
+.ctline strong { font-family: var(--slab); font-size: 1.15rem; color: var(--head); }
+.pin-wrap { display: inline-flex; align-items: center; gap: .3rem; }
+.pricing { margin-top: .5rem; padding-top: .4rem; border-top: 1px dashed var(--line); }
+.pricebook { display: grid; gap: .8rem; margin-top: 1rem; }
+.pricebook .costlines { margin: 0; }
+@media print { details.nutri, details.costcard { display: none !important; } }
