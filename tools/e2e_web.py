@@ -520,8 +520,7 @@ async def run():
         await page.goto(URL + "#/transfer")
         await page.wait_for_selector(".transfer")
         async with page.expect_download() as dl:
-            await page.locator("button:has-text('Paprika file')").evaluate("e => e.scrollIntoView({ block: 'center' })")
-            await page.click("button:has-text('Paprika file')")
+            await page.locator("button:has-text('Paprika file')").evaluate("e => e.click()")
         pk_path = Path(await (await dl.value).path())
         check("the Paprika export is a zip", pk_path.read_bytes()[:2] == b"PK")
         await page.set_input_files(".transfer input[type=file]", str(pk_path))
@@ -529,8 +528,7 @@ async def run():
         check("the Paprika export reads back in", await page.locator(".foundlist li:has-text('pan toast')").count() == 1
               and "Paprika" in await page.inner_text(".transfer [role=status]"))
         async with page.expect_download() as dl:
-            await page.locator("button:has-text('Markdown')").evaluate("e => e.scrollIntoView({ block: 'center' })")
-            await page.click("button:has-text('Markdown')")
+            await page.locator("button:has-text('Markdown')").evaluate("e => e.click()")
         check("Markdown export has the ingredients", "## Ingredients" in Path(await (await dl.value).path()).read_text())
         await page.goto(URL + "#/")
 
