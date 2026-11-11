@@ -1,6 +1,6 @@
 [project]
 name = "recipe-library"
-version = "0.17.0"
+version = "0.18.0"
 description = "Recipe library with MealMaster import and scaling"
 requires-python = ">=3.9"
 license = { text = "PolyForm-Noncommercial-1.0.0" }

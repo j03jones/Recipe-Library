@@ -17,6 +17,8 @@ import { restoreTimers, timerChips } from './timers.js';
 import * as cloud from './cloud.js';
 import { accountCard, viewAdmin, viewJoin } from './account.js';
 import * as photos from './photos.js';
+import { linkFor, packRecipe, unpackRecipe } from './sharelink.js';
+import { qrSvg } from './qr.js';
 
 const $app = document.getElementById('app');
 const $toast = document.getElementById('toast');
@@ -779,8 +781,9 @@ function viewLinkCard(r) {
   window.scrollTo(0, 0);
 }
 
-function viewRecipe(id) {
-  const r = lib.byId.get(id);
+function viewRecipe(id, preset = null) {
+  const shared = !!preset;   // a recipe opened from a share link: not in the library, so nothing here that needs an id
+  const r = preset || lib.byId.get(id);
   if (!r) return viewMissing();
   if (r.stub) return viewFetching(id, () => viewRecipe(id));
   if (r.kind === 'link') return viewLinkCard(r);
@@ -955,10 +958,9 @@ function viewRecipe(id) {
     const text = recipeToText(shown().recipe);
     toast(await copyText(text) ? 'Recipe copied' : 'Could not copy on this browser');
   };
-  const share = () => navigator.share({ title: r.title, text: recipeToText(shown().recipe) }).catch(() => {});
   const saveCopy = () => {
     const s = scaleRecipe(r, factor, smart).recipe;
-    s.title = factor.eq(new Frac(1n)) ? `${r.title} (copy)` : `${r.title} (scaled)`;
+    s.title = shared ? r.title : factor.eq(new Frac(1n)) ? `${r.title} (copy)` : `${r.title} (scaled)`;
     viewEdit(null, s);
   };
 
@@ -1032,17 +1034,18 @@ function viewRecipe(id) {
   };
 
   const [primary, ...rest] = r.categories;
+  const sharedFrom = shared ? preset.sharedFrom : '';
   fill($app,
     band('rband',
       h('div', { class: 'topbar' },
         h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Back', onclick: () => goBack('#/') }, icon('back')),
         h('span', { class: 'sp' }),
         awakeBtn,
-        starButton(r.id),
-        canEdit(r) && h('a', { class: 'icon-btn', href: `#/edit/${r.id}`, 'aria-label': 'Edit recipe', title: 'Edit recipe' }, icon('edit'))),
+        !shared && starButton(r.id),
+        !shared && canEdit(r) && h('a', { class: 'icon-btn', href: `#/edit/${r.id}`, 'aria-label': 'Edit recipe', title: 'Edit recipe' }, icon('edit'))),
       h('div', { class: 'rhead' }, tile(r.categories, true), h('h1', null, r.title)),
       r.categories.length > 0 && h('div', { class: 'labels' }, r.categories.map((c) => h('span', { class: 'label' }, c)))),
-    photoBlock(r),
+    shared ? sharedNote(sharedFrom) : photoBlock(r),
     credit(r),
     sourceCredit(r),
     h('div', { class: 'cols' },
@@ -1060,20 +1063,77 @@ function viewRecipe(id) {
             : h('p', { class: 'note', style: 'margin:.5rem .3rem .1rem' }, 'No yield is listed, so scale with the multiplier.')),
         ingBox),
       dirBox),
-    logBox,
+    !shared && logBox,
     h('section', { class: 'tools stack' },
       h('label', { class: 'check' }, smartIn, 'Smart units (8 Tbsp becomes ½ cup)'),
       h('label', { class: 'unitpick' }, h('span', null, 'Units'), unitsIn),
-      h('div', { class: 'row grow' }, planBtn, collBtn, r.ings.length > 0 && shopBtn, r.ings.length > 0 && shopLink),
+      shared
+        ? h('div', { class: 'row grow' }, h('button', { class: 'primary', onclick: saveCopy }, 'Save to my recipes'))
+        : h('div', { class: 'row grow' }, planBtn, collBtn, r.ings.length > 0 && shopBtn, r.ings.length > 0 && shopLink),
       h('div', { class: 'row grow' },
         h('button', { onclick: copy }, 'Copy'),
-        navigator.share && h('button', { onclick: share }, 'Share'),
-        h('button', { onclick: saveCopy }, 'Save scaled copy'),
-        h('button', { onclick: () => window.print() }, 'Print')),
-      sharing(r),
-      r.tags && r.tags.length > 0 && h('p', { class: 'muted small' }, 'Original labels: ', r.tags.join(', '))));
+        !shared && h('button', { onclick: () => shareDialog(r) }, 'Share link'),
+        !shared && h('button', { onclick: saveCopy }, 'Save scaled copy'),
+        h('button', { onclick: () => window.print() }, 'Print card')),
+      !shared && sharing(r),
+      r.tags && r.tags.length > 0 && h('p', { class: 'muted small' }, 'Original labels: ', r.tags.join(', '))),
+    h('p', { class: 'printfoot' }, 'Jones Ridge Recipes'));
   paint();
   window.scrollTo(0, 0);
+}
+
+/** "Shared with you" strip on a recipe opened from a link. */
+function sharedNote(from) {
+  return h('p', { class: 'srccredit sharednote' }, h('span', null, from ? `Shared with you by ${from}` : 'Shared with you'),
+    h('a', { href: '#/' }, 'Open the recipe library'));
+}
+
+/** Send a recipe as a link (with a QR code for showing it in person). */
+async function shareDialog(r) {
+  const link0 = hasSource(r) && /^https?:\/\//i.test(r.src.url || '') ? r.src.url : '';
+  if (hasSource(r) && !link0) { toast('This recipe has no web address to share. Use Copy to send the text.', 4000); return; }
+  let link = link0;
+  if (!link) {
+    try { link = linkFor(await packRecipe(toRecord(r), lib.me?.displayName || '')); } catch { toast('Could not make a link for this recipe'); return; }
+  }
+  const msg = `${r.title}: ${link}`;
+  const box = h('div', { class: 'qr big' });
+  let qr = link.length <= 700;   // longer links make a code too dense for a phone camera
+  if (qr) { try { box.innerHTML = qrSvg(link, { label: `QR code for ${r.title}` }); } catch { qr = false; } }
+  const dlg = h('dialog', { class: 'qrdialog sharedialog' },
+    h('h2', null, link0 ? 'Share the original recipe' : 'Share this recipe'),
+    h('p', { class: 'muted small' }, link0
+      ? 'This recipe is from another website, so the link goes to the original and the author gets the visit.'
+      : `Anyone with the link can read this copy and save it to their own recipes. Later changes you make are not sent.${qr ? '' : ' This recipe is too long for a QR code, so send the link.'}`),
+    qr && box,
+    h('input', { class: 'full link', readonly: true, value: link, 'aria-label': 'Recipe link', onfocus: (e) => e.target.select() }),
+    h('div', { class: 'row' },
+      h('button', { class: 'primary', onclick: async () => toast(await copyText(link) ? 'Link copied' : 'Could not copy. Press and hold the link to copy it.', 3000) }, 'Copy link'),
+      navigator.share && h('button', { onclick: () => navigator.share({ title: r.title, text: msg }).catch(() => {}) }, 'Share…'),
+      h('a', { class: 'btnlink', href: `mailto:?subject=${encodeURIComponent(r.title)}&body=${encodeURIComponent(msg)}` }, 'Email'),
+      h('button', { onclick: () => dlg.close() }, 'Done')));
+  dlg.addEventListener('close', () => dlg.remove());
+  document.body.append(dlg);
+  dlg.showModal();
+}
+
+/** A recipe from a share link (#/s/…). */
+async function viewShared(payload) {
+  setView('recipe', 'list');
+  fill($app, pageHead('Opening the recipe…'));
+  let got;
+  try {
+    got = await unpackRecipe(payload);
+    const r = fromRecord(got.rec, 'link-share');
+    r.sharedFrom = got.from;
+    if (location.hash.replace(/^#\/?/, '').split('/')[1] !== payload) return;   // they moved on while it was unpacking
+    viewRecipe(r.id, r);
+  } catch (err) {
+    if (location.hash.replace(/^#\/?/, '').split('/')[1] !== payload) return;
+    fill($app, pageHead('That link did not work'),
+      h('p', null, /update it/.test(err.message) ? err.message : 'The recipe link looks damaged or cut short. Ask for it to be sent again, and make sure the whole link was copied.'),
+      h('a', { class: 'linkbtn', href: '#/' }, 'Open the recipe library'));
+  }
 }
 
 function viewEdit(id, template) {
@@ -1812,6 +1872,7 @@ function route() {
   const [kind, arg] = hash.split('/');
   const id = arg ? decodeURIComponent(arg) : null;
   if (kind === 'r' && id) return viewRecipe(id);
+  if (kind === 's' && id) return viewShared(id);
   if (kind === 'edit' && id) return viewEdit(id);
   if (kind === 'new') return viewEdit(null);
   if (kind === 'settings') return viewSettings();

@@ -666,6 +666,12 @@ async def run():
         check("recipe page shows the credit and a link to the original",
               "Recipe by Pat Example" in await admin.inner_text(".srccredit")
               and await admin.get_attribute(".srccredit a", "href") == "https://example.com/test-lentil-soup/")
+        await admin.click("button:has-text('Share link')")
+        await admin.wait_for_selector("dialog.sharedialog input.link")
+        check("an imported recipe shares the link to the original, not its text",
+              await admin.input_value("dialog.sharedialog input.link") == "https://example.com/test-lentil-soup/"
+              and "#/s/" not in await admin.input_value("dialog.sharedialog input.link"))
+        await admin.click("dialog.sharedialog button:has-text('Done')")
         check("imported recipe cannot be shared to Community",
               await admin.locator("button:has-text('Share with the Community')").count() == 0
               and await admin.locator("text=stays in your private recipes").count() == 1)

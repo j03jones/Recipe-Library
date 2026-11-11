@@ -569,3 +569,22 @@ h3.aisle { margin: 1.2rem 0 .2rem; font-size: .8rem; letter-spacing: .12em; text
 .mylog textarea { width: 100%; }
 .linklike { border: 0; background: none; padding: .2rem .3rem; text-decoration: underline; color: var(--muted); font-size: .85rem; }
 @media print { .mylog { display: none !important; } }
+
+/* ---------------------------------------------------------------------------------- share links and the printed card */
+.sharedialog { width: min(92vw, 440px); }
+.sharedialog .qr.big { width: min(60vw, 240px); }
+.sharedialog input.link { font-size: .85rem; margin: .4rem 0; }
+.sharednote a { margin-left: auto; }
+.printfoot { display: none; }
+@media print {
+  @page { margin: 16mm; }
+  .sharednote, .mylog, .cookbtn { display: none !important; }
+  h1 { font-size: 24pt !important; margin-bottom: 2mm; }
+  .band .labels { margin-top: 1mm; }
+  .band .rhead .tile { display: none !important; }
+  ul.ing { columns: 2; column-gap: 10mm; }
+  ul.ing li { break-inside: avoid; }
+  ol.steps li, .dir p { break-inside: avoid; }
+  .srccredit { background: none !important; padding: 0 !important; margin: 0 0 3mm !important; font-size: 10pt; }
+  .printfoot { display: block; margin-top: 8mm; padding-top: 3mm; border-top: 1px solid #999; font: 9pt var(--slab); color: #555; text-align: center; }
+}
