@@ -7,9 +7,11 @@ Needs Playwright with Chromium. Serves web/ itself on a free port. Expects the r
 """
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 import time
 from pathlib import Path
 
@@ -56,6 +58,15 @@ async def main():
 async def run():
     async with async_playwright() as p:
         b = await p.chromium.launch()
+        if os.environ.get("E2E_NOW"):
+            # run as if it were this date (YYYY-MM-DDTHH:MM): the plan and list depend on today's weekday
+            real_new_context = b.new_context
+
+            async def new_context(*args, **kwargs):
+                c = await real_new_context(*args, **kwargs)
+                await c.clock.install(time=datetime.fromisoformat(os.environ["E2E_NOW"]))
+                return c
+            b.new_context = new_context
         ctx = await b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2,
                                   is_mobile=True, has_touch=True, accept_downloads=True)
         page = await ctx.new_page()
@@ -433,6 +444,59 @@ async def run():
         await pgS.wait_for_selector(".linkbtn")
         check("a damaged link says so and offers the library", "did not work" in await pgS.inner_text("#app"))
         await ctxS.close()
+
+        # nutrition and food cost on a recipe, and the price book
+        await page.goto(URL + "#/")
+        await page.wait_for_selector(".rc")
+        await search(page, "European Sour Cream Apple Pie")
+        await page.click(".rc >> nth=0")
+        await page.wait_for_selector("ul.ing li")
+        nsum = await page.inner_text("details.nutri > summary")
+        check("a recipe estimates calories per serving", "calories per serving" in nsum, nsum)
+        await page.click("details.nutri > summary")
+        check("nutrition shows five figures", await page.locator(".nstats > div").count() == 5)
+        check("nutrition says how much it could count", "ingredients" in await page.inner_text("details.nutri") and "not a label" in await page.inner_text("details.nutri"))
+        check("food cost starts by asking for prices", "Add prices" in await page.inner_text("details.costcard > summary"))
+        await page.click("details.costcard > summary")
+        await page.fill("input[aria-label='Price of butter']", "4")
+        row = page.locator(".costline:has(input[aria-label='Price of butter']) .cl-cost")
+        await page.wait_for_function("document.querySelector(\"input[aria-label='Price of butter']\").closest('.costline').querySelector('.cl-cost').textContent.startsWith('$')")
+        check("2/3 cup of butter at $4 a pound costs $1.33", await row.inner_text() == "$1.33", await row.inner_text())
+        check("the summary shows cost per serving", "per serving" in await page.inner_text("details.costcard > summary"))
+        await page.fill("input[aria-label='Menu price per serving']", "5")
+        check("food cost percent follows the menu price", "4.4%" in await page.inner_text(".costtotals"), await page.inner_text(".costtotals"))
+        per_before = await page.locator(".costtotals .ctline:has-text('Per serving') strong").first.inner_text()
+        await page.click("button:has-text('2×')")
+        await page.wait_for_function("document.querySelector('.costtotals').textContent.includes('$2.6')")
+        check("scaling doubles the total but not the cost per serving",
+              await page.locator(".costtotals .ctline:has-text('Per serving') strong").first.inner_text() == per_before)
+        await page.reload()
+        await page.wait_for_selector("ul.ing li")
+        await page.click("details.costcard > summary")
+        check("prices are remembered", await page.input_value("input[aria-label='Price of butter']") == "4")
+        check("and so is the menu price", await page.input_value("input[aria-label='Menu price per serving']") == "5")
+        await page.goto(URL + "#/settings")
+        await page.wait_for_selector("a:has-text('Open the price book')")
+        check("Settings links to the price book with its count", "1" in await page.inner_text("section:has(a:has-text('Open the price book'))"))
+        await page.click("a:has-text('Open the price book')")
+        await page.wait_for_selector(".pricebook .costline")
+        check("the price book lists the price", await page.locator(".pricebook .costline:has-text('butter')").count() == 1)
+        async with page.expect_download() as dl:
+            await page.click("button:has-text('Export CSV')")
+        csv_text = Path(await (await dl.value).path()).read_text()
+        check("the price book exports a CSV", "butter,4,lb" in csv_text, csv_text)
+        csv_in = Path(tempfile.mkdtemp()) / "prices.csv"
+        csv_in.write_text("food,price,per\nolive oil,12,gallon\nflour,0.8,lb\nbad row\n")
+        await page.set_input_files(".pricebook input[type=file]", str(csv_in))
+        await page.wait_for_selector(".pricebook [role=status]:has-text('Added or updated 2')")
+        check("a supplier list can be imported, and unreadable rows are reported",
+              "1 row could not be read" in await page.inner_text(".pricebook [role=status]")
+              and await page.locator(".pricebook .costline:has-text('olive oil')").count() == 1)
+        await page.fill(".pricebook input[type=search]", "flour")
+        check("the price book can be searched", await page.locator(".pricebook .costline").count() == 1)
+        await page.click(".pricebook .costline .icon-btn")
+        check("and a price can be removed", await page.locator(".pricebook .costline:has-text('flour')").count() == 0)
+        await page.goto(URL + "#/")
 
         # dark mode renders
         ctx3 = await b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, color_scheme="dark")

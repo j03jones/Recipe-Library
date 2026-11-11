@@ -45,6 +45,30 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Nutrition and food cost (v0.19)
+
+Every recipe page has two cards under the method.
+
+**Nutrition.** Calories, fat, carbs, protein and sodium per serving (or for the whole recipe when no yield is
+listed). Each ingredient line is matched to a table of about 280 common foods in `web/js/nutridata.js`
+(per 100 g, with how much a cup or one piece weighs), turned into grams, and added up. The card says how
+many ingredients it could count, and lists the ones it could not ("1 can", "to taste", a food not in the table)
+instead of guessing. These are typical values, not label values. About 89% of the ingredient lines in the
+built-in library are recognised and about 79% can be weighed.
+
+**Food cost.** Type what you pay for an ingredient (by the pound, ounce, kilo, gram, gallon, quart, liter,
+cup, each or dozen) right on the recipe. The price is remembered for that food in every recipe: set "butter"
+once. You get the recipe total and the cost per serving at the scale on screen, then:
+
+- **Target food cost %** (30 by default) gives the menu price that would hit it, rounded up to a quarter.
+- **My menu price** (kept per recipe) shows the food cost % at that price and what is left per serving.
+
+**Price book.** Settings > Food cost > Open the price book lists every saved price to edit or remove, with
+**Export CSV** and **Import CSV** (`food, price, per`) for a supplier price list or a spreadsheet.
+
+Prices, menu prices and the target are private to you, kept on the device and, signed in, saved with the account
+alongside the meal plan (no database change needed). Shared recipe links do not carry any of it.
+
 ## Share by link and printable cards (v0.18)
 
 On a recipe page, **Share link** makes a link that carries the recipe itself (compressed, after the `#`,
