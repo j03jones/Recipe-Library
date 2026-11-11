@@ -7,6 +7,8 @@ import * as planner from './planner.js';
 import * as pantry from './pantry.js';
 import * as collections from './collections.js';
 import * as cooklog from './cooklog.js';
+import * as prices from './prices.js';
+import { priceBook, recipeCosting } from './costui.js';
 import { fromIndexRow, fromRecord, fromRow, hasSource, isAdapted, toRecord } from './model.js';
 import { COLLECTIONS } from './linkdata.js';
 import { MAX_OVERLAP, VEGAN_GROUP, recipeFromSchema, wordingOverlap } from './webimport.js';
@@ -272,7 +274,7 @@ async function pushPlanner() {
   const sync = readPlanSync();
   const at = sync.at || Date.now();
   try {
-    await cloud.savePlanner({ at, plan: planner.load(), shop: shop.load(), pantry: pantry.load(), collections: collections.load(), log: cooklog.load() });
+    await cloud.savePlanner({ at, plan: planner.load(), shop: shop.load(), pantry: pantry.load(), collections: collections.load(), log: cooklog.load(), prices: prices.load() });
     const now = readPlanSync();
     if (now.at === at || !now.at) writePlanSync({ uid: lib.me.id, at, dirty: false });   // unless it changed again meanwhile
     lib.planSyncError = '';
@@ -289,14 +291,15 @@ shop.onChange(plannerChanged);
 pantry.onChange(plannerChanged);
 collections.onChange(plannerChanged);
 cooklog.onChange(plannerChanged);
+prices.onChange(plannerChanged);
 async function syncPlanner() {
   try {
     const sync = readPlanSync();
     const remote = await cloud.loadPlanner();
     const theirs = remote && typeof remote === 'object' && remote.at ? remote : null;
-    const mine = { plan: planner.load(), shop: shop.load(), pantry: pantry.load(), collections: collections.load(), log: cooklog.load() };
+    const mine = { plan: planner.load(), shop: shop.load(), pantry: pantry.load(), collections: collections.load(), log: cooklog.load(), prices: prices.load() };
     const haveLocal = Object.keys(mine.plan.days).length > 0 || mine.shop.items.length > 0 || mine.shop.extras.length > 0
-      || mine.pantry.have.length > 0 || mine.collections.length > 0 || Object.keys(mine.log).length > 0;
+      || mine.pantry.have.length > 0 || mine.collections.length > 0 || Object.keys(mine.log).length > 0 || !prices.isEmpty(mine.prices);
     if (sync.uid !== lib.me.id) {
       // first time this device meets this account: keep both sides
       if (theirs) {
@@ -309,6 +312,7 @@ async function syncPlanner() {
         pantry.replace(pantry.merge(theirs.pantry, mine.pantry));
         collections.replace(collections.merge(theirs.collections, mine.collections));
         cooklog.replace(cooklog.merge(theirs.log, mine.log));
+        if ('prices' in theirs) prices.replace(prices.merge(theirs.prices, mine.prices)); else prices.replace(mine.prices);
       }
       writePlanSync({ uid: lib.me.id, at: haveLocal || !theirs ? Date.now() : theirs.at, dirty: haveLocal });
       if (haveLocal) await pushPlanner();
@@ -319,8 +323,9 @@ async function syncPlanner() {
       if ('pantry' in theirs) pantry.replace(theirs.pantry);
       if ('collections' in theirs) collections.replace(theirs.collections);
       if ('log' in theirs) cooklog.replace(theirs.log);
+      if ('prices' in theirs) prices.replace(theirs.prices);
       writePlanSync({ uid: lib.me.id, at: theirs.at, dirty: false });
-      if (['plan', 'shop', 'pantry', 'collection', 'cooked'].includes(document.body.dataset.view)) route();
+      if (['plan', 'shop', 'pantry', 'collection', 'cooked', 'prices'].includes(document.body.dataset.view)) route();
     }
     if (!readPlanSync().dirty) lib.planSyncError = '';
   } catch (err) { lib.planSyncError = planSyncMessage(err); }
@@ -813,6 +818,7 @@ function viewRecipe(id, preset = null) {
   };
   const ingBox = h('div');
   const dirBox = h('div');
+  const cc = recipeCosting({ h, fill, scaled: () => shown().recipe, recipeId: shared ? null : r.id });
   const yieldLabel = r.yu || (r.yq ? '' : 'servings');
 
   const presets = [['½×', new Frac(1n, 2n)], ['1×', new Frac(1n)], ['2×', new Frac(2n)], ['3×', new Frac(3n)]]
@@ -869,6 +875,7 @@ function viewRecipe(id, preset = null) {
           tick([h('span', { class: 'n' }, n + 1), h('span', { class: 'what' }, l)]), timerChips(l))))
         : steps.length === 1 && h('div', { class: 'dir' }, h('p', null, steps[0]), timerChips(steps[0])),
       warnings.length > 0 && h('p', { class: 'note' }, warnings.join(' ')));
+    cc.paint();
   }
 
   // keep the screen awake while cooking
@@ -1063,6 +1070,8 @@ function viewRecipe(id, preset = null) {
             : h('p', { class: 'note', style: 'margin:.5rem .3rem .1rem' }, 'No yield is listed, so scale with the multiplier.')),
         ingBox),
       dirBox),
+    cc.nutri,
+    cc.cost,
     !shared && logBox,
     h('section', { class: 'tools stack' },
       h('label', { class: 'check' }, smartIn, 'Smart units (8 Tbsp becomes ½ cup)'),
@@ -1599,6 +1608,20 @@ function collectionsDialog(r, onDone) {
   dlg.showModal();
 }
 
+// Every ingredient price you have saved (see costui.js).
+function viewPrices() {
+  setView('prices', 'settings');
+  fill($app,
+    band('page',
+      h('div', { class: 'topbar' },
+        h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Back', onclick: () => goBack('#/settings') }, icon('back')),
+        h('span', { class: 'sp' })),
+      h('h1', null, 'Ingredient prices'),
+      h('p', { class: 'sub' }, 'For food cost on every recipe')),
+    priceBook({ h, fill, toast }));
+  window.scrollTo(0, 0);
+}
+
 // What you have cooked, most recent first.
 function viewCooked() {
   setView('cooked', 'starred');
@@ -1822,6 +1845,11 @@ async function viewSettings() {
       stat('Protected from automatic cleanup', persisted ? 'Yes' : 'No'),
       !persisted && navigator.storage?.persist && h('button', { onclick: async () => { toast((await navigator.storage.persist()) ? 'Done' : 'The browser declined'); viewSettings(); } }, 'Ask the browser to keep my data'),
       installPrompt && h('button', { class: 'primary', onclick: async () => { installPrompt.prompt(); installPrompt = null; viewSettings(); } }, 'Install app on this device')),
+    h('h2', null, 'Food cost'),
+    h('section', { class: 'card stack' },
+      stat('Ingredient prices saved', String(Object.keys(prices.load().items).length)),
+      h('p', { class: 'muted small' }, 'Prices you enter on a recipe are remembered for every recipe that uses the food. Review them, or import a supplier list, here.'),
+      h('a', { class: 'linkbtn', href: '#/prices' }, 'Open the price book')),
     h('h2', null, 'Your recipes'),
     lib.me && localNew.length > 0 && h('section', { class: 'card stack' },
       h('strong', null, `${localNew.length} recipe${localNew.length === 1 ? ' is' : 's are'} only on this device`),
@@ -1886,6 +1914,7 @@ function route() {
   if (kind === 'pantry') return viewPantry();
   if (kind === 'c' && id) return viewCollection(id);
   if (kind === 'cooked') return viewCooked();
+  if (kind === 'prices') return viewPrices();
   return viewList();
 }
 
