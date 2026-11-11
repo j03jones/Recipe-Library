@@ -45,6 +45,19 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Share by link and printable cards (v0.18)
+
+On a recipe page, **Share link** makes a link that carries the recipe itself (compressed, after the `#`,
+so it never goes to a server). Anyone can open it, signed in or not: they see the recipe, can scale it,
+print it and **Save to my recipes**. It is a copy, so later edits do not reach links already sent, and
+there is nothing to revoke or pay for. Short links also get a QR code for showing a client in person.
+
+- A recipe imported from another website shares the **link to the original** instead, so the author keeps
+  the visit and the credit (the same rule as the Community).
+- Links are checked when opened: oversized or hand-made payloads are refused.
+- **Print card** uses a clean layout (title, two-column ingredients, method, footer) and "Save as PDF" in
+  the print dialog makes the PDF.
+
 ## Cook log, ratings and private notes (v0.17)
 
 Every recipe page has a **Your notes** section: a 1 to 5 star rating, an **I made this** button that
