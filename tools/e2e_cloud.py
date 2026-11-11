@@ -553,6 +553,24 @@ async def run():
         await st.wait_for_timeout(1500)
         check("a change on the second device comes back to the first", await st.locator("text=Paper towels").count() == 0)
 
+        # ---- ingredient prices follow the person too
+        await st.goto(URL + "#/")
+        await st.wait_for_selector(".rc")
+        await st.fill("input[type=search]", "European Sour Cream Apple Pie")
+        await st.wait_for_timeout(500)
+        await st.click(".rc >> nth=0")
+        await st.wait_for_selector("ul.ing li")
+        await st.click("details.costcard > summary")
+        await st.fill("input[aria-label='Price of butter']", "4.5")
+        await st.wait_for_timeout(1800)
+        doc = fake.user_data.get(sam_id, {}).get("planner", {})
+        check("prices are saved to the account", doc.get("prices", {}).get("items", {}).get("butter") == {"p": 4.5, "per": "lb"}, doc.get("prices"))
+        check("saving prices keeps the plan", len(doc.get("plan", {}).get("days", {})) == 1)
+        await dev2.goto(URL + "#/prices")
+        await dev2.reload()
+        await dev2.wait_for_selector(".pricebook .costline:has-text('butter')", timeout=15000)
+        check("prices show up on a second device", await dev2.input_value(".pricebook input[aria-label='Price of butter']") == "4.5")
+
         fake.no_planner = True
         await st.goto(URL + "#/plan")
         await st.wait_for_selector(".planday")
