@@ -39,13 +39,13 @@ export function transferPage({ h, fill, toast, add, mine, starred, signedIn }) {
     const label = () => { go.textContent = `Add ${plural(chosen().length, 'recipe')}`; go.disabled = !chosen().length; };
     fill(found$,
       h('p', { class: 'muted small' }, `Found ${plural(found.length, 'recipe')}. Untick any you do not want. They go into your own recipes${signedIn ? ', saved to your account' : ' on this device'}.`),
+      go,
       h('ul', { class: 'costlines foundlist' }, found.map((f) => {
         const box = h('input', { type: 'checkbox', checked: true, 'aria-label': `Add ${f.r.title}` });
         box.addEventListener('change', () => { f.on = box.checked; label(); });
         return h('li', { class: 'costline' }, h('label', { class: 'cl-what' }, box, ' ', h('strong', null, f.r.title),
           h('span', { class: 'muted small' }, ` ${plural(f.r.ings.length, 'ingredient')}`)));
-      })),
-      go);
+      })));
     label();
   }
 
