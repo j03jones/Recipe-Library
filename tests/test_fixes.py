@@ -310,3 +310,82 @@ class TidyTitles(unittest.TestCase):
         from recipelib.tidy import tidy_title
         for title in ["Coq au Vin", "BBQ", "Mom's BBQ Ribs", "mixed CASE Title", "", "1-2-3"]:
             self.assertEqual(tidy_title(title), title)
+
+
+class TidyIngredients(unittest.TestCase):
+    """Collections that wrap long ingredients with no marker and put section labels in the list."""
+
+    PIE = HEAD + '''           Pie dough-
+      2 c  All-purpose flour
+      6 oz Cold, unsalted butter, cut
+           Into cubes, plus butter for
+           The pie tin
+    1/4    To 1/3 cup ice cold water
+           Filling-
+      1    Stick (8 tablespoons)
+           Unsalted butter
+     12 lg Apples such as Granny Smith,
+           Peeled, cored, and sliced
+           Into
+           Eighths (about 14 cups)
+           Juice of 2 lemons (about 1/4
+           Cup)
+    1/4 c  Loosely packed dark brown
+           Sugar
+           Egg wash:
+      1 lg Egg beaten with 2
+           TB water
+           Salt
+
+  Make the dough, fill it, and bake.
+MMMMM
+'''
+
+    def test_wrapped_lines_and_sections(self):
+        r = parse_text(self.PIE).recipes[0]
+        self.assertEqual([(i.group, format_ingredient(i)) for i in r.ingredients], [
+            ("Pie dough", "2 cups All-purpose flour"),
+            ("Pie dough", "6 oz Cold, unsalted butter, cut into cubes, plus butter for the pie tin"),
+            ("Pie dough", "1/4-1/3 cup ice cold water"),
+            ("Filling", "1 stick (8 tablespoons) unsalted butter"),
+            ("Filling", "12 large Apples such as Granny Smith, peeled, cored, and sliced into eighths (about 14 cups)"),
+            ("Filling", "Juice of 2 lemons (about 1/4 cup)"),
+            ("Filling", "1/4 cup Loosely packed dark brown sugar"),
+            ("Egg wash", "1 large Egg beaten with 2 TB water"),
+            ("Egg wash", "Salt"),
+        ])
+
+    def test_real_ingredients_without_amounts_are_left_alone(self):
+        from recipelib.tidy import tidy_recipe
+        items = ["Onion, chopped", "Salt and pepper to taste", "Olive oil", "Fresh parsley for garnish",
+                 "Cooking fat", "Salt", "Mozzarella cheese, grated", "Swiss cheese, grated", "Thyme, dried", "Basil"]
+        r = Recipe(title="x", ingredients=[Ingredient(item=i) for i in items], directions="Cook.")
+        self.assertEqual(tidy_recipe(r), 0)
+        self.assertEqual([i.item for i in r.ingredients], items)
+
+    def test_steps_and_notes_leave_the_list(self):
+        from recipelib.tidy import tidy_recipe
+        r = Recipe(title="x", directions="Chill before serving.", ingredients=[
+            Ingredient(item="Graham cracker crumbs", quantity=F(2), unit="cup"),
+            Ingredient(item="Mix and pat into the bottom of a springform pan."),
+            Ingredient(item="Cream cheese", quantity=F(1), unit="lb"),
+            Ingredient(item="From: PJXG05A"),
+            Ingredient(item="")])
+        self.assertEqual(tidy_recipe(r), 3)
+        self.assertEqual([i.item for i in r.ingredients], ["Graham cracker crumbs", "Cream cheese"])
+        self.assertEqual(r.directions, "Mix and pat into the bottom of a springform pan.\n\nChill before serving.\n\nFrom: PJXG05A")
+
+    def test_capital_headings_only_when_the_list_is_not_all_capitals(self):
+        from recipelib.tidy import tidy_recipe
+        mixed = Recipe(title="x", ingredients=[Ingredient(item="CRUST"), Ingredient(item="Flour", quantity=F(1), unit="cup"),
+                                               Ingredient(item="FILLING"), Ingredient(item="Apples", quantity=F(3))])
+        tidy_recipe(mixed)
+        self.assertEqual([(i.group, i.item) for i in mixed.ingredients], [("Crust", "Flour"), ("Filling", "Apples")])
+        loud = Recipe(title="x", ingredients=[Ingredient(item="FLOUR", quantity=F(1), unit="cup"), Ingredient(item="SALT"),
+                                              Ingredient(item="EGGS", quantity=F(2))])
+        self.assertEqual(tidy_recipe(loud), 0)
+
+    def test_tidying_twice_changes_nothing_more(self):
+        from recipelib.tidy import tidy_recipe
+        r = parse_text(self.PIE).recipes[0]
+        self.assertEqual(tidy_recipe(r), 0)

@@ -314,8 +314,12 @@ The real database defaults to `~/.local/share/recipe-library/recipes.db` on Linu
   became "t" + "-mp"), so those words come out misspelled ("tmp"). The lost letter can't be recovered,
   and when the cut fell between two words they can come out joined. Lines the person wrapped
   themselves (shorter than the field) are joined with a space.
-- Older exports wrap long right-hand items onto a plain line with no dash; those fragments
-  (e.g. "Into eighths") become separate ingredient lines instead of being merged.
+- Older exports wrap long items onto plain lines with no dash. `recipelib/tidy.py` rejoins them when the
+  wording shows a line cannot stand alone ("cut" + "Into cubes"), turns labels such as "Filling:" into
+  sections, and moves stray steps and notes out of the ingredient list. It is cautious: a fragment that
+  could be an ingredient in its own right ("Salt") is left where it is, so some wrapped lines remain.
+  It runs on import and when the web library is exported; `python -m recipelib tidy --preview` shows
+  what it would change in an existing library, and `python -m recipelib tidy` applies it (with a backup).
 - Ranges like "2-3" scale, but are not converted between US and metric units.
 - Recipes imported before v0.13 keep the text they were imported with. To pick up the importer fixes
   (degree signs, wrapped items, tidier directions), import the original files into a fresh library.
