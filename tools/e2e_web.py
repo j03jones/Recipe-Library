@@ -7,9 +7,11 @@ Needs Playwright with Chromium. Serves web/ itself on a free port. Expects the r
 """
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 import time
 from pathlib import Path
 
@@ -56,6 +58,15 @@ async def main():
 async def run():
     async with async_playwright() as p:
         b = await p.chromium.launch()
+        if os.environ.get("E2E_NOW"):
+            # run as if it were this date (YYYY-MM-DDTHH:MM): the plan and list depend on today's weekday
+            real_new_context = b.new_context
+
+            async def new_context(*args, **kwargs):
+                c = await real_new_context(*args, **kwargs)
+                await c.clock.install(time=datetime.fromisoformat(os.environ["E2E_NOW"]))
+                return c
+            b.new_context = new_context
         ctx = await b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2,
                                   is_mobile=True, has_touch=True, accept_downloads=True)
         page = await ctx.new_page()

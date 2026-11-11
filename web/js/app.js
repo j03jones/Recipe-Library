@@ -1472,7 +1472,7 @@ function viewShop() {
           onclick: () => { shop.remove(r.id); paint(); } }, icon('close', { size: 18 }))))),
       offline.length > 0 && h('p', { class: 'note' }, `Not counted yet (needs a connection the first time): ${offline.map(([r]) => r.title).join(', ')}. `,
         h('button', { type: 'button', onclick: () => { more.failed.clear(); paint(); } }, 'Try again')),
-      planAhead().some(([id, f]) => !list.items.some((i) => i.id === id && (Frac.parse(i.f) || new Frac(1n)).eq(f))) && planButton(),
+      planAhead().some(([id, f]) => !list.items.some((i) => i.id === id && (Frac.parse(i.f) || new Frac(1n)).cmp(f) >= 0)) && planButton(),
       h('p', { class: 'muted small', role: 'status' }, left.length === lines.length
         ? `${lines.length} ${lines.length === 1 ? 'thing' : 'things'} to get`
         : `${left.length} of ${lines.length} still to get`),
