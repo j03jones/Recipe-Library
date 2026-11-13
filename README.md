@@ -64,10 +64,21 @@ A section for Jones Ridge Kitchen meal prep clients, built around the plans on j
   and estimated groceries; one tap puts it all on the shopping list at the right scale.
 - Container labels to print: dish, client, date made, use-by, reheating, allergens, and macros on Lean & Fresh.
 
-**For the client** (the **My meals** tab, once they sign in with the email address the chef has):
+**For the client: jonesridgekitchen.com/my-meals/** (v0.23). Clients use a page on the website, not the recipe app,
+so they never see the library. It is built here, in `web/portal/` (`portal.js`, `portal.css`), and published with the
+app; the website's `/my-meals/` page is only a frame that loads it, so the two never drift apart.
+`web/portal/index.html` is a plain copy for testing.
+- They set up their own login there ("First time here") with the email address on their client record. No invite
+  code: `supabase/add_client_signup.sql` lets exactly those addresses sign up. On the client page in the app,
+  **Email them their link** opens a ready-written email in your mail app.
 - This week's menu with ingredients, nutrition and allergens; approve or ask to swap each dish (or approve all).
 - What they have had, with ratings, favourites, and **Have this again**; ask for any dish.
 - Their own allergies and foods to avoid, which the chef sees.
+
+For the confirmation and password-reset links to come back to the website page, add
+`https://jonesridgekitchen.com/my-meals/` to Supabase > Authentication > URL Configuration > Redirect URLs, and paste
+the updated `supabase/email-templates/confirm-signup.html` and `reset-password.html` (they say "meal prep" instead of
+"Recipe Library" for client logins).
 
 ## Import and export formats (v0.20)
 

@@ -304,8 +304,6 @@ export function accountCard(ctx) {
       h('div', { class: 'row grow' },
         me?.role === 'admin' && h('a', { class: 'btnlink primary', href: '#/admin' }, 'Admin tools'),
         me?.role === 'admin' && h('a', { class: 'btnlink primary', href: '#/clients' }, 'Meal prep clients'),
-        ctx.lib.clients?.length > 0 && h('a', { class: 'btnlink primary', href: '#/meals' }, 'My meals'),
-        ctx.lib.clients?.length > 0 && h('a', { class: 'btnlink', href: '#/new' }, 'Add a recipe'),
         h('button', { type: 'button', onclick: changePw }, 'Change password'),
         h('button', { type: 'button', onclick: async () => { await cloud.signOut(); ctx.clearCloud(); toast('Signed out'); ctx.rerender(); } }, 'Sign out')),
       pw);

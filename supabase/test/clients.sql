@@ -190,3 +190,31 @@ begin
 
   raise notice 'clients: all access checks passed';
 end $test$;
+
+-- ---- add_client_signup.sql: an email on a client record may sign up without an invite code
+do $signup$
+declare chef uuid; n int;
+begin
+  update public.app_settings set open_signup = false;     -- test.sql ends with sign-up open
+  select id into chef from auth.users where email = 'chef-t@x.test';
+  insert into public.clients (chef_id, name, email) values (chef, 'Dana', 'Dana-T@x.test');
+  insert into auth.users (email) values ('dana-t@x.test');          -- sign-up, any capitals
+  select count(*) into n from public.profiles p join auth.users u on u.id = p.id
+    where u.email = 'dana-t@x.test' and p.role = 'student';
+  if n <> 1 then raise exception 'FAIL: a client on file could not sign up without a code'; end if;
+
+  begin
+    insert into auth.users (email) values ('stranger-t@x.test');
+    raise exception 'FAIL: an address with no client record signed up without a code';
+  exception when others then if sqlerrm like 'FAIL:%' then raise; end if; end;
+
+  -- once a client record has a login, its address is no longer a way in
+  update public.clients set user_id = (select id from auth.users where email = 'dana-t@x.test') where email = 'Dana-T@x.test';
+  insert into public.clients (chef_id, name, email, user_id)
+    values (chef, 'Taken', 'taken-t@x.test', (select id from auth.users where email = 'eve-t@x.test'));
+  begin
+    insert into auth.users (email) values ('taken-t@x.test');
+    raise exception 'FAIL: an address on a client record that already has a login signed up without a code';
+  exception when others then if sqlerrm like 'FAIL:%' then raise; end if; end;
+  raise notice 'client sign-up: all checks passed';
+end $signup$;
