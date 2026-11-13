@@ -336,3 +336,84 @@ export async function resendConfirmation(email) {
   catch (err) { if (err.status === 0 || err.status === 429) throw err; }
 }
 
+
+// ------------------------------------------------------------------ meal prep clients (supabase/add_clients.sql)
+// The chef (admin) reads and writes everything; a client reads their own record and menus and answers
+// through the functions, which change only what a client may change.
+const rpc = (name, body = {}) => authed(`/rest/v1/rpc/${name}`, { method: 'POST', body });
+const one = { Prefer: 'return=representation' };
+
+/** Link this login to the client record made for its email address; then the client record(s) it has. */
+export async function myClients() {
+  try { await rpc('claim_client'); } catch (err) { if (err.status === 0) throw err; }   // older database: no client section yet
+  return authed(`/rest/v1/clients?user_id=eq.${enc(currentUser().id)}&select=*&order=created_at`);
+}
+
+// ---- chef side
+export const listClients = () => authed('/rest/v1/clients?select=*,notes:client_notes(notes)&order=name');
+export async function saveClient(client) {
+  const { id, notes, ...fields } = client;
+  const [row] = id
+    ? await authed(`/rest/v1/clients?id=eq.${enc(id)}`, { method: 'PATCH', headers: one, body: fields })
+    : await authed('/rest/v1/clients', { method: 'POST', headers: one, body: { ...fields, chef_id: currentUser().id } });
+  if (notes !== undefined) {
+    await authed('/rest/v1/client_notes', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: { client_id: row.id, notes: notes || '' } });
+  }
+  return row;
+}
+export const deleteClient = (id) => authed(`/rest/v1/clients?id=eq.${enc(id)}`, { method: 'DELETE' });
+
+const MENU_SELECT = 'select=*,meals:client_meals(*,private:client_meal_private(recipe_id,factor,grocery_cost))';
+/** A client's menus, newest week first, each with its meals in order. */
+export async function listMenus(clientId) {
+  const rows = await authed(`/rest/v1/client_menus?client_id=eq.${enc(clientId)}&${MENU_SELECT}&order=week_start.desc`);
+  for (const m of rows) m.meals.sort((a, b) => a.position - b.position);
+  return rows;
+}
+/** Every client's menu for one week (the prep sheet). */
+export async function listMenusForWeek(weekStart) {
+  const rows = await authed(`/rest/v1/client_menus?week_start=eq.${enc(weekStart)}&${MENU_SELECT}`);
+  for (const m of rows) m.meals.sort((a, b) => a.position - b.position);
+  return rows;
+}
+export async function createMenu(clientId, weekStart, fields = {}) {
+  const [row] = await authed('/rest/v1/client_menus', { method: 'POST', headers: one, body: { client_id: clientId, week_start: weekStart, ...fields } });
+  return { ...row, meals: [] };
+}
+export const updateMenu = (id, fields) => authed(`/rest/v1/client_menus?id=eq.${enc(id)}`, { method: 'PATCH', body: fields });
+export const deleteMenu = (id) => authed(`/rest/v1/client_menus?id=eq.${enc(id)}`, { method: 'DELETE' });
+
+/** Add a meal (the snapshot the client sees) with the chef-only link to its recipe. */
+export async function addMeal(menuId, meal, priv) {
+  const [row] = await authed('/rest/v1/client_meals', { method: 'POST', headers: one, body: { menu_id: menuId, ...meal } });
+  await authed('/rest/v1/client_meal_private', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: { meal_id: row.id, recipe_id: priv.recipe_id || '', factor: priv.factor || '1', grocery_cost: priv.grocery_cost ?? null } });
+  return { ...row, private: { recipe_id: priv.recipe_id || '', factor: priv.factor || '1', grocery_cost: priv.grocery_cost ?? null } };
+}
+export const updateMeal = (id, fields) => authed(`/rest/v1/client_meals?id=eq.${enc(id)}`, { method: 'PATCH', body: fields });
+export const updateMealPrivate = (id, fields) => authed(`/rest/v1/client_meal_private?meal_id=eq.${enc(id)}`, { method: 'PATCH', body: fields });
+export const deleteMeal = (id) => authed(`/rest/v1/client_meals?id=eq.${enc(id)}`, { method: 'DELETE' });
+
+export const listRequests = (clientId) =>
+  authed(`/rest/v1/client_requests?${clientId ? `client_id=eq.${enc(clientId)}&` : ''}select=*&order=created_at.desc`);
+export const updateRequest = (id, status) => authed(`/rest/v1/client_requests?id=eq.${enc(id)}`, { method: 'PATCH', body: { status } });
+export const listFavorites = (clientId) => authed(`/rest/v1/client_favorites?client_id=eq.${enc(clientId)}&select=dish,title&order=title`);
+
+export const listTemplates = () => authed('/rest/v1/client_menu_templates?select=*&order=name');
+export const saveTemplate = (name, meals) => authed('/rest/v1/client_menu_templates', { method: 'POST', headers: one, body: { chef_id: currentUser().id, name, meals } });
+export const deleteTemplate = (id) => authed(`/rest/v1/client_menu_templates?id=eq.${enc(id)}`, { method: 'DELETE' });
+
+// ---- client side
+/** The signed-in client's own menus (only sent or closed ones come back), newest first. */
+export async function myMenus(clientId) {
+  const rows = await authed(`/rest/v1/client_menus?client_id=eq.${enc(clientId)}&select=*,meals:client_meals(*)&order=week_start.desc`);
+  for (const m of rows) m.meals.sort((a, b) => a.position - b.position);
+  return rows;
+}
+export const respondToMeal = (mealId, approve, note = '') => rpc('respond_to_meal', { p_meal: mealId, p_approve: approve, p_note: note });
+export const rateMeal = (mealId, rating, feedback = '') => rpc('rate_meal', { p_meal: mealId, p_rating: rating, p_feedback: feedback });
+export const setFavorite = (clientId, title, on) => rpc('set_favorite', { p_client: clientId, p_title: title, p_on: on });
+export const requestMeal = (clientId, title, note = '') => rpc('request_meal', { p_client: clientId, p_title: title, p_note: note });
+export const updateMyPreferences = (clientId, allergens, allergyNotes, dislikes) =>
+  rpc('update_my_preferences', { p_client: clientId, p_allergens: allergens, p_allergy_notes: allergyNotes, p_dislikes: dislikes });

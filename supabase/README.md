@@ -134,3 +134,18 @@ protection**, which rejects passwords known from data breaches. That is a dashbo
 a JSON document per person holding their meal plan and shopping list. Only its owner can read or write
 it (the existing `user_data_own` rule). Until it is run, the app keeps plans and lists on the device and
 shows "the database needs supabase/add_planner.sql" under the plan when signed in.
+
+## Meal prep clients
+`add_clients.sql` (run after everything above, safe to run again) adds the client section: `clients`,
+`client_notes`, `client_menus`, `client_meals`, `client_meal_private`, `client_favorites`, `client_requests`
+and `client_menu_templates`, with their access rules and the functions clients answer through
+(`claim_client`, `respond_to_meal`, `rate_meal`, `set_favorite`, `request_meal`, `update_my_preferences`).
+
+- The chef (the admin account) sees and changes everything.
+- A client sees only their own record and their menus once sent. A meal row holds what a client may see
+  (dish name, description, ingredient names, nutrition, allergens, reheating); the link to the recipe and the
+  grocery cost are in `client_meal_private`, which clients cannot read. Amounts and the method are never copied.
+- A client's login is linked to their record by email address the first time they sign in, once that
+  address is confirmed.
+
+`test/clients.sql` checks these rules; `bash supabase/test/run.sh` runs it with the other database tests.
