@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>My meals · Jones Ridge Kitchen</title>
+  <!-- The real client page is jonesridgekitchen.com/my-meals/, inside the website's own look.
+       This plain copy is for testing and as a fallback. -->
+  <link rel="stylesheet" href="portal.css">
+  <style>
+    :root { --ridge: #23402f; --clay: #c8693e; --rust: #a84a24; --muted: #4a524d; --slab: Georgia, "Times New Roman", serif; }
+    body { margin: 0; font: 17px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; color: #1e2420; background: #f4f1ea; }
+    header { background: var(--ridge); color: #fff; padding: 1.4rem 1.25rem; }
+    header a { color: #fff; } header h1 { margin: 0; font-family: var(--slab); }
+    main { padding: 1rem 1.25rem 3rem; } main #jrk-portal { margin: 0 auto; }
+    h1, h2, h3 { font-family: var(--slab); color: var(--ridge); }
+    .btn { display: inline-flex; align-items: center; min-height: 2.8rem; padding: 0 1.2rem; border-radius: 6px; font: inherit; font-weight: 600; background: var(--rust); color: #fff; border: 2px solid var(--rust); cursor: pointer; text-decoration: none; }
+    .btn.line { background: transparent; color: var(--rust); }
+    .form { display: grid; gap: 1rem; } .field { display: flex; flex-direction: column; gap: .35rem; } .field label { font-weight: 600; }
+    .field input { font: inherit; padding: .7rem .8rem; border: 1px solid #aeb7b1; border-radius: 6px; }
+    .note { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header><h1><a href="https://jonesridgekitchen.com/">Jones Ridge Kitchen</a></h1></header>
+  <main><div id="jrk-portal"><noscript>This page needs JavaScript.</noscript></div></main>
+  <script type="module" src="portal.js"></script>
+</body>
+</html>

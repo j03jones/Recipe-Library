@@ -11,6 +11,9 @@ import {
   nutritionSummary, planOf, prepSheet, snapshot, tally, warnings,
 } from './clients.js';
 
+/** Where clients see and approve their menus: a page on the website (web/portal/ in this repository). */
+export const PORTAL_URL = 'https://jonesridgekitchen.com/my-meals/';
+
 const DAY = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 const SHORT = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 const WHEN = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -157,9 +160,12 @@ export async function viewClient(ctx, id) {
       viewClient(ctx, id);
     } catch (err) { toast(err.message, 4500); }
   };
-  const invite = async () => {
-    if (!f.email.value.trim()) { toast('Add their email first'); return; }
-    try { await cloud.sendInvite({ email: f.email.value.trim().toLowerCase(), name: f.name.value.trim(), kind: 'student' }); toast('Invitation sent'); } catch (err) { toast(err.message, 4500); }
+  // Clients set up their own login on the website with the email address saved here. This opens a
+  // ready-written email in the chef's own mail app, so it comes from them.
+  const mailLink = () => {
+    const first = (f.name.value.trim() || client.name).split(' ')[0];
+    const body = `Hi ${first},\n\nYour weekly menus are ready to approve online. Set up your login here, using this email address:\n\n${PORTAL_URL}\n\nChoose "First time here", pick a password, and confirm your email. After that you can approve or swap each dish, see the ingredients, nutrition and allergens, and ask for your favorites again.\n\nJoseph\nJones Ridge Kitchen`;
+    return `mailto:${encodeURIComponent(f.email.value.trim())}?subject=${encodeURIComponent('Your Jones Ridge Kitchen meal prep page')}&body=${encodeURIComponent(body)}`;
   };
 
   // ---- menus
@@ -203,8 +209,12 @@ export async function viewClient(ctx, id) {
 
     h('section', { class: 'stack card' }, h('h2', null, 'About this client'),
       h('label', null, 'Name', f.name), h('label', null, 'Email', f.email),
-      h('div', { class: 'row' }, h('button', { type: 'button', onclick: invite }, client.user_id ? 'Send the invitation again' : 'Email an invitation'),
-        h('span', { class: 'muted small' }, client.user_id ? 'They have signed in.' : 'Not signed in yet. Their page links to this email address when they join.')),
+      h('div', { class: 'row' },
+        h('a', { class: 'linkbtn', href: '#', onclick: (e) => { if (!f.email.value.trim()) { e.preventDefault(); toast('Add their email first'); return; } e.currentTarget.href = mailLink(); } }, client.user_id ? 'Email them the link again' : 'Email them their link'),
+        h('button', { type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(PORTAL_URL); toast('Link copied'); } catch { toast(PORTAL_URL, 5000); } } }, 'Copy the link')),
+      h('p', { class: 'muted small' }, client.user_id
+        ? 'They have set up their login.'
+        : `Not set up yet. They create their login at ${PORTAL_URL.replace('https://', '')} with this email address, and it links to this page.`),
       h('label', null, 'Plan', f.plan),
       h('div', { class: 'row trio' }, h('label', null, 'Dishes a week', f.entrees), h('label', null, 'Servings each', f.servings), h('label', null, 'Weekly fee ($)', f.fee)),
       h('fieldset', { class: 'allergybox' }, h('legend', null, 'Allergies'),
@@ -449,133 +459,14 @@ export async function viewLabels(ctx, clientId, menuId) {
 }
 
 // =====================================================================================
-// The client's side
+// The client's side lives on the website now: jonesridgekitchen.com/my-meals/ (web/portal/portal.js).
 // =====================================================================================
 
-/** #/meals: the client's own page: this week's menu to approve, what they have had, favourites and requests. */
-export async function viewMyMeals(ctx) {
-  const { h, fill, toast, icon, $app, setView, pageHead, lib } = ctx;
-  setView('meals', 'meals');
-  const client = lib.clients?.[0];
-  if (!client) {
-    fill($app, pageHead('My meals'), h('p', { class: 'muted' }, lib.me
-      ? 'This page is for Jones Ridge Kitchen meal prep clients. If you are one, sign in with the email address your chef has for you.'
-      : 'Sign in to see the menu your chef planned for you.'),
-    h('p', null, h('a', { class: 'linkbtn', href: '#/settings' }, lib.me ? 'Settings' : 'Sign in'), ' ',
-      h('a', { class: 'linkbtn', href: 'https://jonesridgekitchen.com/meal-prep/', target: '_blank', rel: 'noopener' }, 'About meal prep')));
-    return;
-  }
-  fill($app, pageHead('My meals'), h('div', { class: 'sk' }), h('div', { class: 'sk' }));
-  let menus, favorites, requests;
-  async function load() {
-    [menus, favorites, requests] = await Promise.all([cloud.myMenus(client.id), cloud.listFavorites(client.id), cloud.listRequests(client.id)]);
-  }
-  try { await load(); } catch (err) { fill($app, pageHead('My meals'), h('p', { class: 'note' }, `Could not load your meals: ${err.message}`)); return; }
-
-  function paint() {
-    if (parts()[0] !== 'meals') return;
-    const current = menus.find((m) => m.status === 'sent');
-    const fav = new Set(favorites.map((x) => x.dish));
-    const past = history(menus);
-    const openAsks = requests.filter((r) => r.status === 'open');
-    const plan = planOf(client);
-
-    const answer = async (meal, approve) => {
-      let note = '';
-      if (!approve) {
-        note = await askText(ctx, `What would you like instead of “${meal.title}”, or what should change?`, { value: meal.client_note || '', placeholder: 'No fish this week, something with chicken…', ok: 'Ask for a swap', optional: true });
-        if (note === null) return;
-      }
-      try { await cloud.respondToMeal(meal.id, approve, note); await load(); paint(); toast(approve ? 'Approved' : 'Your chef will swap it'); } catch (err) { toast(err.message, 4500); }
-    };
-    const heart = (title) => {
-      const on = fav.has(title.trim().toLowerCase());
-      return h('button', { class: 'heart', type: 'button', 'aria-pressed': String(on), 'aria-label': on ? `Remove ${title} from favourites` : `Add ${title} to favourites`, title: on ? 'A favourite' : 'Mark as a favourite',
-        onclick: async () => { try { await cloud.setFavorite(client.id, title, !on); await load(); paint(); } catch (err) { toast(err.message, 4500); } } }, on ? '♥' : '♡');
-    };
-    const again = (title) => h('button', { type: 'button', onclick: async () => {
-      const note = await askText(ctx, `Ask for “${title}” again. Anything to add?`, { placeholder: 'Optional', ok: 'Send request', optional: true });
-      if (note === null) return;
-      try { await cloud.requestMeal(client.id, title, note); await load(); paint(); toast('Request sent to your chef'); } catch (err) { toast(err.message, 4500); }
-    } }, 'Have this again');
-    const stars = (meal) => h('div', { class: 'ratingrow', role: 'group', 'aria-label': `Rate ${meal.title}` }, [1, 2, 3, 4, 5].map((n) =>
-      h('button', { class: 'ratestar', type: 'button', 'aria-pressed': String((meal.rating || 0) >= n), 'aria-label': `${n} ${n === 1 ? 'star' : 'stars'}`,
-        onclick: async () => {
-          const feedback = meal.rating ? meal.feedback : (await askText(ctx, 'Anything to tell your chef about it?', { placeholder: 'Optional', ok: 'Send', optional: true }) ?? '');
-          try { await cloud.rateMeal(meal.id, n, feedback); await load(); paint(); } catch (err) { toast(err.message, 4500); }
-        } }, icon('star', { size: 22, fill: (meal.rating || 0) >= n }))));
-
-    const mealCard = (meal, open) => h('li', { class: `mealcard ${meal.status}` },
-      h('div', { class: 'row mealhead' }, h('h3', null, meal.title), heart(meal.title)),
-      meal.description && h('p', null, meal.description),
-      conflicts(meal.allergens, client.allergens).length > 0 && h('p', { class: 'note danger' }, h('strong', null, `Contains ${conflicts(meal.allergens, client.allergens).join(', ')}, which is on your allergy list. Ask for a swap.`)),
-      h('p', { class: 'small ingline' }, h('strong', null, 'Ingredients: '), meal.ingredients.join(', ') || 'Ask your chef'),
-      nutritionLine(h, meal.nutrition),
-      allergenChips(h, meal.allergens, client.allergens),
-      (meal.reheat || meal.storage || meal.use_by) && h('p', { class: 'muted small' }, [meal.reheat && `Reheat: ${meal.reheat}`, meal.storage && `Keep: ${meal.storage}`, meal.use_by && `Use by ${SHORT.format(planner.parseDate(meal.use_by))}`].filter(Boolean).join(' · ')),
-      h('p', { class: 'muted small' }, `${meal.servings} ${meal.servings === 1 ? 'serving' : 'servings'}`),
-      open
-        ? h('div', { class: 'row answer' },
-          h('button', { class: meal.status === 'approved' ? 'primary' : '', type: 'button', 'aria-pressed': String(meal.status === 'approved'), onclick: () => answer(meal, true) }, meal.status === 'approved' ? '✓ Approved' : 'Approve'),
-          h('button', { type: 'button', 'aria-pressed': String(meal.status === 'swap'), onclick: () => answer(meal, false) }, meal.status === 'swap' ? 'Swap requested' : 'Swap this'))
-        : h('div', { class: 'row' }, stars(meal), again(meal.title)),
-      meal.status === 'swap' && meal.client_note && h('p', { class: 'note' }, `You asked: ${meal.client_note}`));
-
-    const t = current ? tally(current.meals) : null;
-    const summary = current ? nutritionSummary(current.meals, client.targets) : null;
-    const boxes = ALLERGENS.map((a) => [a, h('input', { type: 'checkbox', checked: client.allergens.includes(a) })]);
-    const notesIn = h('input', { type: 'text', class: 'full', maxlength: '1000', value: client.allergy_notes || '', placeholder: 'How severe, and anything else we should know', 'aria-label': 'Allergy notes' });
-    const avoidIn = h('input', { type: 'text', class: 'full', maxlength: '1000', value: client.dislikes || '', placeholder: 'Diets and foods to avoid', 'aria-label': 'Foods to avoid' });
-    const askIn = h('input', { type: 'text', class: 'full', maxlength: '200', placeholder: 'Ask for a dish: shrimp and grits, something with salmon…', 'aria-label': 'Ask for a dish' });
-
-    fill($app,
-      pageHead(`Hello, ${client.name.split(' ')[0]}`, `${plan.label} · ${plan.blurb}`),
-      current
-        ? h('section', { class: 'stack' },
-          h('h2', null, weekLabel(current.week_start)),
-          current.note && h('p', { class: 'note' }, current.note),
-          h('p', { class: 'small', role: 'status' }, t.proposed
-            ? `${t.proposed} of ${t.total} ${t.total === 1 ? 'dish is' : 'dishes are'} waiting for your answer${current.approve_by ? `. Please answer by ${WHEN.format(new Date(current.approve_by))}` : ''}.`
-            : t.swap ? `Thank you. ${t.swap} ${t.swap === 1 ? 'swap is' : 'swaps are'} with your chef.` : 'All approved. Thank you!'),
-          t.proposed > 1 && h('button', { class: 'primary', type: 'button', onclick: async () => {
-            try { for (const m of current.meals.filter((x) => x.status === 'proposed')) await cloud.respondToMeal(m.id, true, ''); await load(); paint(); toast('All approved'); } catch (err) { toast(err.message, 4500); }
-          } }, `Approve all ${t.proposed} waiting`),
-          summary && h('p', { class: 'muted small' }, `On average each serving is about ${summary.avg.kcal} calories, ${summary.avg.protein}g protein, ${summary.avg.carbs}g carbs and ${summary.avg.fat}g fat`,
-            summary.share.kcal ? ` (${summary.share.kcal}% of your daily calorie target)` : '', '. These are estimates from typical values.'),
-          h('ul', { class: 'meals' }, current.meals.map((m) => mealCard(m, true))))
-        : h('div', { class: 'empty' }, h('h2', null, 'No menu waiting'),
-          h('p', { class: 'muted' }, 'When your chef plans your next week it will appear here for you to approve, dish by dish.')),
-
-      h('section', { class: 'stack card' }, h('h2', null, 'Ask for something'),
-        h('form', { class: 'row addextra', onsubmit: async (e) => {
-          e.preventDefault();
-          if (!askIn.value.trim()) return;
-          try { await cloud.requestMeal(client.id, askIn.value.trim(), ''); askIn.value = ''; await load(); paint(); toast('Request sent to your chef'); } catch (err) { toast(err.message, 4500); }
-        } }, askIn, h('button', { type: 'submit' }, 'Ask')),
-        openAsks.length > 0 && h('ul', { class: 'asks' }, openAsks.map((r) => h('li', null, h('span', null, r.title, r.note && h('span', { class: 'muted' }, ` — ${r.note}`)), h('span', { class: 'muted small' }, 'with your chef'))))),
-
-      past.length > 0 && h('section', { class: 'stack' }, h('h2', null, 'What you have had'),
-        h('ul', { class: 'meals' }, menus.filter((m) => m.status === 'closed').slice(0, 8).flatMap((m) => [
-          h('li', { class: 'weekhead' }, weekLabel(m.week_start)),
-          ...m.meals.filter((x) => x.status !== 'swap').map((x) => mealCard(x, false))])),
-        h('h3', null, 'Every dish so far'),
-        h('ul', { class: 'asks' }, past.map((d) => h('li', null,
-          h('span', null, heart(d.title), ' ', d.title),
-          h('span', { class: 'row' }, h('span', { class: 'muted small' }, `${d.times === 1 ? 'once' : `${d.times} times`}${d.rating ? ` · ${d.rating}★` : ''}`), again(d.title)))))),
-
-      h('section', { class: 'stack card' }, h('h2', null, 'Allergies and foods to avoid'),
-        h('p', { class: 'muted small' }, 'Keep this up to date. Your chef checks every dish against it.'),
-        h('div', { class: 'checks' }, boxes.map(([a, box]) => h('label', { class: 'check' }, box, a))),
-        notesIn, avoidIn,
-        h('button', { type: 'button', onclick: async () => {
-          try {
-            await cloud.updateMyPreferences(client.id, boxes.filter(([, b]) => b.checked).map(([a]) => a), notesIn.value, avoidIn.value);
-            lib.clients = await cloud.myClients();
-            toast('Saved. Your chef will see it.'); viewMyMeals(ctx);
-          } catch (err) { toast(err.message, 4500); }
-        } }, 'Save')),
-      h('p', { class: 'muted small' }, 'Questions about your plan? ', h('a', { href: 'https://jonesridgekitchen.com/contact/', target: '_blank', rel: 'noopener' }, 'Contact Jones Ridge Kitchen'), '.'));
-  }
-  paint();
-  window.scrollTo(0, 0);
+/** #/meals: an old link or bookmark from before the client page moved to the website. */
+export function viewMyMeals(ctx) {
+  const { h, fill, $app, setView, pageHead } = ctx;
+  setView('meals', 'list');
+  fill($app, pageHead('My meals', 'Meal prep clients'),
+    h('p', null, 'Meal prep menus are now on the Jones Ridge Kitchen website. Sign in there with the same email address.'),
+    h('p', null, h('a', { class: 'linkbtn primary', href: PORTAL_URL }, 'Go to my meals')));
 }

@@ -89,11 +89,12 @@ export async function signIn(email, password) {
 }
 
 /** Creates an account. Returns 'signed-in' or 'confirm-email'. */
-export async function signUp({ email, password, displayName, inviteCode }) {
+export async function signUp({ email, password, displayName, inviteCode, data = {}, redirectTo = '' }) {
   try {
-    const t = await call('/auth/v1/signup', {
+    // redirectTo: where the confirmation link should land (must be on the project's Redirect URLs list)
+    const t = await call(`/auth/v1/signup${redirectTo ? `?redirect_to=${encodeURIComponent(redirectTo)}` : ''}`, {
       method: 'POST',
-      body: { email, password, data: { display_name: displayName, invite_code: inviteCode } },
+      body: { email, password, data: { ...data, display_name: displayName, ...(inviteCode ? { invite_code: inviteCode } : {}) } },
     });
     if (t && t.access_token) { setSession(fromTokenResponse(t)); return 'signed-in'; }
     return 'confirm-email';

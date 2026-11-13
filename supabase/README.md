@@ -149,3 +149,9 @@ and `client_menu_templates`, with their access rules and the functions clients a
   address is confirmed.
 
 `test/clients.sql` checks these rules; `bash supabase/test/run.sh` runs it with the other database tests.
+
+## Meal prep clients sign up on the website
+`add_client_signup.sql` (run after `add_clients.sql`, safe to run again) lets an email address that is on a client
+record, with no login linked yet, create an account without an invite code. That is how clients set up their login on
+jonesridgekitchen.com/my-meals/. Every other sign-up still needs a code (or open sign-up). `test/clients.sql` checks it.
+Also add `https://jonesridgekitchen.com/my-meals/` to Authentication > URL Configuration > Redirect URLs.
