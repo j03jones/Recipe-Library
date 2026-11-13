@@ -21,6 +21,7 @@ PORT = 8792
 URL = f"http://127.0.0.1:{PORT}/"
 CORS = {"access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*"}
 results, errors = [], []
+CLIENT_RPCS = ("claim_client", "respond_to_meal", "rate_meal", "set_favorite", "request_meal", "update_my_preferences")
 
 
 def check(name, cond, detail=""):
@@ -49,6 +50,128 @@ class Fake:
         uid = str(uuid.uuid4())
         self.users[email] = dict(pw=pw, id=uid, name=name, role=role, email=email)
         return uid
+
+    # ---- meal prep clients: a stand-in for supabase/add_clients.sql, access rules included.
+    # The chef (role admin) sees everything; a client sees only their own record, their menus once
+    # sent, and never the chef-only link to the recipe.
+    async def clients_api(self, req, path, q, body, user, ok, eq):
+        names = ("clients", "client_notes", "client_menus", "client_meals", "client_meal_private", "client_requests",
+                 "client_favorites", "client_menu_templates")
+        rpcs = CLIENT_RPCS
+        table = path.replace("/rest/v1/", "")
+        rpc = path.replace("/rest/v1/rpc/", "")
+        if table not in names and rpc not in rpcs:
+            return await ok({"message": f"unhandled {req.method} {path}"}, 404)
+        if getattr(self, "no_clients", False):
+            return await ok({"message": "Could not find the table 'public.clients' in the schema cache"}, 404)
+        if not user:
+            return await ok({"message": "permission denied"}, 401)
+        db = self.__dict__.setdefault("cdb", {n: {} for n in names})
+        admin = user["role"] == "admin"
+        mine = [c["id"] for c in db["clients"].values() if c.get("user_id") == user["id"]]
+
+        def menu_for_client(menu_id):
+            m = db["client_menus"].get(menu_id)
+            return m if m and m["client_id"] in mine and m["status"] in ("sent", "closed") else None
+
+        if rpc in rpcs:
+            if rpc == "claim_client":
+                n = 0
+                for c in db["clients"].values():
+                    if not c.get("user_id") and c["email"] and c["email"].lower() == user["email"].lower():
+                        c["user_id"] = user["id"]; n += 1
+                return await ok(n)
+            if rpc in ("respond_to_meal", "rate_meal"):
+                meal = db["client_meals"].get(body["p_meal"])
+                menu = menu_for_client(meal["menu_id"]) if meal else None
+                if not menu or (rpc == "respond_to_meal" and menu["status"] != "sent"):
+                    return await ok({"message": "This menu is not open for answers."}, 400)
+                if rpc == "respond_to_meal":
+                    meal.update(status="approved" if body["p_approve"] else "swap", client_note=(body.get("p_note") or "").strip(),
+                                responded_at="2026-11-12T10:00:00Z")
+                else:
+                    meal.update(rating=body["p_rating"], feedback=(body.get("p_feedback") or "").strip())
+                return await ok(None)
+            if body["p_client"] not in mine:
+                return await ok({"message": "Not your account."}, 400)
+            if rpc == "set_favorite":
+                key = (body["p_client"], body["p_title"].strip().lower())
+                if body["p_on"]:
+                    db["client_favorites"][key] = dict(client_id=body["p_client"], dish=key[1], title=body["p_title"].strip())
+                else:
+                    db["client_favorites"].pop(key, None)
+                return await ok(None)
+            if rpc == "request_meal":
+                rid = str(uuid.uuid4())
+                db["client_requests"][rid] = dict(id=rid, client_id=body["p_client"], title=body["p_title"].strip(),
+                                                  note=(body.get("p_note") or "").strip(), status="open", created_at=f"2026-11-12T10:00:{len(db['client_requests']):02d}Z")
+                return await ok(rid)
+            known = ["Peanuts", "Tree nuts", "Milk / dairy", "Eggs", "Wheat / gluten", "Soy", "Fish", "Shellfish", "Sesame"]
+            db["clients"][body["p_client"]].update(allergens=[a for a in known if a in body["p_allergens"]],
+                                                   allergy_notes=body["p_allergy_notes"].strip(), dislikes=body["p_dislikes"].strip())
+            return await ok(None)
+
+        rows = db[table]
+        key = "client_id" if table == "client_notes" else "meal_id" if table == "client_meal_private" else "id"
+        if req.method == "GET":
+            if table == "clients":
+                out = [dict(c, notes=({"notes": db["client_notes"][c["id"]]["notes"]} if c["id"] in db["client_notes"] else None))
+                       for c in rows.values()] if admin else [dict(c) for c in rows.values() if c["id"] in mine]
+                uid = eq("user_id")
+                if uid:
+                    out = [c for c in out if c.get("user_id") == uid]
+                return await ok(sorted(out, key=lambda c: c["name"]))
+            if table == "client_menus":
+                out = []
+                for m in rows.values():
+                    if not admin and not menu_for_client(m["id"]):
+                        continue
+                    if eq("client_id") and m["client_id"] != eq("client_id"):
+                        continue
+                    if eq("week_start") and m["week_start"] != eq("week_start"):
+                        continue
+                    meals = [dict(x) for x in db["client_meals"].values() if x["menu_id"] == m["id"]]
+                    if admin:
+                        for x in meals:
+                            x["private"] = db["client_meal_private"].get(x["id"])
+                    out.append(dict(m, meals=meals))
+                return await ok(sorted(out, key=lambda m: m["week_start"], reverse=True))
+            if table in ("client_requests", "client_favorites"):
+                out = [r for r in rows.values() if (admin or r["client_id"] in mine) and (not eq("client_id") or r["client_id"] == eq("client_id"))]
+                return await ok(sorted(out, key=lambda r: r.get("created_at", r.get("title", "")), reverse=table == "client_requests"))
+            if not admin:
+                return await ok([])
+            return await ok(list(rows.values()))
+        if not admin:
+            return await ok({"message": "new row violates row-level security policy"}, 403)
+        if req.method == "POST":
+            row = dict(body)
+            if key == "id":
+                row.setdefault("id", str(uuid.uuid4()))
+            defaults = {
+                "clients": dict(user_id=None, email="", plan="custom", entrees=5, servings=2, weekly_fee=0, allergens=[], allergy_notes="",
+                                dislikes="", targets={}, active=True, created_at="2026-11-12T09:00:00Z"),
+                "client_menus": dict(status="draft", approve_by=None, note="", sent_at=None),
+                "client_meals": dict(position=0, description="", ingredients=[], allergens=[], nutrition={}, servings=1, reheat="", storage="",
+                                     use_by=None, status="proposed", client_note="", rating=None, feedback=""),
+            }.get(table, {})
+            row = {**defaults, **row}
+            rows[row[key]] = row
+            return await ok([row], 201)
+        target = eq(key)
+        if req.method == "PATCH" and target in rows:
+            rows[target].update(body)
+            return await ok([rows[target]])
+        if req.method == "DELETE" and target in rows:
+            del rows[target]
+            if table == "clients":
+                for mid in [m["id"] for m in db["client_menus"].values() if m["client_id"] == target]:
+                    del db["client_menus"][mid]
+            if table == "client_menus":
+                for xid in [x["id"] for x in db["client_meals"].values() if x["menu_id"] == target]:
+                    del db["client_meals"][xid]
+            return await ok(None, 204)
+        return await ok([], 200)
 
     def by_token(self, req):
         tok = req.headers.get("authorization", "").replace("Bearer ", "")
@@ -93,6 +216,8 @@ class Fake:
             return await ok(self.token_resp(x))
         if path == "/rest/v1/rpc/signup_open":
             return await ok(self.open_signup)
+        if path.startswith("/rest/v1/client") or path.replace("/rest/v1/rpc/", "") in CLIENT_RPCS:
+            return await self.clients_api(req, path, q, body, user, ok, eq)
         if path == "/functions/v1/request-invite":
             new = not any(r["email"] == body["email"].lower() and r["status"] == "waiting" for r in self.requests.values())
             rid = str(uuid.uuid4())
@@ -789,6 +914,155 @@ async def run():
         await admin.click("dialog[open] button:has-text('Close sign-up')")
         await admin.wait_for_selector("text=Off: people need an invite")
         check("admin can close sign-up again", fake.open_signup is False)
+
+        # ---- meal prep clients: the chef plans a week, the client approves it dish by dish
+        fake.add_user("anna@example.com", "annapass99", "Anna Lee", "student")
+        await admin.goto(URL + "#/settings")
+        await admin.wait_for_selector("a:has-text('Meal prep clients')")
+        await admin.click("a:has-text('Meal prep clients')")
+        await admin.wait_for_selector(".addclient")
+        await admin.fill("input[aria-label='Client name']", "Anna Lee")
+        await admin.fill("input[aria-label='Client email']", "Anna@Example.com")
+        await admin.select_option(".addclient select", "couple")
+        await admin.click(".addclient button[type=submit]")
+        await admin.wait_for_selector("text=About this client")
+        check("a new client starts on the plan from the website", "Couple · 5 dishes × 2 servings · $185 a week" in await admin.inner_text("#app"))
+        await admin.check(".allergybox label:has-text('Fish') input")
+        await admin.fill("input[aria-label='Foods to avoid']", "no mushrooms")
+        await admin.fill("textarea[aria-label='Private notes']", "Gate code 1234")
+        await admin.click("button:has-text('Save') >> nth=0")
+        await admin.wait_for_selector("text=Allergies: Fish")
+        client_row = next(iter(fake.cdb["clients"].values()))
+        check("allergies and private notes are saved", client_row["allergens"] == ["Fish"] and fake.cdb["client_notes"][client_row["id"]]["notes"] == "Gate code 1234")
+
+        async def add_dish(page, search):
+            await page.click("button:has-text('Add a dish')")
+            await page.fill("dialog.pickdialog input[type=search]", search)
+            await page.wait_for_timeout(300)
+            await page.click("dialog.pickdialog .picklist button >> nth=0")
+            await page.wait_for_timeout(900)
+
+        await admin.click("button:has-text('Plan this week')")
+        await admin.wait_for_selector("button:has-text('Add a dish')")
+        await add_dish(admin, "Hearty Russian Beet Soup")
+        await add_dish(admin, "salmon")
+        check("two dishes are on the draft menu", await admin.locator(".mealcard").count() == 2 and len(fake.cdb["client_meals"]) == 2)
+        soup = next(m for m in fake.cdb["client_meals"].values() if "Beet" in m["title"])
+        fish = next(m for m in fake.cdb["client_meals"].values() if "Beet" not in m["title"])
+        check("a dish is stored as names only: no amounts, no method", soup["ingredients"] and all(not any(ch.isdigit() for ch in n) for n in soup["ingredients"])
+              and "dir" not in soup and soup["servings"] == 2, soup)
+        check("the recipe link is kept apart from what the client can read", fake.cdb["client_meal_private"][soup["id"]]["recipe_id"] and "recipe_id" not in soup)
+        check("fish is suggested as an allergen and flagged for this client", "Fish" in fish["allergens"] and "Contains Fish" in await admin.inner_text("#app"), fish["allergens"])
+        await admin.fill(".mealcard >> nth=0 >> textarea[aria-label=Description]", "A deep red soup, lighter than it looks.")
+        await admin.fill(".mealcard >> nth=0 >> input[aria-label=Reheating]", "Stovetop until steaming")
+        await admin.click(".mealcard >> nth=0 >> button:has-text('Save this meal')")
+        await admin.wait_for_timeout(900)
+        await admin.click("button:has-text('Send to Anna Lee')")
+        await admin.wait_for_selector("dialog[open]")
+        check("sending a dish with their allergen asks first", "allergic" in await admin.inner_text("dialog[open]"))
+        await admin.click("dialog[open] button:has-text('Send anyway')")
+        await admin.wait_for_selector("button:has-text('Finish this menu')")
+        check("the menu is sent", next(iter(fake.cdb["client_menus"].values()))["status"] == "sent")
+        await admin.screenshot(path="/tmp/cloud_client_menu_chef.png", full_page=True)
+
+        actx, anna = await new_page(b, fake)
+        await sign_in(anna, "anna@example.com", "annapass99")
+        await anna.wait_for_selector("#tabs a[data-tab=meals]", timeout=15000)
+        check("signing in with the email on file links the client and shows My meals", client_row["user_id"] == fake.users["anna@example.com"]["id"])
+        await anna.click("#tabs a[data-tab=meals]")
+        await anna.wait_for_selector(".mealcard")
+        page_text = await anna.inner_text("#app")
+        check("the client sees the dishes with ingredients, nutrition and allergens",
+              "Hello, Anna" in page_text and "Ingredients:" in page_text and "A deep red soup" in page_text and "Stovetop until steaming" in page_text)
+        check("the client is warned about their own allergen", "which is on your allergy list" in page_text)
+        check("the client never sees the method or the recipe link", "Open the recipe" not in page_text and await anna.locator(".mealcard a[href^='#/r/']").count() == 0)
+        got = await anna.evaluate("""async () => {
+          const s = JSON.parse(localStorage.getItem('recipelib.session'));
+          const get = (p) => fetch('https://x.supabase.co/rest/v1/' + p, { headers: { Authorization: 'Bearer ' + s.access_token } }).then((r) => r.json());
+          return { priv: await get('client_meal_private?select=*'), notes: await get('client_notes?select=*'), templates: await get('client_menu_templates?select=*') };
+        }""")
+        check("asking the server directly gives a client nothing private", got == {"priv": [], "notes": [], "templates": []}, got)
+        await anna.click(".mealcard >> nth=0 >> button:has-text('Approve')")
+        await anna.wait_for_selector(".mealcard >> nth=0 >> button:has-text('✓ Approved')")
+        await anna.click(".mealcard >> nth=1 >> button:has-text('Swap this')")
+        await anna.fill("dialog.askdialog input", "No fish please, chicken instead")
+        await anna.click("dialog.askdialog button[type=submit]")
+        await anna.wait_for_selector("text=You asked: No fish please")
+        check("approve and swap answers are saved", soup["status"] == "approved" and fish["status"] == "swap" and fish["client_note"] == "No fish please, chicken instead")
+        await anna.click(".mealcard >> nth=0 >> .heart")
+        await anna.wait_for_selector(".mealcard >> nth=0 >> .heart[aria-pressed=true]")
+        await anna.fill("input[aria-label='Ask for a dish']", "Shrimp and grits")
+        await anna.press("input[aria-label='Ask for a dish']", "Enter")
+        await anna.wait_for_selector("text=with your chef")
+        check("a favourite and a request are saved", len(fake.cdb["client_favorites"]) == 1 and [r["title"] for r in fake.cdb["client_requests"].values()] == ["Shrimp and grits"])
+        await anna.check(".checks label:has-text('Sesame') input")
+        await anna.click("section:has-text('Allergies and foods to avoid') button:has-text('Save')")
+        await anna.wait_for_timeout(1200)
+        check("a client can add to their own allergies", client_row["allergens"] == ["Fish", "Sesame"], client_row["allergens"])
+        await anna.goto(URL + "#/clients")
+        await anna.wait_for_selector("text=Only the chef can see this page")
+        check("a client cannot open the chef's client pages", True)
+        await anna.screenshot(path="/tmp/cloud_client_meals.png", full_page=True)
+
+        await admin.reload()
+        await admin.wait_for_selector(".mealcard")
+        chef_text = (await admin.inner_text("#app")).lower()      # labels are styled in capitals
+        check("the chef sees the answers and the swap note", "swap requested" in chef_text and "no fish please, chicken instead" in chef_text and "1 approved, 1 to swap" in chef_text, chef_text[:1500])
+        menu_row = next(iter(fake.cdb["client_menus"].values()))
+        await admin.goto(URL + f"#/prep/{menu_row['week_start']}")
+        await admin.wait_for_selector(".prep li, .empty")
+        prep_text = (await admin.inner_text("#app")).lower()
+        check("the prep sheet lists approved dishes and what is still waiting", "beet soup" in prep_text and "2 portions" in prep_text and "asked to swap" in prep_text and "$185 in fees" in prep_text, prep_text[:900])
+        await admin.goto(URL + f"#/labels/{client_row['id']}/{menu_row['id']}")
+        await admin.wait_for_selector(".foodlabel")
+        label = await admin.inner_text(".foodlabel >> nth=0")
+        check("labels carry the dish, client, reheating and allergens", "Beet Soup" in label and "Anna Lee" in label and "Reheat: Stovetop until steaming" in label and ("Contains:" in label or "No major allergens" in label), label)
+        await admin.goto(URL + f"#/clients/{client_row['id']}")
+        await admin.wait_for_selector("text=They asked for")
+        check("the chef sees the request and the favourite", "Shrimp and grits" in await admin.inner_text("#app"))
+        await admin.click(".asks button:has-text('Planned')")
+        await admin.wait_for_timeout(900)
+        check("a request can be marked as planned", next(iter(fake.cdb["client_requests"].values()))["status"] == "planned")
+        await admin.goto(URL + f"#/clients/{client_row['id']}/{menu_row['id']}")
+        await admin.wait_for_selector("button:has-text('Finish this menu')")
+        await admin.click("button:has-text('Save as a reusable week')")
+        await admin.fill("dialog.askdialog input", "Couple week one")
+        await admin.click("dialog.askdialog button[type=submit]")
+        await admin.wait_for_timeout(900)
+        check("a week can be saved to reuse", [t["name"] for t in fake.cdb["client_menu_templates"].values()] == ["Couple week one"])
+        await admin.click("button:has-text('Finish this menu')")
+        await admin.click("dialog[open] button:has-text('Finish menu')")
+        await admin.wait_for_selector("button:has-text('Reopen')")
+
+        await anna.goto(URL + "#/meals")
+        await anna.reload()
+        try:
+            await anna.wait_for_selector("text=What you have had", timeout=10000)
+        except Exception:
+            print("DEBUG client page:", (await anna.inner_text("#app"))[:700])
+            print("DEBUG menus:", [(m["status"], m["client_id"] == client_row["id"]) for m in fake.cdb["client_menus"].values()])
+            print("DEBUG errors:", [e for e in errors if "Failed to load resource" not in e][-5:])
+            print("DEBUG 404s:", [x for x in fake.log if x[1].startswith("/rest/v1/")][-8:])
+            print("DEBUG requests:", [x for x in fake.log[-25:] if "client" in x[1] or "rpc" in x[1]])
+            print("DEBUG lib:", await anna.evaluate("document.body.dataset.view + ' ' + location.hash + ' ' + document.querySelectorAll('.sk').length"))
+            raise
+        hist = await anna.inner_text("#app")
+        check("a finished menu moves to the client's history, without the swapped dish", "No menu waiting" in hist and "Beet Soup" in hist and "Every dish so far" in hist)
+        await anna.click(".mealcard .ratestar >> nth=4")
+        await anna.fill("dialog.askdialog input", "Loved it")
+        await anna.click("dialog.askdialog button[type=submit]")
+        await anna.wait_for_timeout(1200)
+        check("a client can rate a dish they have had", soup.get("rating") == 5 and soup.get("feedback") == "Loved it", (soup.get("rating"), soup.get("feedback")))
+        await anna.click(".mealcard button:has-text('Have this again') >> nth=0")
+        await anna.click("dialog.askdialog button[type=submit]")
+        await anna.wait_for_timeout(1200)
+        check("and ask to have it again", any("Beet" in r["title"] and r["status"] == "open" for r in fake.cdb["client_requests"].values()))
+
+        fake.no_clients = True
+        await admin.goto(URL + "#/clients")
+        await admin.wait_for_selector("text=add_clients.sql")
+        check("a database without the client section is explained", True)
+        fake.no_clients = False
 
         # desktop screenshot of admin
         await admin.set_viewport_size({"width": 1280, "height": 900})

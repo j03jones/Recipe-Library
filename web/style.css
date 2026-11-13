@@ -642,3 +642,59 @@ details.notcounted ul { margin: .2rem 0; padding-left: 1.2rem; }
   .printbook .bookgroup { font-weight: 700; margin-top: .5rem; }
   .printbook ol li { margin-bottom: .4rem; }
 }
+
+/* ---- meal prep clients */
+.clientlist, .asks, .prep, ul.meals { list-style: none; margin: .4rem 0; padding: 0; }
+.clientlist li { border-bottom: 1px solid var(--line); }
+.clientlist li a { display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .6rem; padding: .7rem .2rem; text-decoration: none; color: inherit; }
+.clientlist li a strong { flex: 1 1 100%; font-family: var(--slab); font-size: 1.1rem; }
+.asks li, .prep li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .3rem .8rem; padding: .55rem .1rem; border-bottom: 1px solid var(--line); }
+.prep li > div:first-child { display: flex; align-items: baseline; gap: .6rem; flex: 1 1 100%; justify-content: space-between; }
+.card.stack, section.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; margin-top: 1.4rem; }
+section.card h2, .card.stack h2 { margin-top: 0; }
+section.stack > h2 { margin-bottom: .2rem; }
+.card label, .mealcard label { display: block; font-weight: 600; font-size: .9rem; }
+.card label > input:not([type=checkbox]), .card label > select, .card label > textarea { display: block; width: 100%; margin-top: .2rem; font-weight: 400; }
+.card textarea, .mealcard textarea, section.stack textarea { width: 100%; }
+.row.trio > label, .row.quad > input { flex: 1 1 0; min-width: 0; }
+.row.trio input { width: 100%; }
+fieldset { border: 1px solid var(--line); border-radius: var(--radius); padding: .6rem .8rem .8rem; margin: 0; }
+fieldset legend { font-weight: 600; font-size: .9rem; padding: 0 .3rem; }
+.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: .1rem .6rem; margin-bottom: .5rem; }
+.checks .check { font-weight: 400; }
+.checks .check.suggested { font-weight: 700; }
+.checks .check.theirs { color: var(--rust); }
+.mealcard { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: .9rem; margin: .7rem 0; }
+.mealcard > * + * { margin-top: .55rem; }
+.mealcard.approved { border-left: 4px solid var(--herb); }
+.mealcard.swap { border-left: 4px solid var(--rust); }
+.mealcard h3 { margin: 0; flex: 1 1 auto; font-size: 1.15rem; }
+.mealhead { justify-content: flex-start; gap: .4rem .7rem; }
+.mealhead .icon-btn, .mealhead .heart { margin-left: auto; }
+.ingline { line-height: 1.5; }
+.macros { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem 1rem; }
+.macros .macro b { font-family: var(--slab); font-size: 1.1rem; }
+.macros .per { margin-left: auto; }
+.label.danger { background: var(--rust); border-color: var(--rust); color: #fff; }
+.label.ok { background: var(--herb); border-color: var(--herb); color: #fff; }
+.note.danger { border-left: 4px solid var(--rust); }
+.labels.allergens { display: flex; flex-wrap: wrap; gap: .3rem; }
+.answer button { flex: 1 1 0; }
+.answer button[aria-pressed=true]:not(.primary) { border-color: var(--rust); color: var(--rust); }
+.heart { border: 0; background: none; font-size: 1.5rem; line-height: 1; padding: .1rem .3rem; color: var(--muted); }
+.heart[aria-pressed=true] { color: var(--rust); }
+.weekhead { font-family: var(--slab); font-weight: 700; margin-top: 1.2rem; color: var(--muted); }
+.addclient { margin-top: 1.6rem; }
+/* container labels: 2 across on a letter page, cut along the borders */
+.labelsheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .6rem; margin-top: 1rem; }
+.foodlabel { border: 1.5px solid currentColor; border-radius: 8px; padding: .6rem .7rem; display: flex; flex-direction: column; gap: .15rem; break-inside: avoid; background: #fff; color: #111; }
+.foodlabel .lt { font-family: var(--slab); font-size: 1.05rem; line-height: 1.2; }
+.foodlabel .lc, .foodlabel .ll, .foodlabel .lm { font-size: .8rem; }
+.foodlabel .la { font-size: .8rem; font-weight: 700; margin-top: .2rem; }
+@media print {
+  .labeltools, .addclient, .mealcard .row button, .answer { display: none !important; }
+  body[data-view=labels] .band { display: none !important; }
+  .labelsheet { grid-template-columns: repeat(2, 1fr); }
+}
+.askdialog p { margin-top: 0; font-weight: 600; }
+.askdialog .row { margin-top: .9rem; }

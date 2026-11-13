@@ -45,6 +45,30 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Meal prep clients (v0.22)
+
+A section for Jones Ridge Kitchen meal prep clients, built around the plans on jonesridgekitchen.com/meal-prep
+(Family Table, Couple, Lean & Fresh) and the allergy list on its quote form. Needs `supabase/add_clients.sql`.
+
+**For the chef** (Settings > Meal prep clients):
+- A page per client: plan, dishes and servings per week, fee, allergies, foods to avoid, daily targets,
+  private notes, and an emailed invitation.
+- Plan a week from the library. Each dish is copied for the client as its name, a description, ingredient
+  names, nutrition per serving, allergens and reheating notes: never the amounts or the method.
+- Allergens are suggested from the ingredient names and must be checked by the chef (bought sauces and stocks
+  are not checked). A dish with something the client is allergic to, or a food on their avoid list, is flagged,
+  and sending it asks first.
+- Send the menu with an answer-by time (Sunday 6 pm by default), see approvals and swap requests, swap a dish,
+  finish the week. Save a week to reuse it for another client.
+- Prep sheet: every approved dish across all clients for a week, added up, with what is still waiting, the fees
+  and estimated groceries; one tap puts it all on the shopping list at the right scale.
+- Container labels to print: dish, client, date made, use-by, reheating, allergens, and macros on Lean & Fresh.
+
+**For the client** (the **My meals** tab, once they sign in with the email address the chef has):
+- This week's menu with ingredients, nutrition and allergens; approve or ask to swap each dish (or approve all).
+- What they have had, with ratings, favourites, and **Have this again**; ask for any dish.
+- Their own allergies and foods to avoid, which the chef sees.
+
 ## Import and export formats (v0.20)
 
 Settings → *Import and export recipes* (also linked from the Add page). Everything runs in the browser; nothing is uploaded.

@@ -19,6 +19,7 @@ import { addStars, buzz, confetti, copyText, emojiFor, greeting, icon, isStarred
 import { restoreTimers, timerChips } from './timers.js';
 import * as cloud from './cloud.js';
 import { accountCard, viewAdmin, viewJoin } from './account.js';
+import { viewClient, viewClients, viewLabels, viewMenu, viewMyMeals, viewPrep } from './clientsui.js';
 import * as photos from './photos.js';
 import { linkFor, packRecipe, unpackRecipe } from './sharelink.js';
 import { qrSvg } from './qr.js';
@@ -106,7 +107,7 @@ const num = (f, places) => trim0(f.toNumber().toFixed(places));
 
 // ------------------------------------------------------------------- library
 
-const lib = { more: [], moreState: 'idle', base: [], mine: new Map(), all: [], byId: new Map(), cats: [], cloud: [], me: null, restaurants: [], syncError: '', planSyncError: '', libPhotos: {}, avatars: {} };
+const lib = { clients: [], more: [], moreState: 'idle', base: [], mine: new Map(), all: [], byId: new Map(), cats: [], cloud: [], me: null, restaurants: [], syncError: '', planSyncError: '', libPhotos: {}, avatars: {} };
 
 // ---- the rest of the library: on-demand files next to the built-in recipes (tools/export_more.py).
 // data/more.json names the current set; its index gives every extra recipe's title, categories and
@@ -203,15 +204,30 @@ function loadCloudCache() {
   try {
     const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
     const u = cloud.currentUser();
-    if (c && u && c.uid === u.id) { lib.me = c.me; lib.cloud = c.rows; lib.libPhotos = c.libPhotos || {}; lib.avatars = c.avatars || {}; }
+    if (c && u && c.uid === u.id) { lib.me = c.me; lib.cloud = c.rows; lib.libPhotos = c.libPhotos || {}; lib.avatars = c.avatars || {}; lib.clients = Array.isArray(c.clients) ? c.clients : []; }
   } catch { /* no cache */ }
 }
 function saveCloudCache() {
   if (!lib.me) return;
-  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ uid: lib.me.id, me: lib.me, rows: lib.cloud, libPhotos: lib.libPhotos, avatars: lib.avatars })); } catch { /* full */ }
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ uid: lib.me.id, me: lib.me, rows: lib.cloud, libPhotos: lib.libPhotos, avatars: lib.avatars, clients: lib.clients })); } catch { /* full */ }
 }
+/** Meal prep clients get a "My meals" tab in place of "Add" (adding a recipe is still under Settings). */
+function paintClientTab() {
+  const tab = document.querySelector('#tabs a[data-tab=new], #tabs a[data-tab=meals]');
+  if (!tab) return;
+  const isClient = lib.clients.length > 0;
+  if (isClient === (tab.dataset.tab === 'meals')) return;
+  if (!tab.dataset.addHtml) tab.dataset.addHtml = tab.innerHTML;
+  tab.dataset.tab = isClient ? 'meals' : 'new';
+  tab.setAttribute('href', isClient ? '#/meals' : '#/new');
+  if (isClient) {
+    tab.innerHTML = '<span class="pillbg"></span><svg class="ico" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11h16a8 8 0 0 1-16 0z"/><path d="M9 4.5c0 1.2 1 1.3 1 2.5M13.5 4.5c0 1.2 1 1.3 1 2.5"/></svg><span>My meals</span>';
+  } else tab.innerHTML = tab.dataset.addHtml;
+}
+
 function clearCloud() {
-  lib.me = null; lib.cloud = []; lib.libPhotos = {}; lib.avatars = {};
+  lib.me = null; lib.cloud = []; lib.clients = []; lib.libPhotos = {}; lib.avatars = {};
+  paintClientTab();
   try { localStorage.removeItem(CACHE_KEY); } catch { /* ignore */ }
   rebuild();
 }
@@ -220,6 +236,9 @@ async function refreshCloud() {
   try {
     const [me, rows] = await Promise.all([cloud.loadMe(), cloud.listRecipes()]);
     lib.me = me; lib.cloud = rows;
+    // a meal prep client's own record(s): linked by email the first time they sign in
+    try { lib.clients = await cloud.myClients(); } catch { /* offline, or a database without the client section: keep what we had */ }
+    paintClientTab();
     try { lib.avatars = Object.fromEntries((await cloud.communityAvatars()).map((a) => [a.id, a.avatar])); } catch { /* keep the old ones */ }
     saveCloudCache();
   } catch (err) {
@@ -1945,6 +1964,13 @@ function route() {
   if (kind === 'links') return viewLinks(id || COLLECTIONS[0].id);
   if (kind === 'import') return viewImport();
   if (kind === 'admin') return viewAdmin(ctx);
+  if (kind === 'meals') return viewMyMeals(ctx);
+  if (kind === 'clients' || kind === 'prep' || kind === 'labels') {
+    const [, a, b] = hash.split('/').map(decodeURIComponent);
+    if (kind === 'prep') return viewPrep(ctx, a);
+    if (kind === 'labels') return viewLabels(ctx, a, b);
+    return b ? viewMenu(ctx, a, b) : a ? viewClient(ctx, a) : viewClients(ctx);
+  }
   if (kind === 'join') return viewJoin(ctx, id);
   if (kind === 'starred') return viewList(true);
   if (kind === 'shop') return viewShop();
@@ -1959,13 +1985,14 @@ function route() {
 
 const ctx = {
   h, fill, toast, icon, lib, $app, setView, goBack, refreshCloud, clearCloud, confirmDialog, infoDialog, pageHead,
-  rerender: () => route(), joinCode: '',
+  rerender: () => route(), joinCode: '', ensureFull, pickRecipe: (label) => pickForPlan(label),
 };
 
 async function boot() {
   const linkType = cloud.takeSessionFromHash();      // arriving from a confirmation / reset email
   if (linkType) history.replaceState(history.state, '', `${location.pathname}${location.search}#/settings`);
   loadCloudCache();
+  paintClientTab();
   restoreTimers();
   document.addEventListener('timerdone', (e) => toast(`${e.detail.label} timer is done`, 6000));
   try {
@@ -2007,7 +2034,7 @@ async function boot() {
     await refreshCloud();
     const view = document.body.dataset.view;
     const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '') && document.activeElement.value;
-    if ((['plan', 'shop', 'pantry', 'collection'].includes(view) && !typing && !document.querySelector('dialog[open]')) || view === 'list' || (view === 'recipe' && !hadAccount) || (view === 'settings' && !ctx.recovery && !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '') && location.hash.indexOf('admin') < 0)) route();
+    if ((['plan', 'shop', 'pantry', 'collection', 'meals'].includes(view) && !typing && !document.querySelector('dialog[open]')) || view === 'list' || (view === 'recipe' && !hadAccount) || (view === 'settings' && !ctx.recovery && !/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '') && location.hash.indexOf('admin') < 0)) route();
   }
 }
 
