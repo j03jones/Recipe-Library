@@ -26,4 +26,15 @@ const sheet = clients.prepSheet(input.menus);
 out.prep = { dishes: sheet.dishes.map((d) => [d.title, d.recipeId, String(d.factor), d.portions, d.clients]), waiting: sheet.waiting };
 out.labels = [clients.labelFor(input.meals[0], input.client, 'Nov 15'), clients.labelFor(input.meals[1], { ...input.client, plan: 'lean' }, '')];
 out.cost = clients.groceryCost(recipes[0], clients.factorFor(recipes[0], 4), input.prices);
+// dishes made of several recipes
+out.titles = [[], ['Gumbo'], ['Gumbo', 'Rice'], ['Gumbo', 'Rice', 'Greens'], ['Gumbo', 'Rice', 'Greens', 'Cornbread']].map(clients.dishTitle);
+out.combined = clients.combine(out.snapshots.map((s) => ({ ...s, servings: 2 })));
+out.single = clients.combine([out.snapshots[0]]) === out.snapshots[0];
+const parts = [{ recipe_id: 'g1', title: 'Gumbo', factor: '1/2', grocery_cost: 6.5 }, { recipe_id: 'r1', title: 'Rice', factor: '1', grocery_cost: null },
+  { recipe_id: 'p1', title: 'Pecan Pie', factor: '1/4', grocery_cost: 2.25 }];
+out.priv = [clients.privateFor(parts), clients.privateFor(parts.slice(0, 1)), clients.privateFor([parts[1]])];
+out.partsOf = [clients.partsOf({ title: 'Gumbo plate', private: out.priv[0] }), clients.partsOf({ title: 'Old dish', private: { recipe_id: 'g1', factor: '1/2', grocery_cost: 3 } }),
+  clients.partsOf({ title: 'Typed in', private: { recipe_id: '' } })];
+const sheet2 = clients.prepSheet(input.partsMenus);
+out.prepParts = sheet2.dishes.map((d) => [d.title, d.recipeId, String(d.factor), d.portions]);
 process.stdout.write(JSON.stringify(out));

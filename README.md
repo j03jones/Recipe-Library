@@ -9,7 +9,8 @@ MealMaster recipe files, lets you add and edit recipes, and scales them.
 - [x] Parser hardened against ~5,500 real recipes (11 archive files, all start/end markers matched)
 - [x] Command-line front end for trying the core
 - [x] GUI (PySide6): searchable library, recipe view with scaling, import dialog, add/edit form
-- [ ] Linux packaging, then Windows and macOS builds
+- Desktop app development stopped in November 2026; the hosted web app is the product. The GUI code
+  below still runs, but CI no longer builds or releases desktop packages (v0.25).
 
 ## Run the GUI
 
@@ -44,6 +45,15 @@ The groups and the label-to-group mapping live in `recipelib/category_data.py`; 
 rename groups or move a label, then run `regroup` again (it re-derives groups from the saved
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
+
+## Dishes made of more than one recipe (v0.25)
+
+For the chef. On a menu, each dish shows its recipes as a row of chips under
+the dish name, with **Add a side or sauce**. Adding one keeps it one dish for the client ("Grilled Chicken with Rice
+Pilaf"): every ingredient name once, every allergen, and nutrition per serving added up. The name follows the recipes
+unless you renamed it; allergens you unticked stay unticked unless a recipe you add brings them. The prep sheet and
+the shopping list count each recipe on its own at the right scale, the grocery estimate is the total, and saved weeks
+keep the sides. Needs `supabase/add_meal_parts.sql`.
 
 ## Client portal on the website (v0.24)
 

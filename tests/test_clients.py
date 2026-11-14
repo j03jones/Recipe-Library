@@ -50,6 +50,14 @@ CASES = {
         {"week_start": "2026-11-23", "status": "sent", "client": {"name": "Dee"}, "meals": []},
     ],
     "prices": {"chicken": {"p": 3, "per": "lb"}, "flour": {"p": 0.5, "per": "lb"}},
+    # a dish of gumbo with rice for Anna, and gumbo on its own (an older one-recipe meal) for Ben
+    "partsMenus": [
+        {"status": "sent", "client": {"name": "Anna"}, "meals": [
+            {"title": "Gumbo with Rice", "status": "approved", "servings": 2, "private": {"recipe_id": "g1", "factor": "1/2", "parts": [
+                {"recipe_id": "g1", "title": "Chicken and Andouille Gumbo", "factor": "1/2"}, {"recipe_id": "r1", "title": "Rice", "factor": "1/3"}]}}]},
+        {"status": "sent", "client": {"name": "Ben"}, "meals": [
+            {"title": "Ben's gumbo", "status": "approved", "servings": 4, "private": {"recipe_id": "g1", "factor": "1"}}]},
+    ],
 }
 
 
@@ -154,6 +162,39 @@ class Clients(unittest.TestCase):
         cost = self.out["cost"]
         self.assertGreater(cost["total"], 0)
         self.assertFalse(cost["complete"])       # oil, onions and the rest have no price yet
+
+    def test_a_dish_name_from_several_recipes(self):
+        self.assertEqual(self.out["titles"], ["", "Gumbo", "Gumbo with Rice", "Gumbo with Rice and Greens",
+                                              "Gumbo with Rice, Greens and Cornbread"])
+
+    def test_a_dish_of_several_recipes_is_shown_to_the_client_as_one(self):
+        gumbo, pie = self.out["snapshots"]
+        dish = self.out["combined"]
+        self.assertEqual(dish["title"], "Chicken and Andouille Gumbo with Pecan Pie")
+        self.assertEqual(dish["ingredients"][:len(gumbo["ingredients"])], gumbo["ingredients"])
+        self.assertIn("Pecans", dish["ingredients"])
+        self.assertEqual(len(dish["ingredients"]), len({n.lower() for n in dish["ingredients"]}))
+        # every allergen of every part, in the usual order
+        self.assertEqual(dish["allergens"], ["Tree nuts", "Milk / dairy", "Eggs", "Wheat / gluten", "Fish"])
+        # the pie has no yield, so only the gumbo is counted, and coverage says the numbers are rough
+        self.assertEqual(dish["nutrition"]["kcal"], gumbo["nutrition"]["kcal"])
+        self.assertEqual(dish["nutrition"]["coverage"], 0)
+        self.assertEqual(dish["servings"], 2)
+        self.assertNotIn("dir", dish)
+        self.assertTrue(self.out["single"])
+
+    def test_the_chef_only_row_keeps_the_main_recipe_and_the_total(self):
+        both, one, unpriced = self.out["priv"]
+        self.assertEqual((both["recipe_id"], both["factor"], both["grocery_cost"], len(both["parts"])), ("g1", "1/2", 8.75, 3))
+        self.assertEqual((one["recipe_id"], one["grocery_cost"], one["parts"]), ("g1", 6.5, []))
+        self.assertIsNone(unpriced["grocery_cost"])
+        several, old, typed = self.out["partsOf"]
+        self.assertEqual([p["recipe_id"] for p in several], ["g1", "r1", "p1"])
+        self.assertEqual(old, [{"recipe_id": "g1", "title": "Old dish", "factor": "1/2", "grocery_cost": 3}])
+        self.assertEqual(typed, [])
+
+    def test_prep_sheet_counts_each_recipe_of_a_dish(self):
+        self.assertEqual(self.out["prepParts"], [["Chicken and Andouille Gumbo", "g1", "3/2", 6], ["Rice", "r1", "1/3", 2]])
 
 
 if __name__ == "__main__":

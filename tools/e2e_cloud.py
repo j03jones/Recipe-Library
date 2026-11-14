@@ -958,6 +958,27 @@ async def run():
               and "dir" not in soup and soup["servings"] == 2, soup)
         check("the recipe link is kept apart from what the client can read", fake.cdb["client_meal_private"][soup["id"]]["recipe_id"] and "recipe_id" not in soup)
         check("fish is suggested as an allergen and flagged for this client", "Fish" in fish["allergens"] and "Contains Fish" in await admin.inner_text("#app"), fish["allergens"])
+        # one dish from several recipes: a side goes onto the soup as a chip, and comes off again
+        check("a one-recipe dish shows its recipe and a way to add a side",
+              await admin.locator(".mealcard >> nth=0 >> .partchip").count() == 1
+              and await admin.locator(".mealcard >> nth=0 >> button.addpart:has-text('Add a side or sauce')").count() == 1)
+        soup_ings = len(soup["ingredients"])
+        await admin.click(".mealcard >> nth=0 >> button.addpart")
+        await admin.fill("dialog.pickdialog input[type=search]", "rice")
+        await admin.wait_for_timeout(300)
+        await admin.click("dialog.pickdialog .picklist button >> nth=0")
+        await admin.wait_for_selector(".mealcard >> nth=0 >> .partchip >> nth=1", timeout=10000)
+        parts = fake.cdb["client_meal_private"][soup["id"]].get("parts") or []
+        check("a side is added to the same dish, not as a new one",
+              len(fake.cdb["client_meals"]) == 2 and len(parts) == 2 and parts[0]["recipe_id"] == fake.cdb["client_meal_private"][soup["id"]]["recipe_id"], parts)
+        check("the dish name and ingredients take in the side",
+              " with " in soup["title"] and len(soup["ingredients"]) > soup_ings and "Add a recipe" in await admin.inner_text(".mealcard >> nth=0 >> .dishparts"), soup["title"])
+        check("which recipes make the dish stays off what the client reads", "parts" not in soup)
+        await admin.screenshot(path="/tmp/cloud_dish_parts.png", full_page=False)
+        await admin.click(".mealcard >> nth=0 >> .partchip >> nth=1 >> button.chipx")
+        await admin.wait_for_timeout(900)
+        check("a side can be taken out again", (fake.cdb["client_meal_private"][soup["id"]].get("parts") or []) == [] and " with " not in soup["title"]
+              and len(soup["ingredients"]) == soup_ings, soup["title"])
         await admin.fill(".mealcard >> nth=0 >> textarea[aria-label=Description]", "A deep red soup, lighter than it looks.")
         await admin.fill(".mealcard >> nth=0 >> input[aria-label=Reheating]", "Stovetop until steaming")
         await admin.click(".mealcard >> nth=0 >> button:has-text('Save this meal')")
