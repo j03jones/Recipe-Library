@@ -1075,6 +1075,77 @@ async def run():
         await anna.wait_for_timeout(1200)
         check("and ask to have it again", any("Beet" in r["title"] and r["status"] == "open" for r in fake.cdb["client_requests"].values()))
 
+        # ---- restaurant clients on the same page (v0.24)
+        fake.restaurants[rid]["subscription_status"] = "active"
+        for m in fake.members:
+            if m["user_id"] == fake.users["rae@maple.test"]["id"]:
+                m["member_role"] = "owner"
+        pctx, rae = await new_page(b, fake)
+        await rae.goto(PORTAL)
+        await rae.wait_for_selector("#jrk-portal .jrk-tabs")
+        await rae.fill("#jrk-portal input[aria-label=Email]", "rae@maple.test")
+        await rae.fill("#jrk-portal input[aria-label=Password]", "raespass99")
+        await rae.click("#jrk-portal button[type=submit]")
+        await rae.wait_for_selector("#jrk-portal .jrk-recipes", timeout=15000)
+        ptext = await rae.inner_text("#jrk-portal")
+        check("restaurant staff see their collection on the client page",
+              "Maple Street Grill" in ptext and await rae.locator(".jrk-recipes a:has-text('Maple House Vinaigrette')").count() == 1)
+        check("a restaurant-only login has no meal prep section or switcher", "Hello," not in ptext and await rae.locator(".jrk-switch").count() == 0)
+        check("other recipes the login can see are not listed", await rae.locator(".jrk-recipes li").count() == 1)
+        await rae.fill("#jrk-portal input[aria-label='Search recipes']", "zzz")
+        check("search narrows the collection", "No recipes match" in await rae.inner_text(".jrk-recipes"))
+        await rae.fill("#jrk-portal input[aria-label='Search recipes']", "olive")
+        check("search finds by ingredient", await rae.locator(".jrk-recipes a").count() == 1)
+        await rae.click(".jrk-recipes a:has-text('Maple House Vinaigrette')")
+        await rae.wait_for_selector(".jrk-recipe")
+        rtext = await rae.inner_text(".jrk-recipe")
+        check("the full recipe opens: yield, ingredients and method", "Makes 2 cups" in rtext and "1 cup olive oil" in rtext and "Whisk." in rtext)
+        await rae.click(".jrk-scale button:has-text('2×')")
+        check("a collection recipe scales on the client page", "2 cups olive oil" in await rae.inner_text(".jrk-ings-list"))
+        await rae.screenshot(path="/tmp/portal_restaurant_recipe.png", full_page=True)
+        await rae.go_back()
+        await rae.wait_for_selector(".jrk-recipes")
+        check("the browser back button returns to the list", "/coll1" not in rae.url and await rae.locator(".jrk-recipe").count() == 0)
+
+        await rae.click("button:has-text('Invite someone')")
+        await rae.wait_for_selector(".jrk-invite code")
+        invite = await rae.inner_text(".jrk-invite code")
+        check("an owner can invite staff from the client page", "?join=CODE" in invite, invite)
+        jctx, joe = await new_page(b, fake)
+        await joe.goto(invite)
+        await joe.wait_for_selector("#jrk-portal input[aria-label='Invite code']")
+        check("an invite link opens sign-up with the code filled in", (await joe.input_value("#jrk-portal input[aria-label='Invite code']")).startswith("CODE"))
+        await joe.fill("#jrk-portal input[aria-label='Your name']", "Joe Line")
+        await joe.fill("#jrk-portal input[aria-label=Email]", "joe@maple.test")
+        await joe.fill("#jrk-portal input[aria-label=Password]", "joespass99")
+        await joe.click("#jrk-portal button[type=submit]")
+        await joe.wait_for_selector("#jrk-portal .jrk-recipes", timeout=15000)
+        check("new staff land on their restaurant's recipes",
+              any(m["user_id"] == fake.users["joe@maple.test"]["id"] and m["member_role"] == "staff" for m in fake.members)
+              and "join=" not in joe.url and not fake.users["joe@maple.test"].get("meta", {}).get("portal"))
+        check("staff are not offered invites", await joe.locator("button:has-text('Invite someone')").count() == 0)
+
+        fake.restaurants[rid]["subscription_status"] = "canceled"
+        await joe.reload()
+        await joe.wait_for_selector("text=Your recipe collection is paused")
+        check("a lapsed plan shows a paused message instead of recipes", await joe.locator(".jrk-recipes").count() == 0)
+        fake.restaurants[rid]["subscription_status"] = "active"
+
+        # a login that is both a meal prep client and on a restaurant team gets a switcher
+        fake.members.append(dict(user_id=fake.users["anna@example.com"]["id"], restaurant_id=rid, member_role="staff"))
+        await anna.fill("#jrk-portal input[aria-label=Email]", "anna@example.com")
+        await anna.fill("#jrk-portal input[aria-label=Password]", "annapass99")
+        await anna.click("#jrk-portal button[type=submit]")
+        await anna.wait_for_selector(".jrk-switch")
+        check("meal prep comes first for a client on both", "Hello, Anna" in await anna.inner_text("#jrk-portal"))
+        await anna.click(".jrk-switch a:has-text('Maple Street Grill')")
+        await anna.wait_for_selector(".jrk-recipes")
+        check("the switcher opens the restaurant's recipes", await anna.locator(".jrk-switch a[aria-current=page]:has-text('Maple Street Grill')").count() == 1)
+        await anna.click(".jrk-switch a:has-text('My meals')")
+        await anna.wait_for_selector("text=Hello, Anna")
+        check("and back to their meals", True)
+        fake.members.pop()
+
         fake.no_clients = True
         await admin.goto(URL + "#/clients")
         await admin.wait_for_selector("text=add_clients.sql")
