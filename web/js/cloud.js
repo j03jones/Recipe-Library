@@ -369,7 +369,7 @@ export async function saveClient(client) {
 }
 export const deleteClient = (id) => authed(`/rest/v1/clients?id=eq.${enc(id)}`, { method: 'DELETE' });
 
-const MENU_SELECT = 'select=*,meals:client_meals(*,private:client_meal_private(recipe_id,factor,grocery_cost))';
+const MENU_SELECT = 'select=*,meals:client_meals(*,private:client_meal_private(*))';   // * so a database without parts (add_meal_parts.sql) still loads
 /** A client's menus, newest week first, each with its meals in order. */
 export async function listMenus(clientId) {
   const rows = await authed(`/rest/v1/client_menus?client_id=eq.${enc(clientId)}&${MENU_SELECT}&order=week_start.desc`);
@@ -389,15 +389,25 @@ export async function createMenu(clientId, weekStart, fields = {}) {
 export const updateMenu = (id, fields) => authed(`/rest/v1/client_menus?id=eq.${enc(id)}`, { method: 'PATCH', body: fields });
 export const deleteMenu = (id) => authed(`/rest/v1/client_menus?id=eq.${enc(id)}`, { method: 'DELETE' });
 
-/** Add a meal (the snapshot the client sees) with the chef-only link to its recipe. */
+/** Add a meal (the snapshot the client sees) with the chef-only link to its recipe(s). */
 export async function addMeal(menuId, meal, priv) {
+  const p = { recipe_id: priv.recipe_id || '', factor: priv.factor || '1', grocery_cost: priv.grocery_cost ?? null,
+    ...(priv.parts?.length ? { parts: priv.parts } : {}) };    // only sent when there are several, so older databases still work
   const [row] = await authed('/rest/v1/client_meals', { method: 'POST', headers: one, body: { menu_id: menuId, ...meal } });
-  await authed('/rest/v1/client_meal_private', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-    body: { meal_id: row.id, recipe_id: priv.recipe_id || '', factor: priv.factor || '1', grocery_cost: priv.grocery_cost ?? null } });
-  return { ...row, private: { recipe_id: priv.recipe_id || '', factor: priv.factor || '1', grocery_cost: priv.grocery_cost ?? null } };
+  try {
+    await authed('/rest/v1/client_meal_private', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: { meal_id: row.id, ...p } });
+  } catch (err) {
+    await authed(`/rest/v1/client_meals?id=eq.${enc(row.id)}`, { method: 'DELETE' }).catch(() => {});
+    throw partsError(err);
+  }
+  return { ...row, private: p };
 }
+/** The database has no parts column yet: say which file adds it. */
+export const partsError = (err) => (/parts/.test(err.message) && err.status >= 400
+  ? new CloudError('Dishes with more than one recipe need a database update: run supabase/add_meal_parts.sql in Supabase > SQL Editor.', err.status) : err);
 export const updateMeal = (id, fields) => authed(`/rest/v1/client_meals?id=eq.${enc(id)}`, { method: 'PATCH', body: fields });
-export const updateMealPrivate = (id, fields) => authed(`/rest/v1/client_meal_private?meal_id=eq.${enc(id)}`, { method: 'PATCH', body: fields });
+export const updateMealPrivate = (id, fields) => authed(`/rest/v1/client_meal_private?meal_id=eq.${enc(id)}`, { method: 'PATCH', body: fields })
+  .catch((err) => { throw partsError(err); });
 export const deleteMeal = (id) => authed(`/rest/v1/client_meals?id=eq.${enc(id)}`, { method: 'DELETE' });
 
 export const listRequests = (clientId) =>

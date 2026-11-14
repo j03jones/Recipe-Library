@@ -672,6 +672,16 @@ fieldset legend { font-weight: 600; font-size: .9rem; padding: 0 .3rem; }
 .mealhead { justify-content: flex-start; gap: .4rem .7rem; }
 .mealhead .icon-btn, .mealhead .heart { margin-left: auto; }
 .ingline { line-height: 1.5; }
+/* the recipes that make one dish: a slim row of chips under the dish name */
+.dishparts { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; }
+.partchip { display: inline-flex; align-items: center; gap: .1rem; max-width: 100%; border: 1px solid var(--line); border-radius: 999px; padding: .15rem .25rem .15rem .7rem; font-size: .88rem; background: var(--stone); }
+.partchip.main { border-color: var(--muted); font-weight: 600; }
+.partchip a { color: inherit; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: .45rem; }
+.partchip a:hover { text-decoration: underline; }
+.partchip .chipx { display: inline-flex; border: 0; background: none; padding: .3rem; margin: 0; border-radius: 999px; color: var(--muted); cursor: pointer; min-height: 0; }
+.partchip .chipx:hover { background: var(--line); color: var(--ink); }
+.dishparts .addpart { display: inline-flex; align-items: center; gap: .25rem; border: 1px dashed var(--line); border-radius: 999px; background: none; padding: .3rem .8rem; font-size: .88rem; color: var(--link); cursor: pointer; min-height: 0; }
+.dishparts .addpart:hover { border-color: var(--link); }
 .macros { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem 1rem; }
 .macros .macro b { font-family: var(--slab); font-size: 1.1rem; }
 .macros .per { margin-left: auto; }
@@ -692,7 +702,7 @@ fieldset legend { font-weight: 600; font-size: .9rem; padding: 0 .3rem; }
 .foodlabel .lc, .foodlabel .ll, .foodlabel .lm { font-size: .8rem; }
 .foodlabel .la { font-size: .8rem; font-weight: 700; margin-top: .2rem; }
 @media print {
-  .labeltools, .addclient, .mealcard .row button, .answer { display: none !important; }
+  .labeltools, .addclient, .mealcard .row button, .answer, .dishparts .addpart, .partchip .chipx { display: none !important; }
   body[data-view=labels] .band { display: none !important; }
   .labelsheet { grid-template-columns: repeat(2, 1fr); }
 }

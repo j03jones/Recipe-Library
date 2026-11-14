@@ -63,6 +63,13 @@ browser). The page is still built here in `web/portal/`; the website change is o
 - A login that is both (or is on two restaurants) gets a switcher at the top; meal prep comes first.
 - Restaurant teams can still use the recipe app with the same login for cook mode and timers.
 
+**Dishes made of more than one recipe** (chef side). On a menu, each dish shows its recipes as a row of chips under
+the dish name, with **Add a side or sauce**. Adding one keeps it one dish for the client ("Grilled Chicken with Rice
+Pilaf"): every ingredient name once, every allergen, and nutrition per serving added up. The name follows the recipes
+unless you renamed it; allergens you unticked stay unticked unless a recipe you add brings them. The prep sheet and
+the shopping list count each recipe on its own at the right scale, the grocery estimate is the total, and saved weeks
+keep the sides. Needs `supabase/add_meal_parts.sql`.
+
 ## Meal prep clients (v0.22)
 
 A section for Jones Ridge Kitchen meal prep clients, built around the plans on jonesridgekitchen.com/meal-prep

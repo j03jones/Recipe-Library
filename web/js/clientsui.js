@@ -7,8 +7,8 @@ import * as shop from './shopping.js';
 import * as prices from './prices.js';
 import { ALLERGENS, clean as cleanAllergens, conflicts, detect } from './allergens.js';
 import {
-  MACROS, PLANS, cleanTargets, defaultApproveBy, factorFor, groceryCost, history, labelFor, menuStatus,
-  nutritionSummary, planOf, prepSheet, snapshot, tally, warnings,
+  MACROS, PLANS, cleanTargets, combine, defaultApproveBy, dishTitle, factorFor, groceryCost, history, labelFor, menuStatus,
+  nutritionSummary, partsOf, planOf, prepSheet, privateFor, snapshot, tally, warnings,
 } from './clients.js';
 
 /** Where clients see and approve their menus: a page on the website (web/portal/ in this repository). */
@@ -248,17 +248,47 @@ export async function viewMenu(ctx, clientId, menuId) {
   if (!client || !menu) { fill($app, pageHead('Menu not found'), h('p', null, h('a', { href: '#/clients' }, 'Back to clients'))); return; }
   const priceBook = () => prices.load().items;
 
-  /** Add one recipe to the menu as a snapshot, at this client's servings. */
-  async function addRecipe(recipeId, extra = {}) {
-    const [missing] = await ctx.ensureFull([recipeId]);
-    const r = lib.byId.get(recipeId);
-    if (!r || missing) { toast('That recipe needs a connection the first time'); return null; }
-    const servings = extra.servings || client.servings;
-    const snap = snapshot(r, servings);
-    const factor = factorFor(r, servings);
-    const cost = groceryCost(r, factor, priceBook());
-    return cloud.addMeal(menu.id, { ...snap, ...extra.fields, position: menu.meals.length + (extra.offset || 0) },
-      { recipe_id: recipeId, factor: String(factor), grocery_cost: cost ? cost.total : null });
+  /** One dish from one or more recipes (main first), each made for `servings` portions: what the client
+   *  sees, and the chef-only row (which recipes, at what scale, and the groceries). null if one is missing. */
+  async function buildDish(recipeIds, servings) {
+    const missing = await ctx.ensureFull(recipeIds);
+    const recipes = recipeIds.map((id) => lib.byId.get(id));
+    if (recipes.some((r) => !r) || missing?.length) { toast('That recipe needs a connection the first time'); return null; }
+    const parts = recipes.map((r) => {
+      const factor = factorFor(r, servings);
+      const cost = groceryCost(r, factor, priceBook());
+      return { recipe_id: r.id, title: r.title, factor: String(factor), grocery_cost: cost ? cost.total : null };
+    });
+    return { dish: combine(recipes.map((r) => snapshot(r, servings))), priv: privateFor(parts), parts };
+  }
+
+  /** Add a dish to the menu as a snapshot, at this client's servings. `recipeIds` may be one id or several. */
+  async function addRecipe(recipeIds, extra = {}) {
+    const built = await buildDish([].concat(recipeIds), extra.servings || client.servings);
+    if (!built) return null;
+    return cloud.addMeal(menu.id, { ...built.dish, ...extra.fields, position: menu.meals.length + (extra.offset || 0) }, built.priv);
+  }
+
+  /** Change which recipes make up a meal. The chef's own wording stays; the dish name follows the recipes
+   *  unless the chef renamed it; allergens the chef ticked stay unless they came only from a recipe taken out. */
+  async function setParts(m, ids, removed = []) {
+    const before = partsOf(m);
+    const built = await buildDish(ids, m.servings);
+    if (!built) return;
+    const autoBefore = [dishTitle(before.map((x) => x.title)), lib.byId.get(before[0]?.recipe_id)?.title].filter(Boolean);
+    const title = autoBefore.includes(m.title) ? built.dish.title : m.title;
+    const had = new Set(before.map((x) => x.recipe_id));
+    const added = built.parts.filter((x) => !had.has(x.recipe_id)).map((x) => lib.byId.get(x.recipe_id));
+    const allergensOf = (list) => new Set(list.flatMap((r) => snapshot(r, m.servings).allergens));
+    const dropped = allergensOf(removed);
+    const stillIn = new Set(built.dish.allergens);
+    const allergens = cleanAllergens([...m.allergens.filter((a) => !dropped.has(a) || stillIn.has(a)), ...allergensOf(added)]);
+    try {
+      await cloud.updateMealPrivate(m.id, built.priv);
+      await cloud.updateMeal(m.id, { title, ingredients: built.dish.ingredients, nutrition: built.dish.nutrition, allergens });
+      await load(); paint();
+      toast(removed.length ? 'Taken out of the dish' : 'Added to the dish. Check the allergens.');
+    } catch (err) { toast(err.message, 6000); }
   }
 
   async function paint() {
@@ -290,20 +320,34 @@ export async function viewMenu(ctx, clientId, menuId) {
           toast('Saved'); await load(); paint();
         } catch (err) { toast(err.message, 4500); }
       };
-      const r = m.private?.recipe_id ? lib.byId.get(m.private.recipe_id) : null;
+      const parts = partsOf(m);
+      const partTitle = (x, i) => (parts.length > 1 ? x.title : lib.byId.get(x.recipe_id)?.title || x.title || m.title) || `Recipe ${i + 1}`;
+      const recipesRow = parts.length > 0 && h('div', { class: 'dishparts', role: 'group', 'aria-label': 'Recipes in this dish' },
+        parts.map((x, i) => h('span', { class: `partchip${i === 0 ? ' main' : ''}` },
+          h('a', { href: `#/r/${x.recipe_id}`, title: i === 0 ? 'Main recipe: open it' : 'Open this recipe' }, partTitle(x, i)),
+          editable && parts.length > 1 && h('button', { type: 'button', class: 'chipx', 'aria-label': `Take ${partTitle(x, i)} out of this dish`,
+            onclick: async () => {
+              const gone = lib.byId.get(x.recipe_id);
+              await setParts(m, parts.filter((_, j) => j !== i).map((y) => y.recipe_id), gone ? [gone] : []);
+            } }, icon('close', { size: 14 })))),
+        editable && h('button', { type: 'button', class: 'addpart', onclick: async () => {
+          const pick = await ctx.pickRecipe(`add to “${m.title}”`);
+          if (!pick?.id) return;
+          if (parts.some((x) => x.recipe_id === pick.id)) { toast('That recipe is already in this dish'); return; }
+          await setParts(m, [...parts.map((x) => x.recipe_id), pick.id]);
+        } }, icon('plus', { size: 14 }), parts.length > 1 ? 'Add a recipe' : 'Add a side or sauce'));
       return h('li', { class: `mealcard ${m.status}` },
         h('div', { class: 'row mealhead' },
           h('span', { class: `label ${m.status === 'swap' ? 'danger' : m.status === 'approved' ? 'ok' : ''}` },
             menu.status === 'draft' ? 'Draft' : m.status === 'approved' ? 'Approved' : m.status === 'swap' ? 'Swap requested' : 'Waiting'),
           h('span', { class: 'muted small' }, `${m.servings} ${m.servings === 1 ? 'serving' : 'servings'}`),
-          r && h('a', { class: 'small', href: `#/r/${r.id}` }, 'Open the recipe'),
           m.private?.grocery_cost != null && h('span', { class: 'muted small' }, `groceries about ${money(m.private.grocery_cost)}`),
           editable && h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Remove ${m.title}`, title: 'Remove from the menu',
             onclick: async () => { if (await confirmDialog(`Take “${m.title}” off this menu?`, 'Remove', true)) { await cloud.deleteMeal(m.id); await load(); paint(); } } }, icon('close', { size: 18 }))),
         m.client_note && h('p', { class: 'note' }, h('strong', null, `${client.name}: `), m.client_note),
         m.rating && h('p', { class: 'small' }, `${'★'.repeat(m.rating)} ${m.feedback || ''}`),
         w.map((x) => h('p', { class: 'note danger' }, h('strong', null, x.text))),
-        titleIn, descIn,
+        titleIn, recipesRow, descIn,
         h('p', { class: 'small muted ingline' }, m.ingredients.join(', ') || 'No ingredients listed'),
         nutritionLine(h, m.nutrition),
         m.nutrition?.coverage != null && m.nutrition.coverage < 70 && h('p', { class: 'muted small' }, `Only about ${m.nutrition.coverage}% of the ingredients could be counted, so treat these numbers as rough.`),
@@ -338,7 +382,9 @@ export async function viewMenu(ctx, clientId, menuId) {
           if (!tpl) return;
           let n = 0;
           for (const item of tpl.meals) {
-            try { if (item.recipe_id && await addRecipe(item.recipe_id, { fields: { description: item.description || '', reheat: item.reheat || '', storage: item.storage || '' }, offset: n })) n++; } catch { /* a recipe that is gone: skip it */ }
+            const ids = [item.recipe_id, ...(Array.isArray(item.parts) ? item.parts : [])].filter(Boolean);
+            const fields = { description: item.description || '', reheat: item.reheat || '', storage: item.storage || '', ...(ids.length > 1 && item.title ? { title: item.title } : {}) };
+            try { if (ids.length && await addRecipe(ids, { fields, offset: n })) n++; } catch { /* a recipe that is gone: skip it */ }
           }
           await load(); paint(); toast(`${n} of ${tpl.meals.length} dishes added from “${tpl.name}”`);
         } }, h('option', { value: '' }, 'Start from a saved week…'), templates.map((x) => h('option', { value: x.id }, x.name)))),
@@ -372,7 +418,8 @@ export async function viewMenu(ctx, clientId, menuId) {
             const name = await askText(ctx, 'Name this week so you can reuse it', { value: `${planOf(client).label} week`, ok: 'Save' });
             if (!name) return;
             try {
-              await cloud.saveTemplate(name.trim(), menu.meals.filter((m) => m.private?.recipe_id).map((m) => ({ recipe_id: m.private.recipe_id, title: m.title, description: m.description, reheat: m.reheat, storage: m.storage })));
+              await cloud.saveTemplate(name.trim(), menu.meals.filter((m) => m.private?.recipe_id).map((m) => ({ recipe_id: m.private.recipe_id,
+                parts: partsOf(m).slice(1).map((x) => x.recipe_id), title: m.title, description: m.description, reheat: m.reheat, storage: m.storage })));
               toast('Saved as a week you can reuse'); await load(); paint();
             } catch (err) { toast(err.message, 4500); }
           } }, 'Save as a reusable week'),
