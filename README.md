@@ -9,7 +9,8 @@ MealMaster recipe files, lets you add and edit recipes, and scales them.
 - [x] Parser hardened against ~5,500 real recipes (11 archive files, all start/end markers matched)
 - [x] Command-line front end for trying the core
 - [x] GUI (PySide6): searchable library, recipe view with scaling, import dialog, add/edit form
-- [ ] Linux packaging, then Windows and macOS builds
+- Desktop app development stopped in November 2026; the hosted web app is the product. The GUI code
+  below still runs, but CI no longer builds or releases desktop packages (v0.24).
 
 ## Run the GUI
 
