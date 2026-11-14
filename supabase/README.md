@@ -155,3 +155,9 @@ and `client_menu_templates`, with their access rules and the functions clients a
 record, with no login linked yet, create an account without an invite code. That is how clients set up their login on
 jonesridgekitchen.com/my-meals/. Every other sign-up still needs a code (or open sign-up). `test/clients.sql` checks it.
 Also add `https://jonesridgekitchen.com/my-meals/` to Authentication > URL Configuration > Redirect URLs.
+
+## Dishes made of more than one recipe
+`add_meal_parts.sql` (run after `add_clients.sql`, safe to run again) adds `client_meal_private.parts`: the list of
+recipes behind a dish (a main plus sides or sauces), each with its scale and grocery estimate. It is chef-only, like the
+rest of that table; clients still see one dish. Until it is run, one-recipe dishes work as before and adding a second
+recipe says which file to run. `test/clients.sql` checks it.

@@ -218,3 +218,20 @@ begin
   exception when others then if sqlerrm like 'FAIL:%' then raise; end if; end;
   raise notice 'client sign-up: all checks passed';
 end $signup$;
+
+-- dishes made of several recipes (add_meal_parts.sql): chef-only list on client_meal_private
+do $parts$
+declare d text;
+begin
+  select column_default into d from information_schema.columns
+    where table_schema = 'public' and table_name = 'client_meal_private' and column_name = 'parts';
+  if d is null or d not like '%[]%' then raise exception 'FAIL: client_meal_private.parts is missing or has no empty default'; end if;
+  if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'client_meals' and column_name = 'parts') then
+    raise exception 'FAIL: the recipes behind a dish must not be on the table clients read';
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'client_meal_private_parts_check'
+                 and pg_get_constraintdef(oid) like '%jsonb_typeof(parts)%array%') then
+    raise exception 'FAIL: parts is not limited to a list';
+  end if;
+  raise notice 'dish parts: all checks passed';
+end $parts$;
