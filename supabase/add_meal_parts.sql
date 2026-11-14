@@ -1,4 +1,4 @@
--- Dishes made of more than one recipe (v0.24.0): a main plus sides, sauces or a starch.
+-- Dishes made of more than one recipe (v0.25.0): a main plus sides, sauces or a starch.
 -- Safe to run more than once. Run after add_clients.sql.
 --
 -- The client still sees one dish (client_meals: name, ingredient names, allergens, nutrition), so

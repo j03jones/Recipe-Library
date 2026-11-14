@@ -10,7 +10,7 @@ MealMaster recipe files, lets you add and edit recipes, and scales them.
 - [x] Command-line front end for trying the core
 - [x] GUI (PySide6): searchable library, recipe view with scaling, import dialog, add/edit form
 - Desktop app development stopped in November 2026; the hosted web app is the product. The GUI code
-  below still runs, but CI no longer builds or releases desktop packages (v0.24).
+  below still runs, but CI no longer builds or releases desktop packages (v0.25).
 
 ## Run the GUI
 
@@ -46,6 +46,15 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Dishes made of more than one recipe (v0.25)
+
+For the chef. On a menu, each dish shows its recipes as a row of chips under
+the dish name, with **Add a side or sauce**. Adding one keeps it one dish for the client ("Grilled Chicken with Rice
+Pilaf"): every ingredient name once, every allergen, and nutrition per serving added up. The name follows the recipes
+unless you renamed it; allergens you unticked stay unticked unless a recipe you add brings them. The prep sheet and
+the shopping list count each recipe on its own at the right scale, the grocery estimate is the total, and saved weeks
+keep the sides. Needs `supabase/add_meal_parts.sql`.
+
 ## Client portal on the website (v0.24)
 
 **jonesridgekitchen.com/my-meals/** is now one client login for both kinds of client, and every page of the
@@ -62,13 +71,6 @@ browser). The page is still built here in `web/portal/`; the website change is o
   on a meal prep client record, as before. Invites made in the recipe app still work in either place.
 - A login that is both (or is on two restaurants) gets a switcher at the top; meal prep comes first.
 - Restaurant teams can still use the recipe app with the same login for cook mode and timers.
-
-**Dishes made of more than one recipe** (chef side). On a menu, each dish shows its recipes as a row of chips under
-the dish name, with **Add a side or sauce**. Adding one keeps it one dish for the client ("Grilled Chicken with Rice
-Pilaf"): every ingredient name once, every allergen, and nutrition per serving added up. The name follows the recipes
-unless you renamed it; allergens you unticked stay unticked unless a recipe you add brings them. The prep sheet and
-the shopping list count each recipe on its own at the right scale, the grocery estimate is the total, and saved weeks
-keep the sides. Needs `supabase/add_meal_parts.sql`.
 
 ## Meal prep clients (v0.22)
 
