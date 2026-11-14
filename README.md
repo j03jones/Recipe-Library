@@ -45,6 +45,23 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Client portal on the website (v0.24)
+
+**jonesridgekitchen.com/my-meals/** is now one client login for both kinds of client, and every page of the
+website has a **Client login** button in the menu (it reads "Client portal" once someone has signed in on that
+browser). The page is still built here in `web/portal/`; the website change is only the button and the page name
+(website zip `jonesridgekitchen-site-2026-11-13-client-portal.zip`).
+
+- **Restaurant clients** (owners and staff) see their restaurant's recipe collection: search by name or
+  ingredient, filter by category, the full recipe with ingredients and method, scaling (½× to 4× or any number)
+  and a print layout without the website around it. The database rules are unchanged: a collection is only
+  returned to its members, and only while the restaurant's plan is active; otherwise they see a "paused" message.
+- **Owners** can invite staff from the portal. The link is `…/my-meals/?join=CODE`, which opens "First time here"
+  with the code filled in. Sign-up on the portal takes an invite code (restaurant teams) or, without one, the email
+  on a meal prep client record, as before. Invites made in the recipe app still work in either place.
+- A login that is both (or is on two restaurants) gets a switcher at the top; meal prep comes first.
+- Restaurant teams can still use the recipe app with the same login for cook mode and timers.
+
 ## Meal prep clients (v0.22)
 
 A section for Jones Ridge Kitchen meal prep clients, built around the plans on jonesridgekitchen.com/meal-prep

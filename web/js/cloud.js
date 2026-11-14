@@ -168,6 +168,10 @@ export async function loadMe() {
 /** Everything this person may see (the database filters by their access). */
 export const listRecipes = () => authed('/rest/v1/recipes?select=*&order=title');
 
+/** One restaurant's collection. The database returns it only to members, and only while the plan is active. */
+export const restaurantRecipes = (restaurantId) =>
+  authed(`/rest/v1/recipes?scope=eq.restaurant&restaurant_id=eq.${enc(restaurantId)}&select=*&order=title`);
+
 const toRow = (r) => ({ title: r.title, categories: r.categories || [], body: bodyOf(r) });
 function bodyOf(r) {
   const { id, title, categories, updated, ...rest } = r;   // keep ings, dir, yq, yu, yr, tags

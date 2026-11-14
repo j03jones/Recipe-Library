@@ -55,3 +55,47 @@
 #jrk-toast { position: fixed; left: 50%; bottom: 1.5rem; transform: translate(-50%, 1rem); background: #23402f; color: #fff; padding: .7rem 1.1rem; border-radius: 8px;
   opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 50; font-weight: 600; }
 #jrk-toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* Switcher for a login that is for more than one thing (meal prep and a restaurant, or two restaurants). */
+#jrk-portal .jrk-switch { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 1rem; }
+#jrk-portal .jrk-switch a { padding: .45rem .9rem; border: 1px solid var(--jrk-line); border-radius: 999px; font-weight: 600; text-decoration: none; color: inherit; background: var(--jrk-card); }
+#jrk-portal .jrk-switch a[aria-current=page] { background: var(--jrk-ridge); border-color: var(--jrk-ridge); color: #fff; }
+
+/* Restaurant clients: the recipe collection. */
+#jrk-portal .jrk-find { flex-wrap: wrap; margin: .8rem 0 .3rem; }
+#jrk-portal .jrk-find input, #jrk-portal .jrk-find select { flex: 1 1 14rem; min-width: 0; font: inherit; padding: .65rem .8rem; border: 1px solid #aeb7b1; border-radius: 6px; background: #fff; box-sizing: border-box; }
+#jrk-portal .jrk-find select { flex: 0 1 13rem; }
+#jrk-portal .jrk-recipes { list-style: none; margin: .4rem 0 1.4rem; padding: 0; }
+#jrk-portal .jrk-recipes li { border-bottom: 1px solid var(--jrk-line); }
+#jrk-portal .jrk-recipes a { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: .1rem 1rem; padding: .75rem .2rem; text-decoration: none; color: inherit; }
+#jrk-portal .jrk-recipes a:hover .jrk-rtitle, #jrk-portal .jrk-recipes a:focus-visible .jrk-rtitle { color: var(--jrk-rust); text-decoration: underline; }
+#jrk-portal .jrk-recipes .jrk-rtitle { font-weight: 600; }
+#jrk-portal .jrk-recipes .note { font-size: .9rem; }
+#jrk-portal .jrk-recipes li.note { padding: .75rem .2rem; }
+#jrk-portal .jrk-back { margin: 0 0 .4rem; }
+#jrk-portal .jrk-recipe h2 { margin-top: .4rem; }
+#jrk-portal .jrk-recipe h3 { margin: 1.4rem 0 .4rem; }
+#jrk-portal .jrk-recipe h4 { margin: .9rem 0 .2rem; font-family: var(--slab, Georgia, serif); color: var(--jrk-muted); }
+#jrk-portal .jrk-photo img { display: block; width: 100%; max-height: 22rem; object-fit: cover; border-radius: 10px; margin: .6rem 0; }
+#jrk-portal .jrk-yield { font-weight: 600; margin-bottom: .3rem; }
+#jrk-portal .jrk-scale { gap: .4rem; }
+#jrk-portal .jrk-scale input { width: 4.5rem; font: inherit; padding: .45rem .6rem; border: 1px solid #aeb7b1; border-radius: 6px; }
+#jrk-portal .jrk-ings-list ul { margin: .2rem 0; padding-left: 1.2rem; }
+#jrk-portal .jrk-ings-list li { margin: .2rem 0; }
+#jrk-portal .jrk-steps { padding-left: 1.4rem; }
+#jrk-portal .jrk-steps li { margin: .55rem 0; padding-left: .2rem; }
+#jrk-portal .jrk-recipe > .jrk-row:last-child { margin-top: 1.6rem; }
+#jrk-portal .jrk-printnote { display: none; }
+#jrk-portal .jrk-invite { margin-top: 1rem; padding: .8rem 1rem; background: var(--jrk-soft); border-radius: 8px; }
+#jrk-portal .jrk-invite code { word-break: break-all; font-size: .95rem; }
+
+/* Printing a recipe: only the recipe, none of the website around it. */
+@media print {
+  body * { visibility: hidden !important; }
+  #jrk-portal .jrk-recipe, #jrk-portal .jrk-recipe * { visibility: visible !important; }
+  #jrk-portal .jrk-recipe { position: absolute; inset: 0 auto auto 0; width: 100%; color: #000; }
+  #jrk-portal .jrk-noprint { display: none !important; }
+  #jrk-portal .jrk-printnote { display: block; margin-top: 2rem; }
+  #jrk-portal .jrk-photo img { max-height: 3in; }
+  #jrk-portal .jrk-steps li { break-inside: avoid; }
+}
