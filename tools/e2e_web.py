@@ -253,6 +253,13 @@ async def run():
         check("a step shows the amounts it uses", "1 tsp Salt" in await page.inner_text("ol.steps > li:nth-child(2) .uses"))
         check("recipe page shows an estimated time", "About" in await page.inner_text(".rmeta"))
 
+        # ---- a link shared to the installed web app, and the scan button
+        await page.goto(URL + "?title=Pie&url=" + "https%3A%2F%2Fexample.com%2Fapple-pie")
+        await page.wait_for_selector("input[aria-label='Recipe page address']")
+        check("a shared link opens the import page with the link filled in",
+              await page.input_value("input[aria-label='Recipe page address']") == "https://example.com/apple-pie" and "?" not in page.url)
+        check("the import page offers to scan a printed recipe", await page.locator("button:has-text('Take or choose a photo')").count() == 1)
+
         # ---- hands-free cook mode
         await page.goto(URL + "#/r/6cd1288901")
         await page.wait_for_selector(".cookbtn")

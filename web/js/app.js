@@ -18,11 +18,13 @@ import { SECTIONS } from './groups.js';
 import { addStars, buzz, confetti, copyText, emojiFor, greeting, icon, isStarred, onStarsChange, replaceStars, ridge, starIds, tile, toggleStar } from './ui.js';
 import { restoreTimers, timerChips } from './timers.js';
 import * as cloud from './cloud.js';
-import { canListen, canShare, canSpeak, handleBackButton, listen, platform, share, speak, stopSpeaking, syncStatusBar } from './native.js';
+import { canListen, canShare, canSpeak, handleBackButton, listen, platform, share, speak, stopSpeaking, syncStatusBar, takeShared } from './native.js';
 import { compactTitle, edgeSwipeBack, flyingTiles, pullToRefresh, swipeRow, swipeableSheets, transition } from './motion.js';
 import { dietOf, estimateMinutes, formatMinutes, sortKey } from './insights.js';
 import { homeFeed, metaLine } from './home.js';
 import { ingredientsIn, splitSteps, voiceCommand } from './steps.js';
+import { firstLink, fromShared, fromText, readPhoto } from './getin.js';
+import { fromPlainText } from './transfer.js';
 import { accountCard, viewAdmin, viewJoin } from './account.js';
 import { viewClient, viewClients, viewLabels, viewMenu, viewMyMeals, viewPrep } from './clientsui.js';
 import * as photos from './photos.js';
@@ -1315,7 +1317,7 @@ function viewEdit(id, template) {
 
   fill($app, 
     pageHead(existing ? 'Edit recipe' : adapting ? 'Make your own version' : template?.imported ? 'Check and save' : template ? 'Save as new recipe' : 'New recipe'),
-    !existing && !template && h('p', { class: 'row grow' }, h('a', { class: 'linkbtn', href: '#/import' }, '⤓ Import a recipe from a web page'),
+    !existing && !template && h('p', { class: 'row grow' }, h('a', { class: 'linkbtn', href: '#/import' }, '⤓ Import from a web page or a photo'),
       h('a', { class: 'linkbtn', href: '#/transfer' }, '⤓ Import files (Paprika, Mealie…)')),
     adapting && h('p', { class: 'muted' }, 'Keep or change the ingredients, then write the method in your own words. Your version can be shared with the Community and will say “Adapted from” with a link to the original.'),
     h('label', { class: 'field' }, h('span', null, 'Title'), title),
@@ -1820,10 +1822,36 @@ function viewLinks(collectionId) {
 }
 
 /** Paste one recipe link; the recipe is read, checked in the editor, then saved with credit. */
-function viewImport() {
+function viewImport(prefill = '') {
   setView('edit', 'new');
   const signedIn = !!lib.me && cloud.isSignedIn();
-  const url = h('input', { class: 'full', type: 'url', placeholder: 'https://www.noracooks.com/…', autocomplete: 'off', autocapitalize: 'off', 'aria-label': 'Recipe page address' });
+  const url = h('input', { class: 'full', type: 'url', placeholder: 'https://www.noracooks.com/…', autocomplete: 'off', autocapitalize: 'off', 'aria-label': 'Recipe page address', value: prefill });
+  // a link copied in another app: one tap instead of press-and-hold, paste
+  const pasteBtn = navigator.clipboard?.readText && h('button', { type: 'button', onclick: async () => {
+    let t = '';
+    try { t = await navigator.clipboard.readText(); } catch { toast('This browser wasn’t allowed to read the clipboard. Press and hold the box to paste instead.', 4500); return; }
+    const link = firstLink(t);
+    if (!link) { toast('There’s no web address on the clipboard'); return; }
+    url.value = link; if (signedIn) run();
+  } }, 'Paste link');
+  // a photo of a printed recipe, read on the device
+  const scanStatus = h('p', { class: 'muted small', role: 'status' });
+  const scanIn = h('input', { type: 'file', accept: 'image/*', capture: 'environment', hidden: true, onchange: async () => {
+    const file = scanIn.files?.[0]; scanIn.value = '';
+    if (!file) return;
+    scanStatus.textContent = 'Reading the photo…';
+    try {
+      const text = await readPhoto(file, (p) => { scanStatus.textContent = `Reading the photo… ${Math.round(p * 100)}%`; });
+      const got = fromText(text);
+      if (got) { viewEdit(null, got.recipe); return; }
+      scanStatus.textContent = text ? 'That didn’t look like a recipe. Here is what was read; fix it up in a new recipe.' : 'No text was found in that photo. Try again in good light, straight on.';
+      if (text) viewEdit(null, { ...fromPlainText(`Scanned recipe\n${text}`), imported: true });
+    } catch (err) {
+      scanStatus.textContent = navigator.onLine === false
+        ? 'Scanning needs a connection the first time (to fetch the text reader). Try again online.'
+        : `Couldn’t read that photo: ${err.message}`;
+    }
+  } });
   const status = h('p', { class: 'muted small', role: 'status' });
   const go = h('button', { class: 'primary', type: 'button', disabled: !signedIn, onclick: run }, 'Get recipe');
   async function run() {
@@ -1855,11 +1883,25 @@ function viewImport() {
     h('p', { class: 'muted' }, 'Paste the address of one recipe page. You check it before it is saved. It goes into your own private recipes with the author’s name and a link back to the original. Only the ingredients, method and yield are taken. Photos and stories stay on their site.'),
     !signedIn && h('p', { class: 'note' }, 'Sign in first (Settings). The phone can’t read other websites on its own, so the page is read through your account.'),
     h('label', { class: 'field' }, h('span', null, 'Recipe page address'), url),
-    h('div', { class: 'row grow' }, go),
+    h('div', { class: 'row grow' }, go, pasteBtn),
     status,
+    h('p', { class: 'muted small' }, 'Tip: in your browser or another app, choose Share › Jones Ridge Recipes (once the app is installed) to send a recipe page straight here.'),
+    h('h2', null, 'Scan a printed recipe'),
+    h('p', { class: 'muted' }, 'Take a photo of a cookbook page or a recipe card. The app reads the text on this device (the photo isn’t uploaded) and you check it before it’s saved. Printed recipes work best; handwriting is hit and miss.'),
+    h('div', { class: 'row grow' }, h('button', { type: 'button', class: 'primary', onclick: () => scanIn.click() }, icon('plus', { size: 18 }), 'Take or choose a photo'), scanIn),
+    scanStatus,
     COLLECTIONS.map((c) => h('p', { class: 'small' }, h('a', { href: `#/links/${c.id}` }, `Browse vegan recipes from ${c.site}`))));
   window.scrollTo(0, 0);
-  if (signedIn) url.focus();
+  if (signedIn && prefill) run();
+  else if (signedIn) url.focus();
+}
+
+/** A link or recipe text shared to the app (the installed web app's share target). */
+function openShared(shared) {
+  const got = fromShared(shared);
+  if (!got) { toast('That didn’t include a recipe or a link'); return; }
+  if (got.link) location.hash = `#/import/${encodeURIComponent(got.link)}`;
+  else viewEdit(null, got.recipe);
 }
 
 function viewMissing() {
@@ -2016,7 +2058,7 @@ function route() {
   if (kind === 'new') return viewEdit(null);
   if (kind === 'settings') return viewSettings();
   if (kind === 'links') return viewLinks(id || COLLECTIONS[0].id);
-  if (kind === 'import') return viewImport();
+  if (kind === 'import') return viewImport(id || '');
   if (kind === 'admin') return viewAdmin(ctx);
   if (kind === 'meals') return viewMyMeals(ctx);
   if (kind === 'clients' || kind === 'prep' || kind === 'labels') {
@@ -2083,6 +2125,17 @@ async function boot() {
     else if (e.key === '/' && view === 'list' && !typing) { const s = document.querySelector('input[type=search]'); if (s) { e.preventDefault(); s.focus(); } }
   });
   Promise.resolve(route()).then(compactTitle);
+  // shared to the installed web app: it opens as ?title=…&text=…&url=…
+  const q = new URLSearchParams(location.search);
+  if (q.has('url') || q.has('text')) {
+    history.replaceState(history.state, '', `${location.pathname}${location.hash || '#/'}`);
+    openShared({ title: q.get('title') || '', text: q.get('text') || '', url: q.get('url') || '' });
+  }
+  // shared to the Android app (MainActivity keeps it until asked)
+  const collect = async () => { const got = await takeShared(); if (got) openShared(got); };
+  collect();
+  window.addEventListener('garnishare', collect);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') collect(); });
   registerWorker();
   loadMore();
   if (linkType === 'recovery') ctx.recovery = true;

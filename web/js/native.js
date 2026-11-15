@@ -129,3 +129,10 @@ export async function listen(onHeard) {
 
 /** 'ios', 'android' or 'web'. */
 export const platform = () => (isNative() && cap().getPlatform?.()) || 'web';
+
+/** Something shared to the Android app (Share › Garni) and not yet collected: { title, text } or null. */
+export async function takeShared() {
+  if (!has('GarniShare')) return null;
+  const r = await call('GarniShare', 'take');
+  try { return r?.value ? JSON.parse(r.value) : null; } catch { return null; }
+}
