@@ -19,7 +19,7 @@ import { addStars, buzz, confetti, copyText, emojiFor, greeting, icon, isStarred
 import { restoreTimers, timerChips } from './timers.js';
 import * as cloud from './cloud.js';
 import { canListen, canShare, canSpeak, handleBackButton, listen, platform, share, speak, stopSpeaking, syncStatusBar, takeShared } from './native.js';
-import { compactTitle, edgeSwipeBack, flyingTiles, pullToRefresh, swipeRow, swipeableSheets, transition } from './motion.js';
+import { compactTitle, draggable, edgeSwipeBack, flyingTiles, pullToRefresh, swipeRow, swipeableSheets, transition } from './motion.js';
 import { dietOf, estimateMinutes, formatMinutes, sortKey } from './insights.js';
 import { homeFeed, metaLine } from './home.js';
 import { ingredientsIn, splitSteps, voiceCommand } from './steps.js';
@@ -1469,17 +1469,22 @@ function viewPlan() {
       dates.map((d) => {
         const label = `${DAY_FMT.format(planner.parseDate(d))} ${DATE_FMT.format(planner.parseDate(d))}`;
         const entries = plan.days[d] || [];
-        return h('section', { class: `planday${d === today ? ' today' : ''}${d < today ? ' past' : ''}` },
+        return h('section', { class: `planday${d === today ? ' today' : ''}${d < today ? ' past' : ''}`, 'data-date': d },
           h('h2', null, DAY_FMT.format(planner.parseDate(d)), h('span', { class: 'muted' }, ` ${DATE_FMT.format(planner.parseDate(d))}`), d === today && h('span', { class: 'label' }, 'Today')),
           entries.length > 0 && h('ul', { class: 'shoprecipes' }, entries.map((e, n) => {
             const r = e.id ? lib.byId.get(e.id) : null;
-            return h('li', null,
+            const what = e.note || r?.title || 'this';
+            const moveTo = (to) => { if (to === d) return; if (planner.move(d, n, to)) { buzz(8); toast(`Moved to ${DAY_FMT.format(planner.parseDate(to))}`); } paint(); };
+            return draggable(h('li', { class: 'planitem', title: 'Press and hold, then drag to another day' },
               e.note ? h('span', { class: 'plannote' }, e.note)
                 : r ? h('a', { href: `#/r/${r.id}` }, r.title)
                   : h('span', { class: 'muted' }, 'A recipe that is no longer in the library'),
               r && h('span', { class: 'muted' }, ` ${timesLabel(Frac.parse(e.f) || new Frac(1n))}`),
-              h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Take ${e.note || r?.title || 'this'} off ${label}`, title: 'Take off the plan',
-                onclick: () => { planner.removeAt(d, n); paint(); } }, icon('close', { size: 18 })));
+              h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Move ${what} to another day`, title: 'Move to another day',
+                onclick: async () => { const to = await pickDay(`Move ${what}`); if (to) moveTo(to); } }, icon('move', { size: 18 })),
+              h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Take ${what} off ${label}`, title: 'Take off the plan',
+                onclick: () => { planner.removeAt(d, n); paint(); } }, icon('close', { size: 18 }))),
+            { home: null, targets: () => [...body.querySelectorAll('.planday')], onDrop: (sec) => moveTo(sec.dataset.date) });
           })),
           h('button', { class: 'addday', type: 'button', 'aria-label': `Add to ${label}`, onclick: async () => {
             const entry = await pickForPlan(label);

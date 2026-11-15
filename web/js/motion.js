@@ -165,3 +165,53 @@ export function swipeRow(li, { onRight, rightLabel = 'Done', onLeft, leftLabel =
   });
   return li;
 }
+
+// ------------------------------------------------------------------ drag and drop
+/**
+ * Lets `item` be picked up and dropped on one of `targets()` (meal plan: move a meal to another day).
+ * A finger presses and holds first (so scrolling still works); a mouse just drags.
+ * onDrop(target) runs when it's let go over a target other than `home`.
+ */
+export function draggable(item, { home, targets, onDrop }) {
+  let ghost = null; let timer = null; let start = null; let over = null;
+  const at = (x, y) => targets().find((t) => { const r = t.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; }) || null;
+  const lift = (e) => {
+    const r = item.getBoundingClientRect();
+    ghost = item.cloneNode(true);
+    ghost.className = `${item.className} dragghost`;
+    Object.assign(ghost.style, { width: `${r.width}px`, left: `${r.left}px`, top: `${r.top}px` });
+    ghost.dataset.dx = String(e.clientX - r.left); ghost.dataset.dy = String(e.clientY - r.top);
+    document.body.append(ghost);
+    item.classList.add('dragging');
+    globalThis.navigator?.vibrate?.(10);
+  };
+  const end = () => {
+    clearTimeout(timer); timer = null; start = null;
+    document.removeEventListener('pointermove', onMove); document.removeEventListener('pointerup', onUp); document.removeEventListener('pointercancel', end);
+    over?.classList.remove('dropover');
+    const target = over; over = null;
+    if (ghost) { ghost.remove(); ghost = null; item.classList.remove('dragging'); if (target && target !== home) onDrop(target); }
+  };
+  const onMove = (e) => {
+    if (!ghost) {
+      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > 8) { if (e.pointerType === 'mouse') lift(e); else end(); }
+      return;
+    }
+    e.preventDefault();
+    ghost.style.left = `${e.clientX - Number(ghost.dataset.dx)}px`; ghost.style.top = `${e.clientY - Number(ghost.dataset.dy)}px`;
+    const t = at(e.clientX, e.clientY);
+    if (t !== over) { over?.classList.remove('dropover'); over = t; over?.classList.add('dropover'); }
+    // near the top or bottom of the screen, scroll so far-away days can be reached
+    if (e.clientY < 80) scrollBy(0, -12); else if (e.clientY > innerHeight - 80) scrollBy(0, 12);
+  };
+  const onUp = () => end();
+  item.addEventListener('pointerdown', (e) => {
+    if (e.button > 0 || e.target.closest('button, a')) return;
+    start = { x: e.clientX, y: e.clientY };
+    document.addEventListener('pointermove', onMove, { passive: false }); document.addEventListener('pointerup', onUp); document.addEventListener('pointercancel', end);
+    if (e.pointerType !== 'mouse') timer = setTimeout(() => { if (start) lift(e); }, 350);
+  });
+  // a held finger shouldn't open the phone's own menu or select text
+  item.addEventListener('contextmenu', (e) => { if (ghost || timer) e.preventDefault(); });
+  return item;
+}

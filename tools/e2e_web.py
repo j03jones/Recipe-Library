@@ -279,6 +279,29 @@ async def run():
         await page.fill("input[type=search]", "")
         await page.wait_for_timeout(200)
 
+        # ---- meal plan: drag a meal to another day
+        await page.goto(URL + "#/")
+        await page.evaluate("""() => { const d = new Date(); const iso = (x) => x.toISOString().slice(0, 10);
+          const mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+          localStorage.setItem('sprig.plan', JSON.stringify({ at: Date.now(), days: { [iso(mon)]: [{ note: 'Leftovers' }] } })); }""")
+        await page.goto(URL + "#/plan")
+        await page.reload()
+        await page.wait_for_selector(".planitem")
+        first_day = await page.get_attribute(".planday:has(.planitem)", "data-date")
+        box = await page.locator(".planitem").bounding_box()
+        target = page.locator(".planday").nth(2)
+        await target.scroll_into_view_if_needed()
+        box = await page.locator(".planitem").bounding_box()
+        tbox = await target.bounding_box()
+        await page.mouse.move(box["x"] + 20, box["y"] + box["height"] / 2)
+        await page.mouse.down()
+        await page.mouse.move(box["x"] + 30, box["y"] + 30, steps=4)
+        await page.mouse.move(tbox["x"] + 40, tbox["y"] + tbox["height"] / 2, steps=8)
+        await page.mouse.up()
+        await page.wait_for_timeout(300)
+        moved_to = await page.get_attribute(".planday:has(.planitem)", "data-date")
+        check("a meal can be dragged to another day", moved_to != first_day and moved_to == await target.get_attribute("data-date"), f"{first_day} -> {moved_to}")
+
         # ---- hands-free cook mode
         await page.goto(URL + "#/r/6cd1288901")
         await page.wait_for_selector(".cookbtn")

@@ -816,3 +816,10 @@ li.swipe::before { content: attr(data-swipe); position: absolute; inset: 0; disp
 li.swipe.left::before { justify-content: flex-end; background: var(--danger); color: #fff; }
 li.swipe:not([data-swipe])::before, li.swipe[data-swipe=""]::before { display: none; }
 li.swipe > * { position: relative; z-index: 1; }
+
+/* meal plan: drag a meal to another day */
+.planitem { touch-action: pan-y; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.planitem.dragging { opacity: .35; }
+.dragghost { position: fixed; z-index: 50; margin: 0; list-style: none; pointer-events: none; background: var(--card); border-radius: var(--r-ctl);
+  box-shadow: var(--shadow-lift); transform: rotate(-1.5deg) scale(1.03); padding: .5rem .8rem; display: flex; align-items: center; gap: .4rem; }
+.planday.dropover { outline: 3px dashed var(--leaf); outline-offset: 3px; background: var(--soft); border-radius: var(--radius); }
