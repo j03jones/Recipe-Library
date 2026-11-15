@@ -24,6 +24,7 @@ import { dietOf, estimateMinutes, formatMinutes, sortKey } from './insights.js';
 import { homeFeed, metaLine } from './home.js';
 import { ingredientsIn, splitSteps, voiceCommand } from './steps.js';
 import { firstLink, fromShared, fromText, readPhoto } from './getin.js';
+import { correct, forgetSearches, recentSearches, rememberSearch, vocabulary } from './search.js';
 import { fromPlainText } from './transfer.js';
 import { accountCard, viewAdmin, viewJoin } from './account.js';
 import { viewClient, viewClients, viewLabels, viewMenu, viewMyMeals, viewPrep } from './clientsui.js';
@@ -450,6 +451,7 @@ function rebuild() {
     }
   }
   lib.cats = [...cats.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  lib.vocab = null;     // words for typo-forgiving search, worked out when first needed
 }
 
 async function saveRecord(rec) {
@@ -622,6 +624,15 @@ function viewList(starredOnly = false) {
 
   function paint() {
     let pool = matches(listState.q, listState.cat, lib.me ? listState.src : '');
+    // a typo ("choclate"): when the words find almost nothing, try the closest real words instead
+    let fixedQ = '';
+    if (listState.q.trim() && pool.length < 3) {
+      lib.vocab ??= vocabulary(lib.all);
+      const fixed = correct(listState.q, lib.vocab);
+      const better = fixed ? matches(fixed, listState.cat, lib.me ? listState.src : '') : [];
+      if (better.length > pool.length) { pool = better; fixedQ = fixed; }
+    }
+    fill(didYouMean, fixedQ && h('p', { class: 'small didyoumean' }, 'Showing results for ', h('strong', null, `“${fixedQ}”`), '.'));
     if (starredOnly) pool = pool.filter((r) => isStarred(r.id));
     if (listState.quick) pool = pool.filter((r) => r._mins != null && r._mins <= 30);
     if (listState.veg) pool = pool.filter((r) => r._veg);
@@ -650,10 +661,26 @@ function viewList(starredOnly = false) {
   }
 
   const searchbar = h('div', { class: 'searchbar' }, h('label', { class: 'search' }, icon('search', { size: 22 }), input));
-  let t;
+  const didYouMean = h('div');
+  const recentRow = h('div', { class: 'chips recent', role: 'group', 'aria-label': 'Recent searches', hidden: true });
+  const paintRecent = () => {
+    const list = recentSearches();
+    recentRow.hidden = !(document.activeElement === input && !input.value.trim() && list.length);
+    if (recentRow.hidden) return;
+    fill(recentRow, h('span', { class: 'muted small' }, 'Recent'),
+      list.map((q) => h('button', { class: 'chip', type: 'button', onmousedown: (e) => e.preventDefault(),
+        onclick: () => { input.value = q; listState.q = q; listState.shown = PAGE; paint(); paintRecent(); } }, q)),
+      h('button', { class: 'chip', type: 'button', 'aria-label': 'Clear recent searches', onmousedown: (e) => e.preventDefault(),
+        onclick: () => { forgetSearches(); paintRecent(); } }, '×'));
+  };
+  input.addEventListener('focus', paintRecent);
+  input.addEventListener('blur', () => setTimeout(paintRecent, 150));
+  let t; let keep;
   input.addEventListener('input', () => {
-    clearTimeout(t);
-    t = setTimeout(() => { listState.q = input.value; listState.shown = PAGE; paint(); }, 120);
+    clearTimeout(t); clearTimeout(keep);
+    t = setTimeout(() => { listState.q = input.value; listState.shown = PAGE; paint(); paintRecent(); }, 120);
+    // a search someone settles on (stops typing and it finds something) is worth offering again
+    keep = setTimeout(() => { if (results.length) rememberSearch(input.value); }, 1500);
   });
 
   fill($app,
@@ -661,7 +688,7 @@ function viewList(starredOnly = false) {
       h('p', { class: 'eyebrow' }, starredOnly ? 'Your favorites' : `${greeting()}${firstName() ? `, ${firstName()}` : ''}`),
       h('h1', null, starredOnly ? 'Starred' : 'What are we cooking?'),
       h('p', { class: 'sub' }, starredOnly ? 'Your go-to recipes, one tap away.' : `${lib.all.length.toLocaleString()} recipes to search, scale and cook.`)),
-    searchbar,
+    searchbar, recentRow,
     !starredOnly && h('a', { class: 'promo card', href: '#/pantry' },
       h('span', { class: 'tile', 'aria-hidden': 'true', 'data-sec': 3 }, '🧺'),
       h('span', null, h('strong', null, 'What can I make?'), h('span', { class: 'muted small' }, 'Find recipes from what you have on hand.'))),
@@ -671,7 +698,7 @@ function viewList(starredOnly = false) {
         cooklog.recent(cooklog.load()).length > 0 && h('a', { class: 'chip', href: '#/cooked' }, 'Cooked', h('span', { class: 'muted' }, ` ${cooklog.recent(cooklog.load()).length}`)),
         collections.load().map((c) => h('a', { class: 'chip', href: `#/c/${c.id}` }, c.name, h('span', { class: 'muted' }, ` ${c.ids.length}`))))),
     feed, !starredOnly && allHead,
-    !starredOnly && srcRow, !starredOnly && secRow, !starredOnly && groupsRow, quickRow, promo, count, ul, empty, more);
+    !starredOnly && srcRow, !starredOnly && secRow, !starredOnly && groupsRow, quickRow, promo, didYouMean, count, ul, empty, more);
   chipState();
   paint();
   window.scrollTo(0, listState.scroll);

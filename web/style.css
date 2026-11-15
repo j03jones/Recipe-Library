@@ -217,6 +217,9 @@ button:disabled { opacity: .45; cursor: default; }
 .uses.big span { font-size: 1rem; padding: .35rem .8rem; }
 .count { margin: .5rem 0 .6rem; }
 .rows { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: .6rem; }
+.didyoumean { margin: .6rem 0 0; color: var(--muted); }
+.chips.recent { align-items: center; margin-top: -.2rem; }
+.chips.recent .muted { flex: none; padding-right: .2rem; }
 .rows li { position: relative; min-width: 0; }
 .rows.intro li { animation: up .5s cubic-bezier(.2, .8, .2, 1) backwards; animation-delay: calc(var(--i, 0) * 38ms); }
 .rows a.rc {

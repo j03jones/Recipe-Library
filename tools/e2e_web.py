@@ -260,6 +260,25 @@ async def run():
               await page.input_value("input[aria-label='Recipe page address']") == "https://example.com/apple-pie" and "?" not in page.url)
         check("the import page offers to scan a printed recipe", await page.locator("button:has-text('Take or choose a photo')").count() == 1)
 
+        # ---- search forgives typos and remembers what you searched
+        await page.goto(URL + "#/")
+        await page.reload()
+        await page.wait_for_selector("input[type=search]")
+        await page.fill("input[type=search]", "choclate cake")
+        await page.wait_for_timeout(1800)
+        check("a typo still finds recipes", "chocolate cake" in (await page.inner_text(".didyoumean")).lower()
+              and await page.locator(".rows .rc").count() > 0)
+        await page.fill("input[type=search]", "")
+        await page.wait_for_timeout(300)
+        await page.click("input[type=search]")
+        await page.wait_for_timeout(200)
+        check("recent searches are offered", "choclate cake" in await page.inner_text(".chips.recent"))
+        await page.click(".chips.recent button:has-text('choclate cake')")
+        await page.wait_for_timeout(300)
+        check("tapping a recent search runs it", await page.input_value("input[type=search]") == "choclate cake")
+        await page.fill("input[type=search]", "")
+        await page.wait_for_timeout(200)
+
         # ---- hands-free cook mode
         await page.goto(URL + "#/r/6cd1288901")
         await page.wait_for_selector(".cookbtn")
