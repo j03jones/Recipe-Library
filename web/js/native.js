@@ -71,3 +71,58 @@ export function handleBackButton(goBack) {
     else call('App', 'exitApp');
   });
 }
+
+// ------------------------------------------------------------------ cook mode: reading steps aloud, and voice commands
+const lang = () => globalThis.navigator?.language || 'en-US';
+export const canSpeak = () => has('TextToSpeech') || !!globalThis.speechSynthesis;
+export const canListen = () => has('SpeechRecognition') || !!(globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition);
+
+/** Reads `text` aloud (cutting off anything still being read). */
+export function speak(text) {
+  if (has('TextToSpeech')) { call('TextToSpeech', 'speak', { text, lang: lang(), rate: 1, category: 'playback', queueStrategy: 0 }); return; }
+  const synth = globalThis.speechSynthesis;
+  if (!synth) return;
+  synth.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = lang();
+  synth.speak(u);
+}
+export function stopSpeaking() { call('TextToSpeech', 'stop'); globalThis.speechSynthesis?.cancel(); }
+
+/**
+ * Listens until stopped, calling onHeard(text) with what was said so far. Call heard() after acting on a
+ * command, so the same words aren't acted on twice. Resolves to { stop, heard }, or null when the person
+ * said no to the microphone or the device can't do it.
+ */
+export async function listen(onHeard) {
+  if (has('SpeechRecognition')) {
+    const p = await call('SpeechRecognition', 'requestPermissions');
+    if (p?.speechRecognition && p.speechRecognition !== 'granted') return null;
+    let on = true;
+    const start = () => on && call('SpeechRecognition', 'start', { language: lang(), maxResults: 3, partialResults: true, popup: false });
+    cap().addListener('SpeechRecognition', 'partialResults', (d) => { const t = d?.matches?.[0]; if (on && t) onHeard(t); });
+    // the phone stops listening after a pause; start again until cook mode is closed
+    cap().addListener('SpeechRecognition', 'listeningState', (d) => { if (on && d?.status === 'stopped') setTimeout(start, 300); });
+    start();
+    return {
+      heard: () => call('SpeechRecognition', 'stop'),            // a fresh session forgets what was said
+      stop: () => { on = false; call('SpeechRecognition', 'stop'); call('SpeechRecognition', 'removeAllListeners'); },
+    };
+  }
+  const SR = globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition;
+  if (!SR) return null;
+  const rec = new SR();
+  rec.continuous = true; rec.interimResults = true; rec.lang = lang();
+  let on = true; let done = -1;
+  rec.onresult = (e) => { const i = e.results.length - 1; if (i > done) onHeard(e.results[i][0].transcript); };
+  rec.onend = () => { if (on) { try { rec.start(); } catch { /* already starting */ } } };
+  let refused = false;
+  rec.onerror = (e) => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { refused = true; on = false; } };
+  try { rec.start(); } catch { return null; }
+  await new Promise((r) => setTimeout(r, 400));
+  if (refused) return null;
+  return {
+    heard: () => { done = Number.MAX_SAFE_INTEGER; setTimeout(() => { done = -1; try { rec.stop(); } catch { /* restarts in onend */ } }, 50); },
+    stop: () => { on = false; try { rec.stop(); } catch { /* not running */ } },
+  };
+}

@@ -18,10 +18,10 @@ import { SECTIONS } from './groups.js';
 import { addStars, buzz, confetti, copyText, emojiFor, greeting, icon, isStarred, onStarsChange, replaceStars, ridge, starIds, tile, toggleStar } from './ui.js';
 import { restoreTimers, timerChips } from './timers.js';
 import * as cloud from './cloud.js';
-import { canShare, handleBackButton, share, syncStatusBar } from './native.js';
+import { canListen, canShare, canSpeak, handleBackButton, listen, share, speak, stopSpeaking, syncStatusBar } from './native.js';
 import { dietOf, estimateMinutes, formatMinutes, sortKey } from './insights.js';
 import { homeFeed, metaLine } from './home.js';
-import { ingredientsIn, splitSteps } from './steps.js';
+import { ingredientsIn, splitSteps, voiceCommand } from './steps.js';
 import { accountCard, viewAdmin, viewJoin } from './account.js';
 import { viewClient, viewClients, viewLabels, viewMenu, viewMyMeals, viewPrep } from './clientsui.js';
 import * as photos from './photos.js';
@@ -948,6 +948,34 @@ function viewRecipe(id, preset = null) {
     let sheet = null;
 
     const closeBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close cook mode', onclick: close }, icon('close'));
+    // hands-free: read each step aloud, and/or move on by voice ("next", "back", "repeat", "start timer")
+    let reading = false; let ears = null;
+    const hint = h('p', { class: 'cook-hint', hidden: true, 'aria-live': 'polite' });
+    const readBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-pressed': 'false', 'aria-label': 'Read steps aloud', hidden: !canSpeak(), onclick: () => {
+      reading = !reading; readBtn.setAttribute('aria-pressed', String(reading));
+      if (reading) speak(steps[i]); else stopSpeaking();
+      buzz(8);
+    } }, icon('volume'));
+    const micBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-pressed': 'false', 'aria-label': 'Voice control', hidden: !canListen(), onclick: async () => {
+      if (ears) { stopEars(); return; }
+      micBtn.setAttribute('aria-pressed', 'true');
+      ears = await listen(onHeard);
+      if (!ears) { micBtn.setAttribute('aria-pressed', 'false'); toast('Voice control needs the microphone. You can allow it in your phone’s settings.', 4500); return; }
+      hint.hidden = false;
+      hint.textContent = 'Listening. Say “next”, “back”, “repeat”, “start timer” or “ingredients”.';
+    } }, icon('mic'));
+    let lastCmd = 0;
+    function onHeard(words) {
+      const cmd = voiceCommand(words);
+      if (!cmd || Date.now() - lastCmd < 1200) return;
+      lastCmd = Date.now(); ears?.heard();
+      if (cmd === 'next') go(1);
+      else if (cmd === 'back') go(-1);
+      else if (cmd === 'repeat') speak(steps[i]);
+      else if (cmd === 'timer') { const b = chips.querySelector('.tchip'); if (b) b.click(); else speak('This step has no timer.'); }
+      else if (cmd === 'ingredients') ingBtn.click();
+    }
+    function stopEars() { ears?.stop(); ears = null; micBtn.setAttribute('aria-pressed', 'false'); hint.hidden = true; }
     const ingBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Show ingredients', onclick: () => {
       if (sheet) { sheet.remove(); sheet = null; return; }
       sheet = h('div', { class: 'cook-sheet' },
@@ -957,8 +985,8 @@ function viewRecipe(id, preset = null) {
       overlay.append(sheet);
     } }, icon('list'));
     const overlay = h('div', { class: 'cook', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Cooking ${r.title}` },
-      h('div', { class: 'cook-top' }, closeBtn, h('span', { class: 'ttl' }, r.title), ingBtn),
-      bar, body, h('div', { class: 'cook-foot' }, back, next));
+      h('div', { class: 'cook-top' }, closeBtn, h('span', { class: 'ttl' }, r.title), readBtn, micBtn, ingBtn),
+      bar, body, hint, h('div', { class: 'cook-foot' }, back, next));
 
     function paintStep(dir = 1) {
       num.textContent = `Step ${i + 1} of ${steps.length}`;
@@ -969,6 +997,7 @@ function viewRecipe(id, preset = null) {
       [...bar.children].forEach((b, n) => b.classList.toggle('on', n <= i));
       back.disabled = i === 0;
       next.textContent = i === steps.length - 1 ? 'Done' : 'Next step';
+      if (reading) speak(steps[i]);
     }
     function go(d) {
       if (i + d >= steps.length) { close(); celebrate(); return; }
@@ -976,6 +1005,7 @@ function viewRecipe(id, preset = null) {
       i += d; paintStep(d); buzz(8);
     }
     function close() {
+      stopEars(); stopSpeaking();
       overlay.remove();
       document.removeEventListener('keydown', onKey, true);
       if (!wasAwake) setWake(false);

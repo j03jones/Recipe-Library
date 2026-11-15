@@ -245,6 +245,17 @@ async def run():
         check("a step shows the amounts it uses", "1 tsp Salt" in await page.inner_text("ol.steps > li:nth-child(2) .uses"))
         check("recipe page shows an estimated time", "About" in await page.inner_text(".rmeta"))
 
+        # ---- hands-free cook mode
+        await page.goto(URL + "#/r/6cd1288901")
+        await page.wait_for_selector(".cookbtn")
+        await page.evaluate("window.__said = []; speechSynthesis.speak = (u) => window.__said.push(u.text); true")
+        await page.click(".cookbtn")
+        await page.click("button[aria-label='Read steps aloud']")
+        check("reading aloud says the current step", "Over here" in (await page.evaluate("window.__said"))[-1])
+        await page.click(".cook-foot .primary")
+        check("reading aloud follows to the next step", "Sift the flour" in (await page.evaluate("window.__said"))[-1])
+        await page.keyboard.press("Escape")
+
         # ---- the home feed, quick filters and estimated times (fresh page: earlier steps left a search typed in)
         await page.goto(URL + "#/")
         await page.reload()

@@ -21,6 +21,7 @@ console.log(JSON.stringify({
   caps: S.splitSteps('PREHEAT OVEN TO 350 DEG F. MIX THE FLOUR AND SUGAR. BAKE FOR 20 MINUTES UNTIL GOLDEN AND SERVE.'),
   numbered: S.splitSteps('1. Mix.\n2) Bake.'),
   uses: steps.map((s) => S.ingredientsIn(s, ings).map((i) => ings[i].item)),
+  voice: ['Next', 'okay next step', 'go back', 'say that again', 'start the timer', 'what do I need', 'the bowl is warm'].map(S.voiceCommand),
   keys: [S.keywords('Onion, finely chopped'), S.keywords('2 cups all-purpose flour (sifted)'), S.keywords('Salt & pepper to taste')],
 }));
 """
@@ -55,6 +56,9 @@ class Steps(unittest.TestCase):
         found = {i for step in self.o["uses"] for i in step}
         self.assertTrue({"Butter, softened", "Brown sugar, packed", "Eggs", "All-purpose flour", "Baking soda", "Heavy cream"} <= found)
         self.assertNotIn("Salt", found)
+
+    def test_voice_commands(self):
+        self.assertEqual(self.o["voice"], ["next", "next", "back", "repeat", "timer", "ingredients", None])
 
     def test_keywords(self):
         self.assertEqual(self.o["keys"], [["onion"], ["flour"], ["salt", "pepper"]])

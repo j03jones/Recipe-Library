@@ -79,3 +79,19 @@ export function ingredientsIn(step, ings) {
   });
   return out;
 }
+
+// ------------------------------------------------------------------ voice commands in cook mode
+const COMMANDS = [
+  ['next', /\b(next|forward|continue|go on|okay next|done with (this|that))\b/],
+  ['back', /\b(back|previous|go back|last step)\b/],
+  ['repeat', /\b(repeat|again|say that again|read( it)?|what was that)\b/],
+  ['timer', /\b(start (the )?timer|set (a |the )?timer|timer)\b/],
+  ['ingredients', /\b(ingredients?|what do i need)\b/],
+];
+/** What a spoken phrase asks cook mode to do ('next', 'back', 'repeat', 'timer', 'ingredients'), or null.
+ *  Only the last few words count, so "...and now next" still means next. */
+export function voiceCommand(text) {
+  const tail = String(text || '').toLowerCase().replace(/[^a-z ]/g, ' ').trim().split(/\s+/).slice(-4).join(' ');
+  for (const [cmd, re] of COMMANDS) if (re.test(tail)) return cmd;
+  return null;
+}

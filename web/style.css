@@ -356,6 +356,10 @@ ol.steps .tick[aria-pressed=true] .n { color: var(--herb); }
 @keyframes slideback { from { opacity: 0; transform: translateX(-28px); } }
 .cook .timerchips { margin: 1.2rem 0 0; padding: 0; }
 .cook .tchip { min-height: 3rem; font-size: 1rem; background: var(--clay); color: #fff; }
+.cook-top .icon-btn[aria-pressed=true] { background: var(--leaf); color: var(--on-leaf); }
+.cook-hint { margin: 0 auto; padding: .4rem 1rem; max-width: 46rem; text-align: center; font-size: .9rem; color: var(--herb); }
+.cook-hint::before { content: ""; display: inline-block; width: .55rem; height: .55rem; margin-right: .45rem; border-radius: 50%; background: var(--zest); vertical-align: .05rem; animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
 .cook-foot { display: flex; gap: .6rem; padding: .8rem 1rem calc(.8rem + env(safe-area-inset-bottom)); max-width: 46rem; width: 100%; margin: 0 auto; }
 .cook-foot button { flex: 1; min-height: 3.6rem; font-size: 1.1rem; background: rgb(244 241 234 / .1); border-color: transparent; color: var(--cream); }
 .cook-foot button.primary { flex: 2; background: var(--btn); color: #fff; }
