@@ -237,7 +237,42 @@ async function refreshCloud() {
   }
   rebuild();
   if (lib.me) await Promise.all([syncStars(), syncPlanner()]);   // independent of each other: no need to queue
+  if (lib.me) await syncHousehold();
 }
+
+// ---- a household's shopping list: everyone at home sees the same list. Each sync puts this phone's
+// changes since the last sync on top of the latest shared copy (shop.merge3), so nobody's taps are lost.
+const HH_BASE = 'recipelib.household.base';
+const loadHHBase = () => { try { return JSON.parse(localStorage.getItem(HH_BASE) || 'null'); } catch { return null; } };
+const saveHHBase = (v) => { try { if (v) localStorage.setItem(HH_BASE, JSON.stringify(v)); else localStorage.removeItem(HH_BASE); } catch { /* private mode */ } };
+const inHousehold = () => !!loadHHBase();
+let hhBusy = null; let hhTimer = null;
+async function syncHousehold() {
+  if (!lib.me || !cloud.isSignedIn()) return;
+  if (hhBusy) return hhBusy;
+  hhBusy = (async () => {
+    try {
+      const info = await cloud.householdInfo();
+      lib.household = info || null; lib.householdError = '';
+      if (!info) { saveHHBase(null); return; }
+      const remote = shop.clean(info.list);
+      const base = loadHHBase();
+      const local = shop.load();
+      const merged = shop.merge3(base && base.id === info.id ? base.list : { items: [], extras: [], done: [] }, local, remote);
+      if (!shop.sameList(merged, remote)) await cloud.saveHouseholdList(merged, Date.now());
+      const changed = !shop.sameList(merged, local);
+      shop.replace(merged);
+      saveHHBase({ id: info.id, list: merged });
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+      if (changed && document.body.dataset.view === 'shop' && !document.querySelector('dialog[open]') && !typing) route();
+    } catch (err) { lib.householdError = err.message; }
+    finally { hhBusy = null; }
+  })();
+  return hhBusy;
+}
+shop.onChange(() => { if (inHousehold()) { clearTimeout(hhTimer); hhTimer = setTimeout(syncHousehold, 600); } });
+// while the list is open, pick up what the others change every few seconds
+setInterval(() => { if (inHousehold() && document.body.dataset.view === 'shop' && document.visibilityState === 'visible') syncHousehold(); }, 6000);
 
 // ---- stars follow the person between devices. This device pushes its list whenever it changes.
 const SYNC_KEY = 'recipelib.starsync';
@@ -318,7 +353,7 @@ async function syncPlanner() {
         for (const i of mine.shop.items) if (!s.items.some((x) => x.id === i.id)) s.items.push(i);
         for (const x of mine.shop.extras) if (!s.extras.some((y) => y.text.toLowerCase() === x.text.toLowerCase())) s.extras.push(x);
         s.done = [...new Set([...s.done, ...mine.shop.done])];
-        shop.replace(s);
+        if (!inHousehold()) shop.replace(s);          // a household's shared list is synced on its own
         pantry.replace(pantry.merge(theirs.pantry, mine.pantry));
         collections.replace(collections.merge(theirs.collections, mine.collections));
         cooklog.replace(cooklog.merge(theirs.log, mine.log));
@@ -328,7 +363,8 @@ async function syncPlanner() {
       if (haveLocal) await pushPlanner();
     } else if (sync.dirty) await pushPlanner();          // this device has unsent changes
     else if (theirs && theirs.at !== sync.at) {          // another device changed it
-      planner.replace(theirs.plan); shop.replace(theirs.shop);
+      planner.replace(theirs.plan);
+      if (!inHousehold()) shop.replace(theirs.shop);   // a household's shared list is synced on its own
       // a copy saved by an older version of the app has no pantry or collections: keep this device's
       if ('pantry' in theirs) pantry.replace(theirs.pantry);
       if ('collections' in theirs) collections.replace(theirs.collections);
@@ -1623,8 +1659,49 @@ function viewShop() {
           lib.me ? 'The list is saved with your account.' : 'The list is kept on this device; sign in to have it follow you.'),
         lib.planSyncError && h('p', { class: 'note' }, `Not saved to your account yet: ${lib.planSyncError}`)));
   }
-  fill($app, pageHead('Shopping list', 'Everything for the recipes you picked, in one list'), planSeg('shop'), extraForm, body);
+  // sharing the list with the people you live with
+  const sharedNote = h('div');
+  const hhCard = h('div');
+  const names = (list) => list.length <= 1 ? 'just you so far' : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+  function paintHousehold() {
+    const hh = lib.household;
+    fill(sharedNote, hh && h('p', { class: 'sharednote' }, '🏠 Shared with ', h('strong', null, hh.name), ` · ${names(hh.members || [])}`));
+    if (!lib.me) { fill(hhCard); return; }
+    if (hh) {
+      const msg = `Join my household “${hh.name}” on Jones Ridge Recipes so we share one shopping list. In the app: Plan › Shopping list › Join a household, and enter ${hh.code}.`;
+      fill(hhCard, h('section', { class: 'card stack household' },
+        h('h2', null, '🏠 ', hh.name),
+        h('p', { class: 'muted small' }, `Everyone in it sees and changes this list: ${names(hh.members || [])}. Changes show up on the others’ phones within a few seconds.`),
+        h('div', { class: 'stat' }, h('span', null, 'Join code'), h('strong', { class: 'code' }, hh.code)),
+        h('div', { class: 'row grow' },
+          canShare() ? h('button', { type: 'button', class: 'primary', onclick: () => share({ title: 'Join my household on Jones Ridge Recipes', text: msg }) }, 'Invite someone')
+            : h('button', { type: 'button', class: 'primary', onclick: async () => toast(await copyText(msg) ? 'Invite copied' : 'Could not copy') }, 'Copy an invite'),
+          h('button', { type: 'button', class: 'danger', onclick: async () => {
+            if (!await confirmDialog(`Leave ${hh.name}? Your list stays on this phone, but stops being shared.`, 'Leave', true)) return;
+            try { await cloud.leaveHousehold(); } catch (err) { toast(err.message, 4000); return; }
+            lib.household = null; saveHHBase(null); toast('You left the household'); paintHousehold();
+          } }, 'Leave')),
+        lib.householdError && h('p', { class: 'note' }, `Not synced right now: ${lib.householdError}`)));
+      return;
+    }
+    const nameIn = h('input', { class: 'full', maxlength: '60', value: `${firstName() || 'Our'}${firstName() ? '’s' : ''} home`, 'aria-label': 'Household name' });
+    const codeIn = h('input', { class: 'full', maxlength: '12', placeholder: 'ABC234', autocapitalize: 'characters', autocomplete: 'off', 'aria-label': 'Household code' });
+    const after = async (fn, done) => {
+      try { await fn(); } catch (err) { toast(err.message, 4500); return; }
+      await syncHousehold(); toast(done); paint(); paintHousehold();
+    };
+    fill(hhCard, h('details', { class: 'card stack household' },
+      h('summary', null, '🏠 Share this list with your household'),
+      h('p', { class: 'muted small' }, 'Everyone in a household shares one shopping list: tick something off and it’s ticked on their phones too. Up to 8 people.'),
+      h('label', { class: 'field' }, h('span', null, 'Start one'), nameIn),
+      h('button', { type: 'button', class: 'primary', onclick: () => after(() => cloud.createHousehold(nameIn.value.trim() || 'Home'), 'Household started. Invite the others with its code.') }, 'Start a household'),
+      h('label', { class: 'field' }, h('span', null, 'Or join one with its code'), codeIn),
+      h('button', { type: 'button', onclick: () => { if (codeIn.value.trim()) after(() => cloud.joinHousehold(codeIn.value.trim()), 'You joined the household'); } }, 'Join a household')));
+  }
+  fill($app, pageHead('Shopping list', 'Everything for the recipes you picked, in one list'), planSeg('shop'), sharedNote, extraForm, body, hhCard);
   paint();
+  paintHousehold();
+  if (lib.me) syncHousehold().then(paintHousehold);
   window.scrollTo(0, 0);
 }
 

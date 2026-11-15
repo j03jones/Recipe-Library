@@ -61,7 +61,7 @@ export function correct(query, vocab) {
 }
 
 // ------------------------------------------------------------------ recent searches (kept on the device)
-const KEY = 'garni.recentSearches';
+const KEY = 'recipelib.recentSearches';
 export function recentSearches() {
   try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter((s) => typeof s === 'string') : []; } catch { return []; }
 }

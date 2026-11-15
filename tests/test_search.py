@@ -34,3 +34,23 @@ class Search(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+MERGE = r"""
+import { merge3 } from './web/js/shopping.js';
+const base = { items: [{ id: 'a', f: '1' }], extras: [{ id: 'x1', text: 'Milk' }, { id: 'x2', text: 'Eggs' }], done: [] };
+const mine = { items: [{ id: 'a', f: '1' }, { id: 'b', f: '2' }], extras: [{ id: 'x1', text: 'Milk' }, { id: 'x2', text: 'Eggs' }], done: ['x1'] };
+const theirs = { items: [{ id: 'a', f: '1' }], extras: [{ id: 'x1', text: 'Milk' }, { id: 'x3', text: 'Bread' }], done: ['x3'] };
+console.log(JSON.stringify(merge3(base, mine, theirs)));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "needs Node")
+class HouseholdMerge(unittest.TestCase):
+    def test_both_peoples_changes_survive(self):
+        res = subprocess.run(["node", "--input-type=module", "-e", MERGE], cwd=ROOT, capture_output=True, text=True, timeout=60)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        m = json.loads(res.stdout)
+        self.assertEqual([i["id"] for i in m["items"]], ["a", "b"])                    # I added b
+        self.assertEqual([x["text"] for x in m["extras"]], ["Milk", "Bread"])          # they removed eggs, added bread
+        self.assertEqual(sorted(m["done"]), ["x1", "x3"])                               # both ticks kept

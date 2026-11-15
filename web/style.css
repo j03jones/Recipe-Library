@@ -823,3 +823,9 @@ li.swipe > * { position: relative; z-index: 1; }
 .dragghost { position: fixed; z-index: 50; margin: 0; list-style: none; pointer-events: none; background: var(--card); border-radius: var(--r-ctl);
   box-shadow: var(--shadow-lift); transform: rotate(-1.5deg) scale(1.03); padding: .5rem .8rem; display: flex; align-items: center; gap: .4rem; }
 .planday.dropover { outline: 3px dashed var(--leaf); outline-offset: 3px; background: var(--soft); border-radius: var(--radius); }
+
+/* a shopping list shared with the household */
+.sharednote { margin: .2rem 0 .6rem; font-size: .92rem; color: var(--muted); }
+.household { margin-top: 1.4rem; }
+.household summary { cursor: pointer; font-weight: 700; min-height: var(--tap); display: flex; align-items: center; }
+.household .code { font-family: var(--display); letter-spacing: .12em; font-size: 1.3rem; }

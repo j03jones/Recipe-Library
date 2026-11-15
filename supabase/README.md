@@ -168,3 +168,12 @@ data without asking. The app deletes the person's photos from Storage first, the
 function deletes their recipes (Community ones too) and their account, which takes their profile, stars,
 notes, meal plan and shopping list with it. The admin account can't delete itself, and the only owner of a
 restaurant has to make someone else an owner first. New projects get this from `schema.sql`.
+
+## Households (a shared shopping list)
+`add_households.sql` (run after `add_delete_own_account.sql`, safe to run again) lets the people you live with
+share one shopping list. Someone starts a household on the Shopping list page and gets a six-letter code;
+the others join with it (up to 8 people, one household each). The list is one JSON document; each phone
+puts its own changes since its last sync on top of the latest copy (`merge3` in `web/js/shopping.js`), so
+two people ticking things off at the same time don't undo each other, and phones with the list open check
+for changes every few seconds. Leaving keeps your list on your phone; the last one out removes the
+household. Deleting your account leaves it too. New projects get this from `schema.sql`.

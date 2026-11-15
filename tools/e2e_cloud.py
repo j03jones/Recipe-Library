@@ -45,6 +45,7 @@ class Fake:
         self.notified = []   # admin emails about new requests
         self.open_signup = False
         self.sent = []       # emailed invites
+        self.households = {}  # id -> dict(name, code, list, list_at, members=[user ids])
 
     def add_user(self, email, pw, name, role):
         uid = str(uuid.uuid4())
@@ -351,6 +352,31 @@ class Fake:
             return await ok([])
         if path == "/storage/v1/object/photos" and req.method == "DELETE":
             return await ok([])
+        if path.startswith("/rest/v1/rpc/") and "household" in path:
+            mine = next((h for h in self.households.values() if user["id"] in h["members"]), None)
+            name_of = {u["id"]: u["name"] for u in self.users.values()}
+            if path.endswith("/household_info"):
+                return await ok([] if not mine else [dict(id=mine["id"], name=mine["name"], code=mine["code"], list=mine["list"],
+                                                         list_at=mine["list_at"], members=[name_of.get(m, "Someone").split(" ")[0] for m in mine["members"]])])
+            if path.endswith("/create_household"):
+                if mine:
+                    return await ok({"message": "You are already in a household. Leave it first."}, 400)
+                hid = str(uuid.uuid4()); code = uuid.uuid4().hex[:6].upper()
+                self.households[hid] = dict(id=hid, name=body["p_name"], code=code, list={}, list_at=0, members=[user["id"]])
+                return await ok(code)
+            if path.endswith("/join_household"):
+                h = next((h for h in self.households.values() if h["code"] == body["p_code"].strip().upper()), None)
+                if not h:
+                    return await ok({"message": "No household has that code. Check it and try again."}, 400)
+                h["members"].append(user["id"])
+                return await route.fulfill(status=204, headers=CORS)
+            if path.endswith("/leave_household"):
+                if mine:
+                    mine["members"].remove(user["id"])
+                return await route.fulfill(status=204, headers=CORS)
+            if path.endswith("/save_household_list"):
+                mine["list"] = body["p_list"]; mine["list_at"] = max(mine["list_at"] + 1, body["p_at"])
+                return await route.fulfill(status=204, headers=CORS)
         if path == "/rest/v1/rpc/delete_my_account":
             if user["role"] == "admin":
                 return await ok({"message": "The administrator account cannot be deleted from the app."}, 400)
@@ -1182,6 +1208,32 @@ async def run():
         await admin.wait_for_selector("text=add_clients.sql")
         check("a database without the client section is explained", True)
         fake.no_clients = False
+        # ---- a shopping list shared with the household
+        await admin.goto(URL + "#/shop")
+        await admin.click(".household summary")
+        await admin.click("button:has-text('Start a household')")
+        await admin.wait_for_selector(".household .code")
+        code = (await admin.inner_text(".household .code")).strip()
+        check("starting a household shows its join code", len(code) == 6)
+        await admin.fill(".addextra input", "Oat milk"); await admin.click(".addextra button")
+        await admin.wait_for_timeout(1200)
+        await o.goto(URL + "#/shop")
+        await o.click(".household summary")
+        await o.fill("input[aria-label='Household code']", code.lower())
+        await o.click("button:has-text('Join a household')")
+        await o.wait_for_selector(".household .code")
+        check("joining shows the shared list", "Oat milk" in await o.inner_text("ul.shoplist"))
+        check("joining shows who's in it", "Shared with" in await o.inner_text(".sharednote"))
+        await o.click("ul.shoplist li:has-text('Oat milk') .tick")
+        await o.wait_for_timeout(1200)
+        await admin.goto(URL + "#/plan"); await admin.goto(URL + "#/shop")
+        await admin.wait_for_timeout(1500)
+        check("a tick on one phone shows on the other", await admin.get_attribute("ul.shoplist li:has-text('Oat milk') .tick", "aria-pressed") == "true")
+        await admin.click("button:has-text('Leave')")
+        await admin.click("dialog[open] button:has-text('Leave')")
+        await admin.wait_for_timeout(500)
+        check("leaving stops the sharing", await admin.locator(".household summary").count() == 1)
+
         # ---- deleting your own account (App Store / Google Play requirement)
         await o.goto(URL + "#/settings")
         await o.click("details.dangerzone summary")

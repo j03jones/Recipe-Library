@@ -444,3 +444,12 @@ export const setFavorite = (clientId, title, on) => rpc('set_favorite', { p_clie
 export const requestMeal = (clientId, title, note = '') => rpc('request_meal', { p_client: clientId, p_title: title, p_note: note });
 export const updateMyPreferences = (clientId, allergens, allergyNotes, dislikes) =>
   rpc('update_my_preferences', { p_client: clientId, p_allergens: allergens, p_allergy_notes: allergyNotes, p_dislikes: dislikes });
+// ------------------------------------------------------------------ households (a shopping list shared at home)
+export async function householdInfo() {
+  const rows = await authed('/rest/v1/rpc/household_info', { method: 'POST', body: {} });
+  return (Array.isArray(rows) ? rows[0] : rows) || null;
+}
+export const createHousehold = (name) => authed('/rest/v1/rpc/create_household', { method: 'POST', body: { p_name: name } });
+export const joinHousehold = (code) => authed('/rest/v1/rpc/join_household', { method: 'POST', body: { p_code: code } });
+export const leaveHousehold = () => authed('/rest/v1/rpc/leave_household', { method: 'POST', body: {} });
+export const saveHouseholdList = (list, at) => authed('/rest/v1/rpc/save_household_list', { method: 'POST', body: { p_list: list, p_at: at } });
