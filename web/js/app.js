@@ -19,6 +19,8 @@ import { addStars, buzz, confetti, copyText, emojiFor, greeting, icon, isStarred
 import { restoreTimers, timerChips } from './timers.js';
 import * as cloud from './cloud.js';
 import { canShare, handleBackButton, share, syncStatusBar } from './native.js';
+import { dietOf, estimateMinutes, formatMinutes, sortKey } from './insights.js';
+import { homeFeed, metaLine } from './home.js';
 import { accountCard, viewAdmin, viewJoin } from './account.js';
 import { viewClient, viewClients, viewLabels, viewMenu, viewMyMeals, viewPrep } from './clientsui.js';
 import * as photos from './photos.js';
@@ -389,8 +391,8 @@ const thumbObserver = 'IntersectionObserver' in window ? new IntersectionObserve
     photos.photoURL(el.dataset.photo).then((u) => { if (u) { el.style.backgroundImage = `url("${u}")`; el.classList.add('pic'); el.textContent = ''; } });
   }
 }, { rootMargin: '300px' }) : null;
-function thumb(r) {
-  const t = tile(r.categories);
+function thumb(r, big = false) {
+  const t = tile(r.categories, big);
   const path = photoOf(r);
   if (path && thumbObserver) { t.dataset.photo = path; thumbObserver.observe(t); }
   return t;
@@ -427,7 +429,12 @@ function rebuild() {
     map.set(row.id, r);
   }
   lib.byId = map;
-  lib.all = [...map.values()].filter((r) => !r.hidden).sort((a, b) => collator.compare(a.title, b.title));
+  for (const r of map.values()) {
+    // worked out from the recipe's own text (estimated: the old archive recipes don't say); kept on the object
+    if (r._mins === undefined || r._dirSeen !== r.dir) { r._mins = estimateMinutes(r); r._veg = !!dietOf(r)?.vegetarian; r._dirSeen = r.dir; }
+    r._sort ??= sortKey(r.title);
+  }
+  lib.all = [...map.values()].filter((r) => !r.hidden).sort((a, b) => collator.compare(a._sort, b._sort));
   const cats = new Map();
   for (const r of lib.all) {
     r._hay = [r.title, r.categories.join(' '), (r.tags || []).join(' '), r.ings.map((i) => i.item).join(' '), r.dir].join('\n').toLowerCase();
@@ -469,7 +476,7 @@ function matches(q, cat, src = '') {
 
 // -------------------------------------------------------------------- views
 
-const listState = { q: '', sec: -1, cat: '', src: '', shown: PAGE, scroll: 0 };
+const listState = { q: '', sec: -1, cat: '', src: '', quick: false, veg: false, shown: PAGE, scroll: 0 };
 let onScroll = null;
 let releaseWake = null;
 
@@ -572,7 +579,19 @@ function viewList(starredOnly = false) {
   const srcRow = h('div', { class: 'chips src', role: 'group', 'aria-label': 'Where recipes come from' }, srcButtons.map(([, b]) => b));
   srcRow.hidden = !lib.me;
 
+  const quickBtn = h('button', { class: 'chip', type: 'button', onclick: () => { listState.quick = !listState.quick; listState.shown = PAGE; chipState(); paint(); } },
+    icon('clock', { size: 16 }), 'Under 30 min');
+  const vegBtn = h('button', { class: 'chip', type: 'button', onclick: () => { listState.veg = !listState.veg; listState.shown = PAGE; chipState(); paint(); } },
+    '🌿 Vegetarian');
+  const quickRow = h('div', { class: 'chips quick', role: 'group', 'aria-label': 'Filters' }, quickBtn, vegBtn,
+    h('span', { class: 'muted small hint' }, 'Times and labels are worked out from each recipe, so check before you rely on them.'));
+  const feed = starredOnly ? h('div') : homeFeed({ h, lib, thumb, starIds, recentCooked: () => cooklog.recent(cooklog.load()).map(([id]) => id),
+    filter: (kind) => { listState[kind] = true; listState.shown = PAGE; chipState(); paint(); allHead.scrollIntoView({ behavior: 'smooth', block: 'start' }); } });
+  const allHead = h('h2', { class: 'allhead' }, 'Browse all recipes');
+
   function chipState() {
+    quickBtn.setAttribute('aria-pressed', String(listState.quick));
+    vegBtn.setAttribute('aria-pressed', String(listState.veg));
     paintPromo();
     for (const [k, b] of srcButtons) b.setAttribute('aria-pressed', String(k === listState.src));
     for (const [i, b] of secButtons) b.setAttribute('aria-pressed', String(i === listState.sec));
@@ -593,13 +612,18 @@ function viewList(starredOnly = false) {
         h('span', { class: 'txt' },
           h('span', { class: 't' }, r.title, r.source !== 'base' && h('span', { class: 'badge' }, badgeText(r))),
           h('span', { class: 'c' }, r.kind === 'link' ? `Link · ${r.src?.name || 'another website'} ↗`
-            : r.categories.length ? r.categories.slice(0, 2).join(', ') : `${r.ings.length} ingredients`))),
+            : [r.categories.length ? r.categories.slice(0, 2).join(', ') : `${r.ings.length} ingredients`, metaLine(r)].filter(Boolean).join(' · ')))),
       starButton(r.id));
   }
 
   function paint() {
     let pool = matches(listState.q, listState.cat, lib.me ? listState.src : '');
     if (starredOnly) pool = pool.filter((r) => isStarred(r.id));
+    if (listState.quick) pool = pool.filter((r) => r._mins != null && r._mins <= 30);
+    if (listState.veg) pool = pool.filter((r) => r._veg);
+    const browsing = !starredOnly && !listState.q && !listState.cat && listState.sec < 0 && !listState.src && !listState.quick && !listState.veg;
+    feed.hidden = !browsing;
+    allHead.hidden = !browsing;
     results = pool;
     const shown = results.slice(0, listState.shown);
     count.textContent = starredOnly
@@ -609,7 +633,7 @@ function viewList(starredOnly = false) {
     ul.replaceChildren(...shown.map((r, i) => row(r, i)));
     more.hidden = shown.length >= results.length;
     if (results.length) { fill(empty); return; }
-    const filtered = listState.q || listState.cat || (lib.me && listState.src);
+    const filtered = listState.q || listState.cat || (lib.me && listState.src) || listState.quick || listState.veg;
     fill(empty, h('div', { class: 'empty' },
       h('span', { class: 'tile big', 'aria-hidden': 'true', 'data-sec': filtered ? 6 : 0 }, filtered ? '🔎' : '⭐'),
       h('h2', null, filtered ? 'Nothing matches' : 'Nothing starred yet'),
@@ -617,7 +641,7 @@ function viewList(starredOnly = false) {
         ? 'Try fewer words, or search by an ingredient like “lemon”.'
         : 'Tap the star on a recipe to keep it here for quick access.'),
       filtered
-        ? h('button', { onclick: () => { listState.q = ''; listState.sec = -1; listState.cat = ''; listState.src = ''; input.value = ''; chipState(); paint(); } }, 'Clear search and filters')
+        ? h('button', { onclick: () => { Object.assign(listState, { q: '', sec: -1, cat: '', src: '', quick: false, veg: false }); input.value = ''; chipState(); paint(); } }, 'Clear search and filters')
         : h('button', { onclick: () => { location.hash = '#/'; } }, 'Browse recipes')));
   }
 
@@ -642,7 +666,8 @@ function viewList(starredOnly = false) {
       h('div', { class: 'chips' },
         cooklog.recent(cooklog.load()).length > 0 && h('a', { class: 'chip', href: '#/cooked' }, 'Cooked', h('span', { class: 'muted' }, ` ${cooklog.recent(cooklog.load()).length}`)),
         collections.load().map((c) => h('a', { class: 'chip', href: `#/c/${c.id}` }, c.name, h('span', { class: 'muted' }, ` ${c.ids.length}`))))),
-    !starredOnly && srcRow, !starredOnly && secRow, !starredOnly && groupsRow, promo, count, ul, empty, more);
+    feed, !starredOnly && allHead,
+    !starredOnly && srcRow, !starredOnly && secRow, !starredOnly && groupsRow, quickRow, promo, count, ul, empty, more);
   chipState();
   paint();
   window.scrollTo(0, listState.scroll);
@@ -1054,7 +1079,10 @@ function viewRecipe(id, preset = null) {
         !shared && starButton(r.id),
         !shared && canEdit(r) && h('a', { class: 'icon-btn', href: `#/edit/${r.id}`, 'aria-label': 'Edit recipe', title: 'Edit recipe' }, icon('edit'))),
       h('div', { class: 'rhead' }, tile(r.categories, true), h('h1', null, r.title)),
-      r.categories.length > 0 && h('div', { class: 'labels' }, r.categories.map((c) => h('span', { class: 'label' }, c)))),
+      r.categories.length > 0 && h('div', { class: 'labels' }, r.categories.map((c) => h('span', { class: 'label' }, c))),
+      (r._mins != null || r._veg) && h('p', { class: 'rmeta', title: 'Worked out from the recipe, so it is a guide only' },
+        r._mins != null && h('span', null, icon('clock', { size: 16 }), `About ${formatMinutes(r._mins)}`),
+        r._veg && h('span', null, '🌿 Vegetarian'))),
     shared ? sharedNote(sharedFrom) : photoBlock(r),
     credit(r),
     sourceCredit(r),
