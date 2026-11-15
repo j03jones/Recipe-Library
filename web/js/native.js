@@ -126,3 +126,6 @@ export async function listen(onHeard) {
     stop: () => { on = false; try { rec.stop(); } catch { /* not running */ } },
   };
 }
+
+/** 'ios', 'android' or 'web'. */
+export const platform = () => (isNative() && cap().getPlatform?.()) || 'web';

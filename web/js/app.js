@@ -18,7 +18,8 @@ import { SECTIONS } from './groups.js';
 import { addStars, buzz, confetti, copyText, emojiFor, greeting, icon, isStarred, onStarsChange, replaceStars, ridge, starIds, tile, toggleStar } from './ui.js';
 import { restoreTimers, timerChips } from './timers.js';
 import * as cloud from './cloud.js';
-import { canListen, canShare, canSpeak, handleBackButton, listen, share, speak, stopSpeaking, syncStatusBar } from './native.js';
+import { canListen, canShare, canSpeak, handleBackButton, listen, platform, share, speak, stopSpeaking, syncStatusBar } from './native.js';
+import { compactTitle, edgeSwipeBack, flyingTiles, pullToRefresh, swipeRow, swipeableSheets, transition } from './motion.js';
 import { dietOf, estimateMinutes, formatMinutes, sortKey } from './insights.js';
 import { homeFeed, metaLine } from './home.js';
 import { ingredientsIn, splitSteps, voiceCommand } from './steps.js';
@@ -1116,7 +1117,7 @@ function viewRecipe(id, preset = null) {
         awakeBtn,
         !shared && starButton(r.id),
         !shared && canEdit(r) && h('a', { class: 'icon-btn', href: `#/edit/${r.id}`, 'aria-label': 'Edit recipe', title: 'Edit recipe' }, icon('edit'))),
-      h('div', { class: 'rhead' }, tile(r.categories, true), h('h1', null, r.title)),
+      h('div', { class: 'rhead' }, (() => { const t = tile(r.categories, true); t.style.viewTransitionName = 'rtile'; return t; })(), h('h1', null, r.title)),
       r.categories.length > 0 && h('div', { class: 'labels' }, r.categories.map((c) => h('span', { class: 'label' }, c))),
       (r._mins != null || r._veg) && h('p', { class: 'rmeta', title: 'Worked out from the recipe, so it is a guide only' },
         r._mins != null && h('span', null, icon('clock', { size: 16 }), `About ${formatMinutes(r._mins)}`),
@@ -1563,9 +1564,13 @@ function viewShop() {
             onclick: () => { shop.setDone(l.key, btn.getAttribute('aria-pressed') !== 'true'); buzz(6); paint(); } },
           h('span', { class: 'box' }, icon('check', { size: 16 })),
           h('span', { class: 'what' }, l.name, (l.amounts.length > 0 || l.notes.length > 0) && h('b', null, ` ${[...l.amounts, ...l.notes].join(' + ')}`)));
-          return h('li', { class: l.extra ? 'extra' : null }, btn,
+          return swipeRow(h('li', { class: l.extra ? 'extra' : null }, btn,
             l.extra && h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Remove ${l.name}`, title: 'Remove',
-              onclick: () => { shop.removeExtra(l.key); paint(); } }, icon('close', { size: 18 })));
+              onclick: () => { shop.removeExtra(l.key); paint(); } }, icon('close', { size: 18 }))), {
+            onRight: () => { shop.setDone(l.key, !done.has(l.key)); buzz(6); paint(); },
+            rightLabel: done.has(l.key) ? 'Not yet' : 'Got it',
+            onLeft: l.extra ? () => { shop.removeExtra(l.key); buzz(6); paint(); } : null,
+          });
         }))]),
       kitchen.have.length > 0 && h('label', { class: 'check', style: 'margin-top:1.2rem' }, skipIn, 'Leave out what I already have ',
         h('a', { href: '#/pantry' }, '(my kitchen)')),
@@ -2001,7 +2006,7 @@ function route() {
   stampHistory();
   clearView();
   $app.removeAttribute('aria-busy');
-  $app.classList.remove('enter'); void $app.offsetWidth; $app.classList.add('enter');
+  if (!document.documentElement.dataset.nav) { $app.classList.remove('enter'); void $app.offsetWidth; $app.classList.add('enter'); }
   const hash = location.hash.replace(/^#\/?/, '');
   const [kind, arg] = hash.split('/');
   const id = arg ? decodeURIComponent(arg) : null;
@@ -2057,7 +2062,19 @@ async function boot() {
       h('p', null, 'Connect to the internet and reload once, then it will work offline.'), h('p', { class: 'muted small' }, String(err))));
     return;
   }
-  window.addEventListener('hashchange', route);
+  // pages slide forward or back (worked out from the history index, before route() updates it)
+  window.addEventListener('hashchange', () => {
+    const st = history.state;
+    const back = !!st && typeof st.i === 'number' && st.i < appIndex;
+    Promise.resolve(transition(route, { back })).then(compactTitle);
+  });
+  flyingTiles();
+  swipeableSheets();
+  if (platform() === 'ios') edgeSwipeBack(() => goBack());
+  pullToRefresh(async () => {
+    if (cloud.isSignedIn()) { try { await refreshCloud(); } catch { /* offline: keep what we have */ } }
+    route(); compactTitle();
+  });
   document.addEventListener('keydown', (e) => {
     if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('dialog[open]')) return;
     const view = document.body.dataset.view;
@@ -2065,7 +2082,7 @@ async function boot() {
     if (e.key === 'Escape' && (view === 'recipe' || view === 'edit')) { goBack('#/'); }
     else if (e.key === '/' && view === 'list' && !typing) { const s = document.querySelector('input[type=search]'); if (s) { e.preventDefault(); s.focus(); } }
   });
-  route();
+  Promise.resolve(route()).then(compactTitle);
   registerWorker();
   loadMore();
   if (linkType === 'recovery') ctx.recovery = true;

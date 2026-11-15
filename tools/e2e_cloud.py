@@ -379,7 +379,7 @@ class Fake:
 
 
 async def new_page(b, fake, w=390, h=844):
-    ctx = await b.new_context(viewport={"width": w, "height": h}, accept_downloads=True)
+    ctx = await b.new_context(viewport={"width": w, "height": h}, accept_downloads=True, reduced_motion="reduce")
     await ctx.route(re.compile(r"https://.*\.supabase\.co/.*"), fake.handle)
     page = await ctx.new_page()
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)

@@ -758,3 +758,58 @@ fieldset legend { font-weight: 600; font-size: .9rem; padding: 0 .3rem; }
 }
 .askdialog p { margin-top: 0; font-weight: 600; }
 .askdialog .row { margin-top: .9rem; }
+/* ------------------------------------------------------------------------- motion and touch */
+/* page transitions: slide forward and back, cross-fade between tabs; the tab bar stays put */
+.tabs { view-transition-name: tabs; }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: .28s; animation-timing-function: cubic-bezier(.2, .8, .2, 1); }
+:root[data-nav=forward]::view-transition-old(root) { animation-name: vt-fade-out, vt-to-left; }
+:root[data-nav=forward]::view-transition-new(root) { animation-name: vt-fade-in, vt-from-right; }
+:root[data-nav=back]::view-transition-old(root) { animation-name: vt-fade-out, vt-to-right; }
+:root[data-nav=back]::view-transition-new(root) { animation-name: vt-fade-in, vt-from-left; }
+::view-transition-group(rtile) { animation-duration: .38s; animation-timing-function: cubic-bezier(.2, .9, .25, 1); }
+@keyframes vt-fade-in { from { opacity: 0; } }
+@keyframes vt-fade-out { to { opacity: 0; } }
+@keyframes vt-from-right { from { transform: translateX(32px); } }
+@keyframes vt-to-left { to { transform: translateX(-24px); } }
+@keyframes vt-from-left { from { transform: translateX(-32px); } }
+@keyframes vt-to-right { to { transform: translateX(24px); } }
+@media (prefers-reduced-motion: reduce) { ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; } }
+
+/* the page title, small at the top, once the big one has scrolled away */
+.minibar {
+  position: fixed; z-index: 20; top: 0; left: 0; right: 0; padding: calc(env(safe-area-inset-top) + .7rem) 3.5rem .7rem;
+  text-align: center; font-family: var(--display); font-weight: 700; font-size: 1.02rem; color: var(--head);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none;
+  background: color-mix(in srgb, var(--paper) 82%, transparent); -webkit-backdrop-filter: saturate(1.6) blur(14px); backdrop-filter: saturate(1.6) blur(14px);
+  box-shadow: 0 1px 0 var(--line); opacity: 0; transform: translateY(-6px); transition: opacity .18s ease, transform .18s ease;
+}
+.minibar.on { opacity: 1; transform: none; }
+body[data-view=list] .minibar { display: none; }     /* the home page keeps its sticky search bar instead */
+@media (min-width: 900px) { .minibar { left: var(--side, 15rem); } }
+
+/* phones: dialogs rise from the bottom as sheets, with a handle you can swipe down */
+@media (max-width: 599px) {
+  dialog { margin: auto 0 0; width: 100% !important; max-width: 100% !important; max-height: 88vh; overflow: auto;
+    border-radius: 26px 26px 0 0; padding: 1.7rem 1.2rem calc(1.2rem + env(safe-area-inset-bottom)); }
+  dialog::before { content: ""; position: absolute; top: .55rem; left: 50%; width: 2.6rem; height: .3rem; margin-left: -1.3rem; border-radius: 99px; background: var(--line); }
+  dialog[open] { animation: sheet .32s cubic-bezier(.2, .9, .3, 1); }
+  dialog .row { justify-content: stretch; }
+  dialog .row > button { flex: 1; }
+}
+@keyframes sheet { from { transform: translateY(100%); } }
+@media (prefers-reduced-motion: reduce) { dialog[open] { animation: none; } }
+
+/* pull to refresh */
+.ptr { position: fixed; z-index: 30; top: calc(env(safe-area-inset-top) + .6rem); left: 50%; width: 2.2rem; height: 2.2rem; margin-top: -1rem;
+  border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--leaf); background: var(--card); box-shadow: var(--shadow);
+  opacity: 0; transform: translate(-50%, 0); pointer-events: none; }
+.ptr.busy { opacity: 1 !important; animation: spin .7s linear infinite; transform: translate(-50%, 2.6rem); }
+@keyframes spin { to { transform: translate(-50%, 2.6rem) rotate(360deg); } }
+
+/* swipeable rows: the label shows underneath as the row slides */
+li.swipe { position: relative; }
+li.swipe::before { content: attr(data-swipe); position: absolute; inset: 0; display: flex; align-items: center; padding: 0 1.2rem;
+  border-radius: var(--r-ctl); background: var(--leaf); color: var(--on-leaf); font-weight: 700; z-index: 0; }
+li.swipe.left::before { justify-content: flex-end; background: var(--danger); color: #fff; }
+li.swipe:not([data-swipe])::before, li.swipe[data-swipe=""]::before { display: none; }
+li.swipe > * { position: relative; z-index: 1; }

@@ -58,6 +58,14 @@ async def main():
 async def run():
     async with async_playwright() as p:
         b = await p.chromium.launch()
+        # the functional checks run with "reduce motion" on (no page transitions to wait for); one check below
+        # turns motion back on to test the transitions themselves
+        plain_new_context = b.new_context
+
+        async def calm_context(*args, **kwargs):
+            kwargs.setdefault("reduced_motion", "reduce")
+            return await plain_new_context(*args, **kwargs)
+        b.new_context = calm_context
         if os.environ.get("E2E_NOW"):
             # run as if it were this date (YYYY-MM-DDTHH:MM): the plan and list depend on today's weekday
             real_new_context = b.new_context
@@ -67,7 +75,7 @@ async def run():
                 await c.clock.install(time=datetime.fromisoformat(os.environ["E2E_NOW"]))
                 return c
             b.new_context = new_context
-        ctx = await b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2,
+        ctx = await b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, reduced_motion="no-preference",
                                   is_mobile=True, has_touch=True, accept_downloads=True)
         page = await ctx.new_page()
         page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
@@ -255,6 +263,21 @@ async def run():
         await page.click(".cook-foot .primary")
         check("reading aloud follows to the next step", "Sift the flour" in (await page.evaluate("window.__said"))[-1])
         await page.keyboard.press("Escape")
+
+        # ---- page transitions (motion on): pages slide, and nothing errors when taps come quickly
+        ctxM = await b.new_context(viewport={"width": 390, "height": 844}, reduced_motion="no-preference")
+        m = await ctxM.new_page()
+        m.on("pageerror", lambda e: errors.append(str(e)))
+        m.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+        await m.goto(URL + "#/")
+        await m.wait_for_selector(".feed .fcard")
+        await m.evaluate("window.__vt = 0; const real = document.startViewTransition.bind(document); document.startViewTransition = (cb) => { window.__vt++; return real(cb); }; true")
+        await m.click(".feed .fcard")
+        await m.wait_for_selector(".rhead h1")
+        await m.go_back(); await m.go_forward(); await m.go_back()
+        await m.wait_for_selector(".feed .fcard")
+        check("page changes use view transitions", await m.evaluate("window.__vt") >= 2)
+        await ctxM.close()
 
         # ---- the home feed, quick filters and estimated times (fresh page: earlier steps left a search typed in)
         await page.goto(URL + "#/")
