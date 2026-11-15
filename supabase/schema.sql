@@ -772,8 +772,7 @@ revoke execute on function
 alter table public.user_data add column if not exists planner jsonb not null default '{}'
   check (jsonb_typeof(planner) = 'object' and pg_column_size(planner) <= 262144);
 
--- ============================================================================================
--- Meal prep clients (v0.22.0): client accounts, weekly menus they approve meal by meal, history,
+-- =====================================================================================-- Meal prep clients (v0.22.0): client accounts, weekly menus they approve meal by meal, history,
 -- favourites, requests and ratings. Safe to run more than once. Run after everything else.
 -- Existing projects: paste this into Supabase > SQL Editor > Run. (New projects get it from schema.sql.)
 --
@@ -1134,3 +1133,29 @@ alter table public.client_meal_private drop constraint if exists client_meal_pri
 alter table public.client_meal_private add constraint client_meal_private_parts_check
   check (jsonb_typeof(parts) = 'array' and jsonb_array_length(parts) <= 12);
 
+=======
+-- ----------------------------------------------------------------------------- deleting your own account
+-- Everything of theirs goes with the account: their profile, private recipes, recipes they shared to
+-- Community, starred recipes, meal plan and shopping list (all cascade from auth.users). The app deletes
+-- their photos from Storage first. The administrator account cannot delete itself, and the only owner of
+-- a restaurant has to hand ownership on first so the restaurant's staff are not left without one.
+create or replace function public.delete_my_account() returns void
+language plpgsql security definer set search_path = public, auth as $$
+declare v_me uuid := auth.uid();
+begin
+  if v_me is null then raise exception 'Please sign in first.'; end if;
+  if (select role from public.profiles where id = v_me) = 'admin' then
+    raise exception 'The administrator account cannot be deleted from the app.';
+  end if;
+  if exists (select 1 from public.restaurant_members m
+             where m.user_id = v_me and m.member_role = 'owner'
+               and (select count(*) from public.restaurant_members o
+                    where o.restaurant_id = m.restaurant_id and o.member_role = 'owner') <= 1) then
+    raise exception 'You are the only owner of a restaurant. Make someone else an owner first, or ask the admin.';
+  end if;
+  delete from public.recipes where owner_id = v_me;
+  delete from auth.users where id = v_me;
+end $$;
+
+revoke execute on function public.delete_my_account() from public, anon;
+grant execute on function public.delete_my_account() to authenticated;

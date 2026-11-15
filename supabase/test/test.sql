@@ -336,6 +336,32 @@ select t.expect('removed person''s pending submissions are gone', t.n($$ select 
 select t.expect('removed person''s Community recipe stays, still credited to them',
   (select owner_id = :'admin_id' and author_name = 'Lee' from public.recipes where title = 'Lee Shared Slaw'));
 
+-- deleting your own account: everything of theirs goes; admins and only-owners are refused
+select t.login(:'admin_id'); set role authenticated;
+select public.create_invite('student', null, 'staff', 1, 30) as quit_code \gset
+reset role;
+insert into auth.users(email, raw_user_meta_data) values ('quitter@x.test', jsonb_build_object('invite_code', :'quit_code', 'display_name', 'Quinn'));
+select id as quitter from auth.users where email='quitter@x.test' \gset
+insert into public.recipes(owner_id, scope, title, body) values (:'quitter', 'private', 'Quinn Private Pie', '{}');
+insert into public.recipes(owner_id, scope, status, title, body, author_name) values (:'quitter', 'community', 'approved', 'Quinn Shared Slaw', '{}', 'Quinn');
+set role anon;
+select t.denied('signed-out visitors cannot delete an account', $$ select public.delete_my_account() $$);
+reset role;
+select t.login(:'admin_id'); set role authenticated;
+select t.denied('the admin cannot delete their own account in the app', $$ select public.delete_my_account() $$);
+reset role;
+select t.login(:'c1'); set role authenticated;
+select t.denied('the only owner of a restaurant cannot delete their account', $$ select public.delete_my_account() $$);
+reset role;
+select t.login(:'quitter'); set role authenticated;
+select public.delete_my_account();
+reset role;
+select t.expect('a deleted account is gone', t.n(format($$ select count(*) from auth.users where id = %L $$, :'quitter')) = 0);
+select t.expect('a deleted account''s profile is gone', t.n(format($$ select count(*) from public.profiles where id = %L $$, :'quitter')) = 0);
+select t.expect('a deleted account''s recipes are all gone, Community ones too',
+  t.n($$ select count(*) from public.recipes where title like 'Quinn %' $$) = 0);
+select t.expect('other people are untouched', t.n(format($$ select count(*) from auth.users where id = %L $$, :'s1')) = 1);
+
 -- ---- invite links and invite requests ----------------------------------------
 select t.login(:'admin_id'); set role authenticated;
 select public.create_invite('student', null, 'staff', 1, 30) as link_code \gset

@@ -494,6 +494,9 @@ details.original ol { margin: .4rem 0 0; padding-left: 1.3rem; }
 .infodialog h2 { margin-top: 0; }
 .infodialog .row { justify-content: flex-end; }
 .invitebox summary { cursor: pointer; font-weight: 600; }
+details.dangerzone { margin-top: .4rem; border-top: 1px solid var(--line); padding-top: .6rem; }
+details.dangerzone summary { cursor: pointer; color: var(--danger); font-weight: 600; min-height: var(--tap); display: flex; align-items: center; }
+details.dangerzone p { margin: .2rem 0 .7rem; }
 .seg2 button { white-space: nowrap; }
 [hidden] { display: none !important; }
 @media (prefers-reduced-motion: reduce) {

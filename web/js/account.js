@@ -306,8 +306,23 @@ export function accountCard(ctx) {
         me?.role === 'admin' && h('a', { class: 'btnlink primary', href: '#/clients' }, 'Meal prep clients'),
         h('button', { type: 'button', onclick: changePw }, 'Change password'),
         h('button', { type: 'button', onclick: async () => { await cloud.signOut(); ctx.clearCloud(); toast('Signed out'); ctx.rerender(); } }, 'Sign out')),
-      pw);
+      pw,
+      me && me.role !== 'admin' && h('details', { class: 'dangerzone' },
+        h('summary', null, 'Delete my account'),
+        h('p', { class: 'muted small' }, 'This permanently deletes your Jones Ridge Recipes account and everything saved with it: your own recipes '
+          + '(including any you shared to Community), your photos, stars, notes, meal plan and shopping list. It can’t be undone. '
+          + 'The built-in recipes stay on this device.'),
+        h('button', { type: 'button', class: 'danger', onclick: deleteAccount }, 'Delete my account')));
     if (ctx.recovery) changePw();      // stays open across re-draws until saved or cancelled
+  }
+
+  async function deleteAccount() {
+    const email = cloud.currentUser()?.email || 'this account';
+    if (!await ctx.confirmDialog(`Delete ${email} and everything saved with it? This can’t be undone.`, 'Delete account', true)) return;
+    try { await cloud.deleteMyAccount(); } catch (err) { toast(err.message, 6000); return; }
+    ctx.clearCloud();
+    await ctx.infoDialog('Account deleted', 'Your account and everything saved with it have been deleted. Thanks for cooking with us.');
+    ctx.rerender();
   }
 
   paint();

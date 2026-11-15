@@ -347,6 +347,16 @@ class Fake:
             if body.get("request_id"):
                 self.requests[body["request_id"]]["status"] = "invited"
             return await ok({"ok": True, "code": code})
+        if path.startswith("/storage/v1/object/list/photos"):
+            return await ok([])
+        if path == "/storage/v1/object/photos" and req.method == "DELETE":
+            return await ok([])
+        if path == "/rest/v1/rpc/delete_my_account":
+            if user["role"] == "admin":
+                return await ok({"message": "The administrator account cannot be deleted from the app."}, 400)
+            self.recipes = {k: r for k, r in self.recipes.items() if r["owner_id"] != user["id"]}
+            del self.users[user["email"]]
+            return await route.fulfill(status=204, headers=CORS)
         if path == "/rest/v1/rpc/admin_list_invites":
             return await ok([dict(code=c, kind=i["kind"], restaurant_name=(self.restaurants.get(i["restaurant_id"]) or {}).get("name"), member_role=i["member_role"],
                                   max_uses=i["max"], uses=i["uses"], expires_at=None, cancelled_at=None, created_at="2026-11-05T10:00:00Z",
@@ -1172,6 +1182,21 @@ async def run():
         await admin.wait_for_selector("text=add_clients.sql")
         check("a database without the client section is explained", True)
         fake.no_clients = False
+        # ---- deleting your own account (App Store / Google Play requirement)
+        await o.goto(URL + "#/settings")
+        await o.click("details.dangerzone summary")
+        await o.click("details.dangerzone button:has-text('Delete my account')")
+        await o.wait_for_selector("dialog[open]")
+        check("deleting an account asks first", "can’t be undone" in await o.inner_text("dialog[open]"))
+        await o.click("dialog[open] button:has-text('Delete account')")
+        check("deleting an account says it is done", "Account deleted" in await close_dialog(o))
+        check("the account is gone from the server", "val@example.com" not in fake.users)
+        await o.wait_for_selector("button[role=tab]:has-text('Sign in')")
+        check("after deleting, the app is signed out", True)
+        await admin.goto(URL + "#/settings")
+        await admin.wait_for_selector("text=Sign out")
+        check("the admin has no delete-account button", await admin.locator("details.dangerzone").count() == 0)
+        await octx.close()
 
         # desktop screenshot of admin
         await admin.set_viewport_size({"width": 1280, "height": 900})

@@ -249,6 +249,18 @@ export const cancelInvite = (code) => authed('/rest/v1/rpc/cancel_invite', { met
 export const listPeople = () => authed('/rest/v1/rpc/admin_list_people', { method: 'POST', body: {} });
 export const removePerson = (userId) => authed('/rest/v1/rpc/admin_remove_person', { method: 'POST', body: { p_user: userId } });
 
+/** Delete the signed-in person's own account and everything of theirs: their photos first (Storage can't be
+ *  emptied from the database), then the account itself (delete_my_account), then the session on this device. */
+export async function deleteMyAccount() {
+  const me = currentUser();
+  if (!me) throw new CloudError('Please sign in first.', 401);
+  for (const folder of ['recipes', 'library', 'avatars']) {
+    try { await removePhotos(await listPhotos(`${folder}/${me.id}`)); } catch { /* best effort: the account still goes */ }
+  }
+  await authed('/rest/v1/rpc/delete_my_account', { method: 'POST', body: {} });
+  setSession(null);
+}
+
 // ------------------------------------------------------------------ photos (Storage bucket "photos")
 // Paths look like recipes/<person id>/<random>.jpg; the database decides who may read or write them.
 export async function setRecipePhoto(id, path) {
