@@ -1,6 +1,7 @@
 // Account card (sign in / create account / restaurant tools) and the admin screen.
 // Receives `ctx` from app.js so it can reuse the app's helpers without importing the whole app.
 import * as cloud from './cloud.js';
+import { canShare, share } from './native.js';
 import { copyText } from './ui.js';
 import * as photos from './photos.js';
 import { qrSvg } from './qr.js';
@@ -76,7 +77,7 @@ function inviteShare(ctx, code, what = '') {
       h('input', { class: 'full link', readonly: true, value: link, 'aria-label': 'Invite link', onfocus: (e) => e.target.select() }),
       h('div', { class: 'row' },
         h('button', { type: 'button', class: 'primary', onclick: async () => toast(await copyText(link) ? 'Invite link copied' : 'Could not copy. Press and hold the link to copy it.', 3000) }, 'Copy link'),
-        navigator.share && h('button', { type: 'button', onclick: () => navigator.share({ title: `Join ${APP_NAME}`, text: msg }).catch(() => {}) }, 'Share…'),
+        canShare() && h('button', { type: 'button', onclick: () => share({ title: `Join ${APP_NAME}`, text: msg }) }, 'Share…'),
         h('a', { class: 'btnlink', href: mail }, 'Email it'),
         h('button', { type: 'button', onclick: () => showQrDialog(ctx, link, `Join ${APP_NAME}`) }, 'Show big QR'))));
 }

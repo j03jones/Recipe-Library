@@ -1,5 +1,6 @@
 // Small presentation helpers: icons, the emoji "photo" tile for each category, and starred recipes.
 import { SECTIONS } from './groups.js';
+import { haptic } from './native.js';
 
 const ICON_PATHS = {
   book: '<path d="M5 4.5h9a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3z"/><path d="M17 8h2v12h-2"/><path d="M9 9h5M9 12.5h4"/>',
@@ -160,7 +161,12 @@ export function ridge(tall = false) {
 const reduced = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 /** A short buzz on phones that support it (Android; iPhones ignore it). */
-export function buzz(ms = 10) { try { if (!reduced()) navigator.vibrate?.(ms); } catch { /* unsupported */ } }
+export function buzz(ms = 10) {
+  if (reduced()) return;
+  // in the phone apps: a real haptic tap (a pattern means "done!", a longer tap a firmer one)
+  if (haptic(Array.isArray(ms) ? 'success' : ms >= 12 ? 'medium' : 'light')) return;
+  try { navigator.vibrate?.(ms); } catch { /* unsupported */ }
+}
 
 /** A burst of confetti in the brand colours, from the middle of `from` (or the screen). */
 export function confetti(from) {

@@ -18,6 +18,7 @@ import { SECTIONS } from './groups.js';
 import { addStars, buzz, confetti, copyText, emojiFor, greeting, icon, isStarred, onStarsChange, replaceStars, ridge, starIds, tile, toggleStar } from './ui.js';
 import { restoreTimers, timerChips } from './timers.js';
 import * as cloud from './cloud.js';
+import { canShare, handleBackButton, share, syncStatusBar } from './native.js';
 import { accountCard, viewAdmin, viewJoin } from './account.js';
 import { viewClient, viewClients, viewLabels, viewMenu, viewMyMeals, viewPrep } from './clientsui.js';
 import * as photos from './photos.js';
@@ -1120,7 +1121,7 @@ async function shareDialog(r) {
     h('input', { class: 'full link', readonly: true, value: link, 'aria-label': 'Recipe link', onfocus: (e) => e.target.select() }),
     h('div', { class: 'row' },
       h('button', { class: 'primary', onclick: async () => toast(await copyText(link) ? 'Link copied' : 'Could not copy. Press and hold the link to copy it.', 3000) }, 'Copy link'),
-      navigator.share && h('button', { onclick: () => navigator.share({ title: r.title, text: msg }).catch(() => {}) }, 'Share…'),
+      canShare() && h('button', { onclick: () => share({ title: r.title, text: msg }) }, 'Share…'),
       h('a', { class: 'btnlink', href: `mailto:?subject=${encodeURIComponent(r.title)}&body=${encodeURIComponent(msg)}` }, 'Email'),
       h('button', { onclick: () => dlg.close() }, 'Done')));
   dlg.addEventListener('close', () => dlg.remove());
@@ -1508,7 +1509,7 @@ function viewShop() {
       h('section', { class: 'tools stack' },
         h('div', { class: 'row grow' },
           h('button', { type: 'button', onclick: async () => toast(await copyText(text()) ? 'Shopping list copied' : 'Could not copy on this browser') }, 'Copy'),
-          navigator.share && h('button', { type: 'button', onclick: () => navigator.share({ title: 'Shopping list', text: text() }).catch(() => {}) }, 'Share'),
+          canShare() && h('button', { type: 'button', onclick: () => share({ title: 'Shopping list', text: text() }) }, 'Share'),
           h('button', { type: 'button', onclick: () => window.print() }, 'Print'),
           h('button', { type: 'button', onclick: async () => {
             if (await confirmDialog('Clear the whole shopping list?', 'Clear list', true)) { shop.clear(); paint(); }
@@ -1975,6 +1976,8 @@ async function boot() {
   if (linkType) history.replaceState(history.state, '', `${location.pathname}${location.search}#/settings`);
   loadCloudCache();
   restoreTimers();
+  syncStatusBar();
+  handleBackButton(() => goBack());
   document.addEventListener('timerdone', (e) => toast(`${e.detail.label} timer is done`, 6000));
   try {
     const [res, mine] = await Promise.all([fetch('data/recipes.json'), store.all()]);
