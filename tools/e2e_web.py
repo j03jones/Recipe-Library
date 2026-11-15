@@ -238,7 +238,15 @@ async def run():
         check("home page has the green header with contour lines", await page.locator(".band.hero svg.ridge .draw").count() == 1)
         check("signed-out visitors do not see the source chips", not await page.locator(".chips.src").is_visible())
 
+        # ---- long methods become numbered steps, each with the amounts it uses
+        await page.goto(URL + "#/r/6cd1288901")
+        await page.wait_for_selector("ol.steps")
+        check("a one-paragraph method is split into steps", await page.locator("ol.steps > li").count() >= 6)
+        check("a step shows the amounts it uses", "1 tsp Salt" in await page.inner_text("ol.steps > li:nth-child(2) .uses"))
+        check("recipe page shows an estimated time", "About" in await page.inner_text(".rmeta"))
+
         # ---- the home feed, quick filters and estimated times (fresh page: earlier steps left a search typed in)
+        await page.goto(URL + "#/")
         await page.reload()
         await page.wait_for_selector(".feed .fcard")
         shelves = await page.eval_on_selector_all(".shelf h2", "els => els.map(e => e.textContent)")

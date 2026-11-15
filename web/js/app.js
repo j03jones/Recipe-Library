@@ -21,6 +21,7 @@ import * as cloud from './cloud.js';
 import { canShare, handleBackButton, share, syncStatusBar } from './native.js';
 import { dietOf, estimateMinutes, formatMinutes, sortKey } from './insights.js';
 import { homeFeed, metaLine } from './home.js';
+import { ingredientsIn, splitSteps } from './steps.js';
 import { accountCard, viewAdmin, viewJoin } from './account.js';
 import { viewClient, viewClients, viewLabels, viewMenu, viewMyMeals, viewPrep } from './clientsui.js';
 import * as photos from './photos.js';
@@ -675,6 +676,13 @@ function viewList(starredOnly = false) {
   window.addEventListener('scroll', onScroll, { passive: true });
 }
 
+/** The amounts a step needs, shown right under it ("1 lb flour · 1 tsp salt"), at the scale on screen. */
+function stepUses(step, recipe, big = false) {
+  const idx = ingredientsIn(step, recipe.ings);
+  if (!idx.length) return null;
+  return h('span', { class: big ? 'uses big' : 'uses' }, idx.slice(0, 8).map((i) => h('span', null, formatIngredient(recipe.ings[i]))));
+}
+
 function amountSplit(text) {
   const m = text.match(/^([\d¼½¾⅓⅔⅛⅜⅝⅞][\d\s/.\-–¼½¾⅓⅔⅛⅜⅝⅞]*)/);
   if (!m) return [text];
@@ -883,7 +891,7 @@ function viewRecipe(id, preset = null) {
       g.items.push(ing);
     }
     const y = formatYield(s);
-    const steps = s.dir ? s.dir.split('\n').filter((l) => l.trim()) : [];
+    const steps = splitSteps(s.dir);
     fill(ingBox,
       h('div', { class: 'facts' },
         y && h('span', null, h('strong', null, 'Makes '), y),
@@ -900,7 +908,7 @@ function viewRecipe(id, preset = null) {
           const ol = e.currentTarget;
           if (e.target.closest('.tick') && ol.querySelectorAll('.tick[aria-pressed=true]').length === steps.length) celebrate(e.target);
         } }, steps.map((l, n) => h('li', null,
-          tick([h('span', { class: 'n' }, n + 1), h('span', { class: 'what' }, l)]), timerChips(l))))
+          tick([h('span', { class: 'n' }, n + 1), h('span', { class: 'what' }, l, stepUses(l, s))]), timerChips(l))))
         : steps.length === 1 && h('div', { class: 'dir' }, h('p', null, steps[0]), timerChips(steps[0])),
       warnings.length > 0 && h('p', { class: 'note' }, warnings.join(' ')));
     cc.paint();
@@ -925,7 +933,7 @@ function viewRecipe(id, preset = null) {
   // one step at a time, big text, swipe or tap to move on
   function cookMode() {
     const s = shown().recipe;
-    const steps = s.dir ? s.dir.split('\n').filter((l) => l.trim()) : [];
+    const steps = splitSteps(s.dir);
     if (!steps.length) return;
     let i = 0;
     const wasAwake = awake;
@@ -957,7 +965,7 @@ function viewRecipe(id, preset = null) {
       text.textContent = steps[i];
       text.className = `cook-text${dir < 0 ? ' back' : ''}`;
       text.style.animation = 'none'; void text.offsetWidth; text.style.animation = '';
-      fill(chips, timerChips(steps[i]));
+      fill(chips, stepUses(steps[i], s, true), timerChips(steps[i]));
       [...bar.children].forEach((b, n) => b.classList.toggle('on', n <= i));
       back.disabled = i === 0;
       next.textContent = i === steps.length - 1 ? 'Done' : 'Next step';

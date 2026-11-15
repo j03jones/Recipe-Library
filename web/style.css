@@ -209,6 +209,12 @@ button:disabled { opacity: .45; cursor: default; }
 .rmeta { display: flex; flex-wrap: wrap; gap: .4rem 1rem; margin: .6rem 0 0; color: var(--muted); font-size: .92rem; }
 .rmeta span { display: inline-flex; align-items: center; gap: .3rem; }
 @media (min-width: 900px) { .shelfrow { grid-auto-columns: 11rem; } }
+/* the amounts a step uses, under the step */
+.uses { display: flex; flex-wrap: wrap; gap: .3rem; margin: .55rem 0 0; padding: 0; }
+.uses span { font-size: .8rem; line-height: 1.3; padding: .2rem .55rem; border-radius: 99px; background: var(--soft); color: var(--leaf-2); }
+@media (prefers-color-scheme: dark) { .uses span { color: var(--herb); } }
+.uses.big { margin: 1rem 0 0; justify-content: center; }
+.uses.big span { font-size: 1rem; padding: .35rem .8rem; }
 .count { margin: .5rem 0 .6rem; }
 .rows { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: .6rem; }
 .rows li { position: relative; min-width: 0; }
