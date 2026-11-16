@@ -48,17 +48,27 @@ export function unshout(p) {
 /** "375 degrees F.", "500 DEG F", "400-F", "350°" in an oven sentence -> "375°F" (and "200 C" -> "200°C"). */
 export function temps(p) {
   return p
+    .replace(/\s*\b(fahrenheit|farenheit|fahrenheight)\b\.?/gi, ' F').replace(/\s*\b(celsius|centigrade)\b\.?/gi, ' C')
+    .replace(/\b(\d{3}\s*(?:degre+s*|deg))\.(?=[A-Z])/g, '$1. ')          // "375 deg.Place": the space it lost
     .replace(/\b(\d{3})\s*-?\s*(?:degrees?|deg\.?|º|°)\s*(F|C)\b(?=[\s.),;:]|$)/gi, (m, n, u) => `${n}°${u.toUpperCase()}`)
     .replace(/\b(\d{3})\s*-?\s*(F|C)\b(?![a-z])/g, (m, n, u) => `${n}°${u}`)
-    .replace(/\b(\d{3})\s*(?:degrees?|deg\.?|º|°)(?!\s*[FC]\b)/gi, (m, n) => `${n}°F`)   // US recipes: plain "350 degrees" is Fahrenheit
+    // US recipes: plain "350 degrees" is Fahrenheit ("degress" is a common typo; "375 deg.Place" lost its space)
+    .replace(/\b(\d{3})\s*(?:degre+s*|deg\.?|º|°)(?![a-z])(?!\s*[FC]\b)/gi, (m, n) => `${n}°F${m.endsWith('.') ? '.' : ''}`)
     .replace(/°F\.(?=\s+[a-z])/g, '°F');                                                   // "375°F. for 40 minutes" -> "375°F for"
 }
 
 const EMAIL = /\s*[<(]?[\w.+-]+@[\w-]+(\.[\w-]+)+[>)]?/g;
 const URL = /\s*[<(]?(https?:\/\/|www\.)\S+[>)]?/gi;
 
-/** { text, credits }: the method without the bookkeeping, and any "Source: ..." lines. */
+/** { text, credits }: the method without the bookkeeping, and any "Source: ..." lines. Two passes, because taking
+ *  one thing out can uncover another ("---- DIRECTIONS: Cook ..." -> "DIRECTIONS: Cook ..."). */
 export function tidyDirections(dir) {
+  const a = tidyOnce(dir);
+  const b = tidyOnce(a.text);
+  return { text: b.text, credits: [...new Set([...a.credits, ...b.credits])].slice(0, 2) };
+}
+
+function tidyOnce(dir) {
   if (!dir) return { text: '', credits: [] };
   let s = decode(dir).replace(/\r/g, '');
   s = s.replace(/[ \t]*([-=~_*#+]\s?){4,}[ \t]*/g, '\n\n');          // separator lines and runs (----, ====, ~~~, *-*-*)

@@ -472,6 +472,8 @@ function rebuild() {
   }
   lib.byId = map;
   for (const r of map.values()) {
+    // built-in recipes the clean-up found broken (no ingredients or no method): not listed, still open from a link
+    if (r.source === 'base' && r.tags?.includes('needs-work')) r.hidden = true;
     // worked out from the recipe's own text (estimated: the old archive recipes don't say); kept on the object
     if (r._mins === undefined || r._dirSeen !== r.dir) { r._mins = estimateMinutes(r); r._veg = !!dietOf(r)?.vegetarian; r._dirSeen = r.dir; }
     r._sort ??= sortKey(r.title);

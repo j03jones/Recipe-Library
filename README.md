@@ -206,6 +206,16 @@ probably the same as a built-in recipe). `--refresh-core` also gives built-in re
 library's corrected text where it has a same-titled copy, keeping their ids so stars and edits made on
 phones stay attached. A browser set to save data skips the extra library.
 
+Then clean what was published (safe to run again; ids never change):
+
+    node tools/clean_library.mjs
+
+It tidies every method the way the app shows it (no mailing-list sign-offs, show tags, separator lines,
+emails, nutrition lines, CAPITALS or "500 DEG F"; a "Source:" credit is kept), sorts out ingredient
+lists (headings like "For the sauce:" become groups, "Or 3 stalks celery" joins the line above, split
+ranges are mended, empty lines go) and tags recipes with no ingredients or no method `needs-work`, which
+keeps them out of lists and search. `--dry-run` only counts.
+
 ## What can I make? and collections (v0.15)
 
 - **What can I make?** (on the Recipes page) Type what is in your kitchen. You get the recipes you can
