@@ -72,6 +72,25 @@ browser). The page is still built here in `web/portal/`; the website change is o
 - A login that is both (or is on two restaurants) gets a switcher at the top; meal prep comes first.
 - Restaurant teams can still use the recipe app with the same login for cook mode and timers.
 
+## From Garni (v0.26)
+
+Features built first in Garni, the sister app, and brought over here (their phone-app, branding, store and
+payment parts stay in Garni):
+
+- **Home feed:** shelves of recipes above the full list ("Ready in 30 minutes", seasonal picks), changing once a
+  day; estimated cooking times and a Vegetarian label on cards and recipes (`web/js/home.js`, `insights.js`).
+- **Readable steps:** each step shows the amounts it uses (`web/js/steps.js`).
+- **Hands-free cook mode:** steps read aloud, and voice commands (next, back, repeat, start timer, ingredients)
+  using the browser's own speech features. Off until switched on.
+- **Motion and touch:** page transitions, bottom sheets, swipe a shopping-list row to tick or remove, pull to
+  refresh; all off when the device asks for reduced motion (`web/js/motion.js`).
+- **Getting recipes in:** share a link or recipe text to the installed app, paste a copied link in one tap, or
+  scan a photo of a printed recipe (read on the device with Tesseract.js) (`web/js/getin.js`).
+- **Search** forgives typos and remembers recent searches (`web/js/search.js`).
+- **Meal plan:** drag a meal to another day.
+- **Household shopping list:** share one list with the people you live with (`supabase/add_households.sql`).
+- **Delete my account** in Settings (`supabase/add_delete_own_account.sql`).
+
 ## Meal prep clients (v0.22)
 
 A section for Jones Ridge Kitchen meal prep clients, built around the plans on jonesridgekitchen.com/meal-prep

@@ -283,7 +283,7 @@ async def run():
         await page.goto(URL + "#/")
         await page.evaluate("""() => { const d = new Date(); const iso = (x) => x.toISOString().slice(0, 10);
           const mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-          localStorage.setItem('sprig.plan', JSON.stringify({ at: Date.now(), days: { [iso(mon)]: [{ note: 'Leftovers' }] } })); }""")
+          localStorage.setItem('recipelib.plan', JSON.stringify({ at: Date.now(), days: { [iso(mon)]: [{ note: 'Leftovers' }] } })); }""")
         await page.goto(URL + "#/plan")
         await page.reload()
         await page.wait_for_selector(".planitem")

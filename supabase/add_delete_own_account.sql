@@ -1,4 +1,4 @@
--- Let a signed-in person delete their own account (required by the App Store and Google Play).
+-- Let a signed-in person delete their own account so people can remove their account and data without asking.
 -- Run after tighten_function_access.sql (safe to run again). New projects get this from schema.sql.
 --
 -- Everything of theirs goes with the account: their profile, private recipes, recipes they shared to

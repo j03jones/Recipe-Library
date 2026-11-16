@@ -1234,7 +1234,7 @@ async def run():
         await admin.wait_for_timeout(500)
         check("leaving stops the sharing", await admin.locator(".household summary").count() == 1)
 
-        # ---- deleting your own account (App Store / Google Play requirement)
+        # ---- deleting your own account
         await o.goto(URL + "#/settings")
         await o.click("details.dangerzone summary")
         await o.click("details.dangerzone button:has-text('Delete my account')")
