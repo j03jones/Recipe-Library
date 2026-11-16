@@ -1133,7 +1133,6 @@ alter table public.client_meal_private drop constraint if exists client_meal_pri
 alter table public.client_meal_private add constraint client_meal_private_parts_check
   check (jsonb_typeof(parts) = 'array' and jsonb_array_length(parts) <= 12);
 
-=======
 -- ----------------------------------------------------------------------------- deleting your own account
 -- Everything of theirs goes with the account: their profile, private recipes, recipes they shared to
 -- Community, starred recipes, meal plan and shopping list (all cascade from auth.users). The app deletes
