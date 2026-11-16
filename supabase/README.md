@@ -183,3 +183,9 @@ household. Deleting your account leaves it too. New projects get this from `sche
 `is_paid()` count a restaurant as on a plan only while it is Active, or on Trial with no end date or one still to
 come. An ended trial hides the collection again; nothing is deleted. `test/test.sql` checks it.
 
+## Restaurant kitchens
+`add_restaurant_kitchen.sql` (run after `add_restaurant_trials.sql`, safe to run again) lets a restaurant's team
+add recipes to its collection while its plan is on. The chef's recipes stay read-only to them; staff can change or
+delete the recipes they added, owners any the team added. Adds `restaurant_kitchen`, one shared price book per
+restaurant (members read it, and change it while the plan is on). `test/test.sql` checks it.
+

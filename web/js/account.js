@@ -688,7 +688,7 @@ export async function viewAdmin(ctx) {
       h('summary', null, `Collection: ${plural(recipes.length, 'recipe')}`),
       recipes.length
         ? h('ul', { class: 'asks' }, recipes.map((x) => h('li', null,
-          h('a', { href: `#/r/${x.id}` }, x.title),
+          h('a', { href: `#/r/${x.id}` }, x.title, x.owner_id !== lib.me?.id && h('span', { class: 'badge', title: 'Added by the restaurant’s team' }, 'Theirs')),
           h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Take ${x.title} out of ${r.name}’s collection`, onclick: async () => {
             if (!await ctx.confirmDialog(`Take “${x.title}” out of ${r.name}’s collection? Its staff will no longer see it.`, 'Take it out', true)) return;
             try {
