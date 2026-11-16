@@ -512,17 +512,35 @@ async def run():
         check("its owner is emailed an owner invite", any(x["email"] == "jo+test@example.com" and x["member_role"] == "owner"
                                                          and x["restaurant_id"] == tk["id"] for x in fake.sent), fake.sent[-1:])
         check("the card says how long the trial has left", "14 days left" in await admin.inner_text(".restcard:has-text('Test Kitchen')"))
+        # one of the chef's own recipes (an imported recipe book): the picker opens on them, no typing needed
+        fake.recipes["mine1"] = dict(id="mine1", owner_id=fake.users["chef@example.com"]["id"], scope="private", restaurant_id=None, status="approved",
+                                     title="House Chimichurri", categories=["Sauces"], author_name=None, review_note=None, source_recipe_id=None,
+                                     body=dict(tags=[], yq="4", yu="cups", yr="", dir="Blend everything.", ings=[["3", "", "cup", "parsley", ""]]))
+        await admin.reload()
+        await admin.wait_for_selector(".restcard:has-text('Test Kitchen')")
         await admin.click(".restcard:has-text('Test Kitchen') summary")
         await admin.click(".restcard:has-text('Test Kitchen') button:has-text('Add a recipe')")
+        await admin.wait_for_selector("dialog.pickdialog .picklist")
+        check("adding to a restaurant opens on your own recipes, listed without searching",
+              await admin.get_attribute("dialog.pickdialog .pickscope button:has-text('Mine')", "aria-pressed") == "true"
+              and await admin.locator("dialog.pickdialog .picklist button:has-text('House Chimichurri')").count() == 1
+              and await admin.locator("dialog.pickdialog input[aria-label=Note]").count() == 0)
         await admin.fill("dialog.pickdialog input[type=search]", "gumbo")
         await admin.wait_for_timeout(300)
-        picked = (await admin.locator("dialog.pickdialog .picklist button >> nth=0").inner_text()).strip().split("\n")[0]
+        check("a search with none of yours matching shows all recipes instead", "From all recipes" in await admin.inner_text("dialog.pickdialog .picklist")
+              and await admin.locator("dialog.pickdialog .picklist button").count() > 0)
+        await admin.click("dialog.pickdialog .pickscope button:has-text('All recipes')")
+        await admin.fill("dialog.pickdialog input[type=search]", "chimichurri")
+        await admin.wait_for_timeout(300)
+        check("in All recipes, yours come first and say Mine", "House Chimichurri" in await admin.inner_text("dialog.pickdialog .picklist button >> nth=0")
+              and await admin.locator("dialog.pickdialog .picklist button >> nth=0 >> .badge:has-text('Mine')").count() == 1)
         await admin.click("dialog.pickdialog .picklist button >> nth=0")
         await admin.wait_for_selector(".restcard:has-text('Test Kitchen') summary:has-text('1 recipe')", timeout=10000)
         copy = next((r for r in fake.recipes.values() if r.get("restaurant_id") == tk["id"]), None)
-        check("the admin can add a library recipe to a restaurant's collection",
-              copy and copy["scope"] == "restaurant" and copy["body"].get("ings") and copy["body"].get("dir"), copy and copy["title"])
+        check("the admin can add their own recipe to a restaurant's collection",
+              copy and copy["scope"] == "restaurant" and copy["title"] == "House Chimichurri" and copy["body"].get("ings") and copy["body"].get("dir"), copy and copy["title"])
         check("and it is listed on the restaurant's card, still open", await admin.locator(".restcard:has-text('Test Kitchen') details[open] .asks li").count() == 1)
+        fake.recipes.pop("mine1", None)            # later checks count private recipes
         tk["trial_ends_at"] = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         await admin.reload()
         await admin.wait_for_selector(".restcard:has-text('Test Kitchen')")

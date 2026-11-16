@@ -55,6 +55,9 @@ address of yours (with Gmail, you+test@gmail.com reaches the same inbox). Each r
 trial has left, with *Add 14 days* and *Mark active*, and its **Collection**: the recipes its staff see, *Add a
 recipe* (a copy of any library or own recipe) and an × to take one out. When a trial ends, the collection is
 hidden again (nothing is deleted) until you extend it or mark the restaurant Active; the database enforces it.
+*Add a recipe* (and adding a dish to a client's menu or a meal plan) opens on **Mine**: your own recipes, imported or
+added, A to Z with their category, no search needed. **Starred** and **All recipes** are a tap away; in All your
+own come first, and a search with none of yours matching shows matches from all recipes (v0.27.2).
 Needs `supabase/add_restaurant_trials.sql`.
 
 **A cleaner library, from Garni.** Garni's clean-up tools were run on this library (ids unchanged, so stars, plans
