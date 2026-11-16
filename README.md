@@ -46,7 +46,34 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
-## Dishes made of more than one recipe (v0.25)
+## Restaurant trials, a cleaner library, and Word and PDF imports (v0.27)
+
+**Restaurant accounts on a free trial** (Admin tools > Restaurants). *Add a restaurant* takes its name, a plan
+(free trial of 14 or 30 days, Active, or not yet), its login limit and, optionally, the owner's name and email: the
+owner is emailed an invite to set up their owner login. To try the restaurant side yourself, invite a second
+address of yours (with Gmail, you+test@gmail.com reaches the same inbox). Each restaurant's card says how long its
+trial has left, with *Add 14 days* and *Mark active*, and its **Collection**: the recipes its staff see, *Add a
+recipe* (a copy of any library or own recipe) and an × to take one out. When a trial ends, the collection is
+hidden again (nothing is deleted) until you extend it or mark the restaurant Active; the database enforces it.
+Needs `supabase/add_restaurant_trials.sql`.
+
+**A cleaner library, from Garni.** Garni's clean-up tools were run on this library (ids unchanged, so stars, plans
+and edits stay attached): 23,889 methods without mailing-list sign-offs, separator lines, CAPITALS or "500 DEG F";
+ingredient headings as groups and split ranges mended; 1,009 spare copies hidden; 954 titles tidied; 1,572
+misspellings and 2,405 glued words fixed; 426 Uncategorized recipes filed; 204 recipes with no ingredients or method
+kept out of lists. 26,404 recipes are listed. Shopping lists drop brand names, "freshly", footnote stars and
+SHOUTING. How to run the tools again is under *The on-demand library* below.
+
+**Importing** (Settings > Import and export recipes):
+- **Ingredient tables.** A recipe whose ingredients are in a table (copied from a web page or Word, or a Markdown
+  table) is read column by column: "Ingredient | Amount | Unit | Notes" headers say which column is which, and the
+  method after the table is the method, with or without an "Instructions" heading. Numbered steps ("1. Whisk…")
+  start the method too.
+- **Several recipes at once.** Pasted text, a **Word document (.docx)** or a **PDF** with several recipes becomes
+  one recipe each, split at each recipe's ingredients (or at page breaks). You see the list and untick any before
+  they are added. PDFs are read on the device with pdf.js, fetched the first time; scanned PDFs have no text, so use
+  *Scan a printed recipe* for those. Older .doc files: save as .docx first.
+
 
 For the chef. On a menu, each dish shows its recipes as a row of chips under
 the dish name, with **Add a side or sauce**. Adding one keeps it one dish for the client ("Grilled Chicken with Rice

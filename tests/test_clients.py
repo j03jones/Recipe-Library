@@ -104,7 +104,7 @@ class Clients(unittest.TestCase):
         gumbo, pie = self.out["snapshots"]
         self.assertEqual(gumbo["title"], "Chicken and Andouille Gumbo")
         self.assertEqual(gumbo["ingredients"], ["Chicken thighs", "All-purpose flour", "Vegetable oil", "Onions",
-                                                "Worcestershire sauce", "Cooked rice", "Salt to taste"])
+                                                "Worcestershire sauce", "Rice", "Salt"])      # shopping names: no prep or "to taste"
         self.assertEqual(gumbo["allergens"], ["Wheat / gluten", "Fish"])
         self.assertEqual(gumbo["servings"], 2)
         self.assertGreater(gumbo["nutrition"]["kcal"], 100)       # per serving, from the recipe's own yield

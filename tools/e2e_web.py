@@ -631,6 +631,18 @@ async def run():
         await page.click("button:has-text('Read pasted text')")
         await page.wait_for_selector(".foundlist")
         check("pasted text is read and listed before anything is added", await page.locator(".foundlist li:has-text('Wild Rice Soup')").count() == 1)
+        # a table copied from a web page or Word, pasted: its cells arrive as columns, not as stray ingredients
+        await page.evaluate("""() => { const t = document.querySelector('.transfer textarea'); t.value = ''; t.focus();
+          const dt = new DataTransfer();
+          dt.setData('text/html', '<h2>Brisket Rub</h2><table><tr><th>Ingredient</th><th>Measurement</th></tr><tr><td>Paprika</td><td>2 Tbsp</td></tr><tr><td>Brown sugar</td><td>1/4 cup</td></tr></table><p>Instructions</p><p>Mix and rub on the brisket the night before.</p><h2>Slaw</h2><p>Ingredients</p><p>1 head cabbage</p><p>Directions</p><p>Shred it.</p>');
+          dt.setData('text/plain', 'Brisket Rub Ingredient Measurement Paprika 2 Tbsp');
+          t.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); }""")
+        check("a pasted table keeps its columns", "Paprika\t2 Tbsp" in await page.input_value(".transfer textarea"))
+        await page.click("button:has-text('Read pasted text')")
+        await page.wait_for_selector(".foundlist li:has-text('Slaw')")
+        check("several pasted recipes become one each, the table's two rows as ingredients",
+              await page.locator(".foundlist li").all_inner_texts() == [" Brisket Rub 2 ingredients", " Slaw 1 ingredient"],
+              await page.locator(".foundlist li").all_inner_texts())
         cook = Path(tempfile.mkdtemp()) / "pan-toast.cook"
         cook.write_text(">> servings: 2\nToast @bread{2%slices} with @butter{1%Tbsp}.\n")
         await page.set_input_files(".transfer input[type=file]", str(cook))

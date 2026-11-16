@@ -177,3 +177,9 @@ puts its own changes since its last sync on top of the latest copy (`merge3` in 
 two people ticking things off at the same time don't undo each other, and phones with the list open check
 for changes every few seconds. Leaving keeps your list on your phone; the last one out removes the
 household. Deleting your account leaves it too. New projects get this from `schema.sql`.
+
+## Restaurant trials
+`add_restaurant_trials.sql` (safe to run again) adds `restaurants.trial_ends_at` and makes `restaurant_active()` and
+`is_paid()` count a restaurant as on a plan only while it is Active, or on Trial with no end date or one still to
+come. An ended trial hides the collection again; nothing is deleted. `test/test.sql` checks it.
+

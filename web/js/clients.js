@@ -27,7 +27,7 @@ export function factorFor(recipe, servings) {
 export function snapshot(recipe, servings) {
   const names = [];
   for (const ing of recipe.ings) {
-    const name = itemName(ing.item);
+    const name = itemName(ing.item).replace(/^\p{Ll}/u, (c) => c.toUpperCase());   // "rice" (from "Cooked rice") reads "Rice"
     if (name && !names.some((n) => n.toLowerCase() === name.toLowerCase())) names.push(name);
   }
   const n = nutrition(recipe);
