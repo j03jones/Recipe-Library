@@ -1449,28 +1449,53 @@ const DAY_FMT = new Intl.DateTimeFormat(undefined, { weekday: 'long' });
 const DATE_FMT = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 
 /** Pick a recipe (or type a note) for a day of the meal plan. Resolves to a plan entry or null. */
-function pickForPlan(dayLabel) {
+/**
+ * Pick a recipe (for the meal plan, a client's menu or a restaurant's collection). Resolves to { id, f }, { note }
+ * (meal plan only), or null. Your own recipes come first: the picker opens on them when you have any.
+ */
+function pickForPlan(dayLabel, { note: withNote = true } = {}) {
   return new Promise((resolve) => {
     // settle at once on a choice; the dialog's own 'close' event (Esc, Cancel) can arrive late
     let settled = false;
     const done = (value) => { if (settled) return; settled = true; if (dlg.open) dlg.close(); dlg.remove(); resolve(value); };
+    const isMine = (r) => SOURCE_GROUP[r.source] === 'mine';
+    const usable = (r) => r.kind !== 'link';
+    const mineCount = lib.all.filter((r) => isMine(r) && usable(r)).length;
+    const starCount = lib.all.filter((r) => isStarred(r.id) && usable(r)).length;
+    let scope = mineCount ? 'mine' : starCount ? 'starred' : 'all';
     const search = h('input', { type: 'search', class: 'full', placeholder: 'Search recipes', 'aria-label': 'Search recipes', autocomplete: 'off' });
     const results = h('ul', { class: 'picklist' });
+    const tabs = [['mine', `Mine (${mineCount})`], ['starred', 'Starred'], ['all', 'All recipes']].map(([k, label]) =>
+      [k, h('button', { type: 'button', class: 'chip', onclick: () => { scope = k; paint(); search.focus(); } }, label)]);
     const note = h('input', { type: 'text', class: 'full', maxlength: '80', placeholder: 'Or a note: Leftovers, Eating out…', 'aria-label': 'Note' });
     const dlg = h('dialog', { class: 'pickdialog', 'aria-labelledby': 'pick-title' },
       h('h2', { id: 'pick-title' }, `Add to ${dayLabel}`),
+      h('div', { class: 'chips pickscope', role: 'group', 'aria-label': 'Which recipes' }, tabs.map(([, b]) => b)),
       search, results,
-      h('form', { class: 'row', onsubmit: (e) => { e.preventDefault(); if (note.value.trim()) done({ note: note.value }); } },
+      withNote && h('form', { class: 'row', onsubmit: (e) => { e.preventDefault(); if (note.value.trim()) done({ note: note.value }); } },
         note, h('button', { type: 'submit' }, 'Add note')),
       h('div', { class: 'row' }, h('button', { type: 'button', onclick: () => done(null) }, 'Cancel')));
     function paint() {
+      for (const [k, b] of tabs) b.setAttribute('aria-pressed', String(k === scope));
       const q = search.value.trim();
-      // nothing typed yet: starred recipes are the likeliest picks
-      const found = (q ? matches(q, '') : lib.all.filter((r) => isStarred(r.id))).filter((r) => r.kind !== 'link').slice(0, 40);
+      const inScope = (r) => usable(r) && (scope === 'mine' ? isMine(r) : scope === 'starred' ? isStarred(r.id) : true);
+      const hits = q ? matches(q, '') : lib.all;
+      let found = hits.filter(inScope);
+      let elsewhere = false;
+      if (q && !found.length && scope !== 'all') { found = hits.filter(usable); elsewhere = found.length > 0; }   // nothing of yours: look everywhere
+      if (!q && scope === 'all') found = found.filter((r) => isMine(r) || isStarred(r.id));   // 26,000 recipes: type to search them
+      if (scope === 'all' || elsewhere) found = [...found.filter(isMine), ...found.filter((r) => !isMine(r))];   // yours first
+      const limit = scope === 'all' || elsewhere ? 60 : 500;
+      const row = (r) => h('li', null, h('button', { type: 'button', onclick: () => done({ id: r.id, f: '1' }) },
+          h('span', { class: 'e', 'aria-hidden': 'true' }, emojiFor(r.categories[0])),
+          h('span', { class: 'pt' }, r.title, (scope === 'all' || elsewhere) && isMine(r) && h('span', { class: 'badge' }, 'Mine'),
+            r.categories.length > 0 && h('span', { class: 'muted small pc' }, r.categories.slice(0, 2).join(' · ')))));
       fill(results, found.length
-        ? found.map((r) => h('li', null, h('button', { type: 'button', onclick: () => done({ id: r.id, f: '1' }) },
-          h('span', { class: 'e', 'aria-hidden': 'true' }, emojiFor(r.categories[0])), r.title)))
-        : h('li', { class: 'muted small' }, q ? 'No recipes match.' : 'Type to search, or star recipes to see them here.'));
+        ? [elsewhere && h('li', { class: 'muted small' }, scope === 'mine' ? 'None of your recipes match. From all recipes:' : 'No starred recipes match. From all recipes:'),
+          ...found.slice(0, limit).map(row)]
+        : h('li', { class: 'muted small' }, q ? 'No recipes match.'
+          : scope === 'mine' ? 'You have no recipes of your own yet. Add or import some, or search All recipes.'
+          : scope === 'starred' ? 'Star recipes to see them here.' : 'Type to search all recipes.'));
     }
     search.addEventListener('input', paint);
     dlg.addEventListener('close', () => done(null));
@@ -2211,7 +2236,7 @@ function route() {
 
 const ctx = {
   h, fill, toast, icon, lib, $app, setView, goBack, refreshCloud, clearCloud, confirmDialog, infoDialog, pageHead,
-  rerender: () => route(), joinCode: '', ensureFull, pickRecipe: (label) => pickForPlan(label),
+  rerender: () => route(), joinCode: '', ensureFull, pickRecipe: (label) => pickForPlan(label, { note: false }),
 };
 
 async function boot() {

@@ -585,7 +585,11 @@ button[aria-pressed=true]:not(.chip):not(.tick):not(.icon-btn):not(.star) { bord
 .picklist li { border-bottom: 1px solid var(--line); }
 .picklist li.muted { padding: .7rem .2rem; }
 .picklist button { display: block; width: 100%; text-align: left; border: 0; border-radius: 0; background: none; padding: .65rem .3rem; font-weight: 500; }
+.picklist button { display: flex; align-items: flex-start; }
 .picklist button .e { margin-right: .5rem; }
+.picklist button .pt { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .45rem; min-width: 0; }
+.picklist button .pc { flex: 1 1 100%; font-weight: 400; }
+.chips.pickscope { margin: 0 0 .5rem; padding-left: 0; padding-right: 0; }
 .pickdialog form.row { flex-wrap: nowrap; margin-top: .4rem; }
 .pickdialog form.row input { flex: 1 1 auto; min-width: 0; }
 /* ---- shopping list by aisle */
