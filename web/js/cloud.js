@@ -249,6 +249,18 @@ export const cancelInvite = (code) => authed('/rest/v1/rpc/cancel_invite', { met
 export const listPeople = () => authed('/rest/v1/rpc/admin_list_people', { method: 'POST', body: {} });
 export const removePerson = (userId) => authed('/rest/v1/rpc/admin_remove_person', { method: 'POST', body: { p_user: userId } });
 
+/** Delete the signed-in person's own account and everything of theirs: their photos first (Storage can't be
+ *  emptied from the database), then the account itself (delete_my_account), then the session on this device. */
+export async function deleteMyAccount() {
+  const me = currentUser();
+  if (!me) throw new CloudError('Please sign in first.', 401);
+  for (const folder of ['recipes', 'library', 'avatars']) {
+    try { await removePhotos(await listPhotos(`${folder}/${me.id}`)); } catch { /* best effort: the account still goes */ }
+  }
+  await authed('/rest/v1/rpc/delete_my_account', { method: 'POST', body: {} });
+  setSession(null);
+}
+
 // ------------------------------------------------------------------ photos (Storage bucket "photos")
 // Paths look like recipes/<person id>/<random>.jpg; the database decides who may read or write them.
 export async function setRecipePhoto(id, path) {
@@ -432,3 +444,12 @@ export const setFavorite = (clientId, title, on) => rpc('set_favorite', { p_clie
 export const requestMeal = (clientId, title, note = '') => rpc('request_meal', { p_client: clientId, p_title: title, p_note: note });
 export const updateMyPreferences = (clientId, allergens, allergyNotes, dislikes) =>
   rpc('update_my_preferences', { p_client: clientId, p_allergens: allergens, p_allergy_notes: allergyNotes, p_dislikes: dislikes });
+// ------------------------------------------------------------------ households (a shopping list shared at home)
+export async function householdInfo() {
+  const rows = await authed('/rest/v1/rpc/household_info', { method: 'POST', body: {} });
+  return (Array.isArray(rows) ? rows[0] : rows) || null;
+}
+export const createHousehold = (name) => authed('/rest/v1/rpc/create_household', { method: 'POST', body: { p_name: name } });
+export const joinHousehold = (code) => authed('/rest/v1/rpc/join_household', { method: 'POST', body: { p_code: code } });
+export const leaveHousehold = () => authed('/rest/v1/rpc/leave_household', { method: 'POST', body: {} });
+export const saveHouseholdList = (list, at) => authed('/rest/v1/rpc/save_household_list', { method: 'POST', body: { p_list: list, p_at: at } });

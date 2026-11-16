@@ -1,6 +1,7 @@
 // Kitchen timers. Steps that mention a time ("simmer 15 minutes") get a button that starts a countdown.
 // Timers keep running while you move around the app and survive a reload (they store their end time).
 import { buzz } from './ui.js';
+import { cancelAlert, scheduleAlert } from './native.js';
 
 const KEY = 'recipelib.timers';
 const WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12, fifteen: 15, twenty: 20, thirty: 30, forty: 40, sixty: 60, 'a half': 0.5, half: 0.5 };
@@ -71,8 +72,8 @@ function render() {
     el.innerHTML = '<span class="tl"></span><b class="tt"></b><button type="button" class="plus" aria-label="Add one minute">+1</button><button type="button" class="x" aria-label="Dismiss timer">×</button>';
     el.querySelector('.tl').textContent = t.label;
     el.querySelector('.tt').textContent = t.done ? 'Time!' : fmt(left);
-    el.querySelector('.plus').onclick = () => { t.end += 60000; if (t.done) { t.done = false; } save(); render(); start(); };
-    el.querySelector('.x').onclick = () => { timers = timers.filter((x) => x !== t); save(); render(); };
+    el.querySelector('.plus').onclick = () => { t.end += 60000; if (t.done) { t.done = false; } save(); render(); start(); ringAt(t); };
+    el.querySelector('.x').onclick = () => { timers = timers.filter((x) => x !== t); if (!t.done) cancelAlert(t.id); save(); render(); };
     return el;
   }));
   box.hidden = timers.length === 0;
@@ -94,10 +95,14 @@ function tickAll() {
 }
 function start() { if (!ticker) ticker = setInterval(tickAll, 500); }
 
+/** In the phone apps, a notification at the end time: it rings even when the phone is locked or Garni is closed. */
+const ringAt = (t) => scheduleAlert(t.id, t.end, 'Time’s up', `Your ${t.label} timer is done.`);
+
 export function startTimer(label, seconds) {
   try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume?.(); } catch { /* ignore */ }
-  timers.push({ id: Math.random().toString(36).slice(2), label, end: Date.now() + seconds * 1000, done: false });
-  save(); render(); start(); buzz(15);
+  const t = { id: Math.random().toString(36).slice(2), label, end: Date.now() + seconds * 1000, done: false };
+  timers.push(t);
+  save(); render(); start(); buzz(15); ringAt(t);
 }
 
 /** Brings back timers that were running when the page was closed. */

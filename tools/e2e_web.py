@@ -58,6 +58,14 @@ async def main():
 async def run():
     async with async_playwright() as p:
         b = await p.chromium.launch()
+        # the functional checks run with "reduce motion" on (no page transitions to wait for); one check below
+        # turns motion back on to test the transitions themselves
+        plain_new_context = b.new_context
+
+        async def calm_context(*args, **kwargs):
+            kwargs.setdefault("reduced_motion", "reduce")
+            return await plain_new_context(*args, **kwargs)
+        b.new_context = calm_context
         if os.environ.get("E2E_NOW"):
             # run as if it were this date (YYYY-MM-DDTHH:MM): the plan and list depend on today's weekday
             real_new_context = b.new_context
@@ -67,7 +75,7 @@ async def run():
                 await c.clock.install(time=datetime.fromisoformat(os.environ["E2E_NOW"]))
                 return c
             b.new_context = new_context
-        ctx = await b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2,
+        ctx = await b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, reduced_motion="no-preference",
                                   is_mobile=True, has_touch=True, accept_downloads=True)
         page = await ctx.new_page()
         page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
@@ -237,6 +245,111 @@ async def run():
         await page.wait_for_selector(".band.hero .eyebrow")
         check("home page has the green header with contour lines", await page.locator(".band.hero svg.ridge .draw").count() == 1)
         check("signed-out visitors do not see the source chips", not await page.locator(".chips.src").is_visible())
+
+        # ---- long methods become numbered steps, each with the amounts it uses
+        await page.goto(URL + "#/r/6cd1288901")
+        await page.wait_for_selector("ol.steps")
+        check("a one-paragraph method is split into steps", await page.locator("ol.steps > li").count() >= 6)
+        check("a step shows the amounts it uses", "1 tsp Salt" in await page.inner_text("ol.steps > li:nth-child(2) .uses"))
+        check("recipe page shows an estimated time", "About" in await page.inner_text(".rmeta"))
+
+        # ---- a link shared to the installed web app, and the scan button
+        await page.goto(URL + "?title=Pie&url=" + "https%3A%2F%2Fexample.com%2Fapple-pie")
+        await page.wait_for_selector("input[aria-label='Recipe page address']")
+        check("a shared link opens the import page with the link filled in",
+              await page.input_value("input[aria-label='Recipe page address']") == "https://example.com/apple-pie" and "?" not in page.url)
+        check("the import page offers to scan a printed recipe", await page.locator("button:has-text('Take or choose a photo')").count() == 1)
+
+        # ---- search forgives typos and remembers what you searched
+        await page.goto(URL + "#/")
+        await page.reload()
+        await page.wait_for_selector("input[type=search]")
+        await page.fill("input[type=search]", "choclate cake")
+        await page.wait_for_timeout(1800)
+        check("a typo still finds recipes", "chocolate cake" in (await page.inner_text(".didyoumean")).lower()
+              and await page.locator(".rows .rc").count() > 0)
+        await page.fill("input[type=search]", "")
+        await page.wait_for_timeout(300)
+        await page.click("input[type=search]")
+        await page.wait_for_timeout(200)
+        check("recent searches are offered", "choclate cake" in await page.inner_text(".chips.recent"))
+        await page.click(".chips.recent button:has-text('choclate cake')")
+        await page.wait_for_timeout(300)
+        check("tapping a recent search runs it", await page.input_value("input[type=search]") == "choclate cake")
+        await page.fill("input[type=search]", "")
+        await page.wait_for_timeout(200)
+
+        # ---- meal plan: drag a meal to another day
+        await page.goto(URL + "#/")
+        await page.evaluate("""() => { const d = new Date(); const iso = (x) => x.toISOString().slice(0, 10);
+          const mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+          localStorage.setItem('recipelib.plan', JSON.stringify({ at: Date.now(), days: { [iso(mon)]: [{ note: 'Leftovers' }] } })); }""")
+        await page.goto(URL + "#/plan")
+        await page.reload()
+        await page.wait_for_selector(".planitem")
+        first_day = await page.get_attribute(".planday:has(.planitem)", "data-date")
+        box = await page.locator(".planitem").bounding_box()
+        target = page.locator(".planday").nth(2)
+        await target.scroll_into_view_if_needed()
+        box = await page.locator(".planitem").bounding_box()
+        tbox = await target.bounding_box()
+        await page.mouse.move(box["x"] + 20, box["y"] + box["height"] / 2)
+        await page.mouse.down()
+        await page.mouse.move(box["x"] + 30, box["y"] + 30, steps=4)
+        await page.mouse.move(tbox["x"] + 40, tbox["y"] + tbox["height"] / 2, steps=8)
+        await page.mouse.up()
+        await page.wait_for_timeout(300)
+        moved_to = await page.get_attribute(".planday:has(.planitem)", "data-date")
+        check("a meal can be dragged to another day", moved_to != first_day and moved_to == await target.get_attribute("data-date"), f"{first_day} -> {moved_to}")
+
+        # ---- hands-free cook mode
+        await page.goto(URL + "#/r/6cd1288901")
+        await page.wait_for_selector(".cookbtn")
+        await page.evaluate("window.__said = []; speechSynthesis.speak = (u) => window.__said.push(u.text); true")
+        await page.click(".cookbtn")
+        await page.click("button[aria-label='Read steps aloud']")
+        check("reading aloud says the current step", "Over here" in (await page.evaluate("window.__said"))[-1])
+        await page.click(".cook-foot .primary")
+        check("reading aloud follows to the next step", "Sift the flour" in (await page.evaluate("window.__said"))[-1])
+        await page.keyboard.press("Escape")
+
+        # ---- page transitions (motion on): pages slide, and nothing errors when taps come quickly
+        ctxM = await b.new_context(viewport={"width": 390, "height": 844}, reduced_motion="no-preference")
+        m = await ctxM.new_page()
+        m.on("pageerror", lambda e: errors.append(str(e)))
+        m.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
+        await m.goto(URL + "#/")
+        await m.wait_for_selector(".feed .fcard")
+        await m.evaluate("window.__vt = 0; const real = document.startViewTransition.bind(document); document.startViewTransition = (cb) => { window.__vt++; return real(cb); }; true")
+        await m.click(".feed .fcard")
+        await m.wait_for_selector(".rhead h1")
+        await m.go_back(); await m.go_forward(); await m.go_back()
+        await m.wait_for_selector(".feed .fcard")
+        check("page changes use view transitions", await m.evaluate("window.__vt") >= 2)
+        await ctxM.close()
+
+        # ---- the home feed, quick filters and estimated times (fresh page: earlier steps left a search typed in)
+        await page.goto(URL + "#/")
+        await page.reload()
+        await page.wait_for_selector(".feed .fcard")
+        shelves = await page.eval_on_selector_all(".shelf h2", "els => els.map(e => e.textContent)")
+        check("home feed has its shelves", {"Ready in 30 minutes", "Meat-free mains", "Something sweet"} <= set(shelves), str(shelves))
+        check("feed cards show a time", "min" in await page.inner_text(".shelf:has(h2:text('Ready in 30 minutes')) .fcard .fm"))
+        await page.click(".shelf:has(h2:text('Ready in 30 minutes')) .seeall")
+        await page.wait_for_timeout(300)
+        check("See all turns on the Under 30 min filter", await page.get_attribute(".chips.quick .chip:has-text('Under 30 min')", "aria-pressed") == "true")
+        check("the feed hides while filtering", await page.eval_on_selector(".feed", "e => e.hidden"))
+        times = await page.eval_on_selector_all(".rows .rc .c", "els => els.slice(0, 20).map(e => e.textContent)")
+        check("filtered rows are all quick", all("min" in t and "hr" not in t for t in times), str(times[:3]))
+        await page.click(".chips.quick .chip:has-text('Under 30 min')")
+        await page.click(".chips.quick .chip:has-text('Vegetarian')")
+        await page.wait_for_timeout(300)
+        check("Vegetarian filter labels every row", all("Vegetarian" in t for t in await page.eval_on_selector_all(".rows .rc .c", "els => els.slice(0, 20).map(e => e.textContent)")))
+        await page.click(".chips.quick .chip:has-text('Vegetarian')")
+        await page.wait_for_timeout(200)
+        check("clearing filters brings the feed back", not await page.eval_on_selector(".feed", "e => e.hidden"))
+        first = await page.eval_on_selector(".rows .rc .t", "e => e.textContent")
+        check("titles with quotes don't jump to the top of the list", not first.startswith('"'), first)
         bg = await page.evaluate("getComputedStyle(document.querySelector('.band.hero')).backgroundColor")
         check("header uses the website's ridge green", bg == "rgb(35, 64, 47)", bg)
 

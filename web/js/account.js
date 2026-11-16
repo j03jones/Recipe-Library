@@ -1,6 +1,7 @@
 // Account card (sign in / create account / restaurant tools) and the admin screen.
 // Receives `ctx` from app.js so it can reuse the app's helpers without importing the whole app.
 import * as cloud from './cloud.js';
+import { canShare, share } from './native.js';
 import { copyText } from './ui.js';
 import * as photos from './photos.js';
 import { qrSvg } from './qr.js';
@@ -76,7 +77,7 @@ function inviteShare(ctx, code, what = '') {
       h('input', { class: 'full link', readonly: true, value: link, 'aria-label': 'Invite link', onfocus: (e) => e.target.select() }),
       h('div', { class: 'row' },
         h('button', { type: 'button', class: 'primary', onclick: async () => toast(await copyText(link) ? 'Invite link copied' : 'Could not copy. Press and hold the link to copy it.', 3000) }, 'Copy link'),
-        navigator.share && h('button', { type: 'button', onclick: () => navigator.share({ title: `Join ${APP_NAME}`, text: msg }).catch(() => {}) }, 'Share…'),
+        canShare() && h('button', { type: 'button', onclick: () => share({ title: `Join ${APP_NAME}`, text: msg }) }, 'Share…'),
         h('a', { class: 'btnlink', href: mail }, 'Email it'),
         h('button', { type: 'button', onclick: () => showQrDialog(ctx, link, `Join ${APP_NAME}`) }, 'Show big QR'))));
 }
@@ -306,8 +307,23 @@ export function accountCard(ctx) {
         me?.role === 'admin' && h('a', { class: 'btnlink primary', href: '#/clients' }, 'Meal prep clients'),
         h('button', { type: 'button', onclick: changePw }, 'Change password'),
         h('button', { type: 'button', onclick: async () => { await cloud.signOut(); ctx.clearCloud(); toast('Signed out'); ctx.rerender(); } }, 'Sign out')),
-      pw);
+      pw,
+      me && me.role !== 'admin' && h('details', { class: 'dangerzone' },
+        h('summary', null, 'Delete my account'),
+        h('p', { class: 'muted small' }, 'This permanently deletes your Jones Ridge Recipes account and everything saved with it: your own recipes '
+          + '(including any you shared to Community), your photos, stars, notes, meal plan and shopping list. It can’t be undone. '
+          + 'The built-in recipes stay on this device.'),
+        h('button', { type: 'button', class: 'danger', onclick: deleteAccount }, 'Delete my account')));
     if (ctx.recovery) changePw();      // stays open across re-draws until saved or cancelled
+  }
+
+  async function deleteAccount() {
+    const email = cloud.currentUser()?.email || 'this account';
+    if (!await ctx.confirmDialog(`Delete ${email} and everything saved with it? This can’t be undone.`, 'Delete account', true)) return;
+    try { await cloud.deleteMyAccount(); } catch (err) { toast(err.message, 6000); return; }
+    ctx.clearCloud();
+    await ctx.infoDialog('Account deleted', 'Your account and everything saved with it have been deleted. Thanks for cooking with us.');
+    ctx.rerender();
   }
 
   paint();

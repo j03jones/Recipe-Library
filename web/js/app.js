@@ -18,6 +18,14 @@ import { SECTIONS } from './groups.js';
 import { addStars, buzz, confetti, copyText, emojiFor, greeting, icon, isStarred, onStarsChange, replaceStars, ridge, starIds, tile, toggleStar } from './ui.js';
 import { restoreTimers, timerChips } from './timers.js';
 import * as cloud from './cloud.js';
+import { canListen, canShare, canSpeak, handleBackButton, listen, platform, share, speak, stopSpeaking, syncStatusBar, takeShared } from './native.js';
+import { compactTitle, draggable, edgeSwipeBack, flyingTiles, pullToRefresh, swipeRow, swipeableSheets, transition } from './motion.js';
+import { dietOf, estimateMinutes, formatMinutes, sortKey } from './insights.js';
+import { homeFeed, metaLine } from './home.js';
+import { ingredientsIn, splitSteps, voiceCommand } from './steps.js';
+import { firstLink, fromShared, fromText, readPhoto } from './getin.js';
+import { correct, forgetSearches, recentSearches, rememberSearch, vocabulary } from './search.js';
+import { fromPlainText } from './transfer.js';
 import { accountCard, viewAdmin, viewJoin } from './account.js';
 import { viewClient, viewClients, viewLabels, viewMenu, viewMyMeals, viewPrep } from './clientsui.js';
 import * as photos from './photos.js';
@@ -229,7 +237,42 @@ async function refreshCloud() {
   }
   rebuild();
   if (lib.me) await Promise.all([syncStars(), syncPlanner()]);   // independent of each other: no need to queue
+  if (lib.me) await syncHousehold();
 }
+
+// ---- a household's shopping list: everyone at home sees the same list. Each sync puts this phone's
+// changes since the last sync on top of the latest shared copy (shop.merge3), so nobody's taps are lost.
+const HH_BASE = 'recipelib.household.base';
+const loadHHBase = () => { try { return JSON.parse(localStorage.getItem(HH_BASE) || 'null'); } catch { return null; } };
+const saveHHBase = (v) => { try { if (v) localStorage.setItem(HH_BASE, JSON.stringify(v)); else localStorage.removeItem(HH_BASE); } catch { /* private mode */ } };
+const inHousehold = () => !!loadHHBase();
+let hhBusy = null; let hhTimer = null;
+async function syncHousehold() {
+  if (!lib.me || !cloud.isSignedIn()) return;
+  if (hhBusy) return hhBusy;
+  hhBusy = (async () => {
+    try {
+      const info = await cloud.householdInfo();
+      lib.household = info || null; lib.householdError = '';
+      if (!info) { saveHHBase(null); return; }
+      const remote = shop.clean(info.list);
+      const base = loadHHBase();
+      const local = shop.load();
+      const merged = shop.merge3(base && base.id === info.id ? base.list : { items: [], extras: [], done: [] }, local, remote);
+      if (!shop.sameList(merged, remote)) await cloud.saveHouseholdList(merged, Date.now());
+      const changed = !shop.sameList(merged, local);
+      shop.replace(merged);
+      saveHHBase({ id: info.id, list: merged });
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+      if (changed && document.body.dataset.view === 'shop' && !document.querySelector('dialog[open]') && !typing) route();
+    } catch (err) { lib.householdError = err.message; }
+    finally { hhBusy = null; }
+  })();
+  return hhBusy;
+}
+shop.onChange(() => { if (inHousehold()) { clearTimeout(hhTimer); hhTimer = setTimeout(syncHousehold, 600); } });
+// while the list is open, pick up what the others change every few seconds
+setInterval(() => { if (inHousehold() && document.body.dataset.view === 'shop' && document.visibilityState === 'visible') syncHousehold(); }, 6000);
 
 // ---- stars follow the person between devices. This device pushes its list whenever it changes.
 const SYNC_KEY = 'recipelib.starsync';
@@ -310,7 +353,7 @@ async function syncPlanner() {
         for (const i of mine.shop.items) if (!s.items.some((x) => x.id === i.id)) s.items.push(i);
         for (const x of mine.shop.extras) if (!s.extras.some((y) => y.text.toLowerCase() === x.text.toLowerCase())) s.extras.push(x);
         s.done = [...new Set([...s.done, ...mine.shop.done])];
-        shop.replace(s);
+        if (!inHousehold()) shop.replace(s);          // a household's shared list is synced on its own
         pantry.replace(pantry.merge(theirs.pantry, mine.pantry));
         collections.replace(collections.merge(theirs.collections, mine.collections));
         cooklog.replace(cooklog.merge(theirs.log, mine.log));
@@ -320,7 +363,8 @@ async function syncPlanner() {
       if (haveLocal) await pushPlanner();
     } else if (sync.dirty) await pushPlanner();          // this device has unsent changes
     else if (theirs && theirs.at !== sync.at) {          // another device changed it
-      planner.replace(theirs.plan); shop.replace(theirs.shop);
+      planner.replace(theirs.plan);
+      if (!inHousehold()) shop.replace(theirs.shop);   // a household's shared list is synced on its own
       // a copy saved by an older version of the app has no pantry or collections: keep this device's
       if ('pantry' in theirs) pantry.replace(theirs.pantry);
       if ('collections' in theirs) collections.replace(theirs.collections);
@@ -388,8 +432,8 @@ const thumbObserver = 'IntersectionObserver' in window ? new IntersectionObserve
     photos.photoURL(el.dataset.photo).then((u) => { if (u) { el.style.backgroundImage = `url("${u}")`; el.classList.add('pic'); el.textContent = ''; } });
   }
 }, { rootMargin: '300px' }) : null;
-function thumb(r) {
-  const t = tile(r.categories);
+function thumb(r, big = false) {
+  const t = tile(r.categories, big);
   const path = photoOf(r);
   if (path && thumbObserver) { t.dataset.photo = path; thumbObserver.observe(t); }
   return t;
@@ -426,7 +470,12 @@ function rebuild() {
     map.set(row.id, r);
   }
   lib.byId = map;
-  lib.all = [...map.values()].filter((r) => !r.hidden).sort((a, b) => collator.compare(a.title, b.title));
+  for (const r of map.values()) {
+    // worked out from the recipe's own text (estimated: the old archive recipes don't say); kept on the object
+    if (r._mins === undefined || r._dirSeen !== r.dir) { r._mins = estimateMinutes(r); r._veg = !!dietOf(r)?.vegetarian; r._dirSeen = r.dir; }
+    r._sort ??= sortKey(r.title);
+  }
+  lib.all = [...map.values()].filter((r) => !r.hidden).sort((a, b) => collator.compare(a._sort, b._sort));
   const cats = new Map();
   for (const r of lib.all) {
     r._hay = [r.title, r.categories.join(' '), (r.tags || []).join(' '), r.ings.map((i) => i.item).join(' '), r.dir].join('\n').toLowerCase();
@@ -438,6 +487,7 @@ function rebuild() {
     }
   }
   lib.cats = [...cats.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  lib.vocab = null;     // words for typo-forgiving search, worked out when first needed
 }
 
 async function saveRecord(rec) {
@@ -468,7 +518,7 @@ function matches(q, cat, src = '') {
 
 // -------------------------------------------------------------------- views
 
-const listState = { q: '', sec: -1, cat: '', src: '', shown: PAGE, scroll: 0 };
+const listState = { q: '', sec: -1, cat: '', src: '', quick: false, veg: false, shown: PAGE, scroll: 0 };
 let onScroll = null;
 let releaseWake = null;
 
@@ -571,7 +621,19 @@ function viewList(starredOnly = false) {
   const srcRow = h('div', { class: 'chips src', role: 'group', 'aria-label': 'Where recipes come from' }, srcButtons.map(([, b]) => b));
   srcRow.hidden = !lib.me;
 
+  const quickBtn = h('button', { class: 'chip', type: 'button', onclick: () => { listState.quick = !listState.quick; listState.shown = PAGE; chipState(); paint(); } },
+    icon('clock', { size: 16 }), 'Under 30 min');
+  const vegBtn = h('button', { class: 'chip', type: 'button', onclick: () => { listState.veg = !listState.veg; listState.shown = PAGE; chipState(); paint(); } },
+    '🌿 Vegetarian');
+  const quickRow = h('div', { class: 'chips quick', role: 'group', 'aria-label': 'Filters' }, quickBtn, vegBtn,
+    h('span', { class: 'muted small hint' }, 'Times and labels are worked out from each recipe, so check before you rely on them.'));
+  const feed = starredOnly ? h('div') : homeFeed({ h, lib, thumb, starIds, recentCooked: () => cooklog.recent(cooklog.load()).map(([id]) => id),
+    filter: (kind) => { listState[kind] = true; listState.shown = PAGE; chipState(); paint(); allHead.scrollIntoView({ behavior: 'smooth', block: 'start' }); } });
+  const allHead = h('h2', { class: 'allhead' }, 'Browse all recipes');
+
   function chipState() {
+    quickBtn.setAttribute('aria-pressed', String(listState.quick));
+    vegBtn.setAttribute('aria-pressed', String(listState.veg));
     paintPromo();
     for (const [k, b] of srcButtons) b.setAttribute('aria-pressed', String(k === listState.src));
     for (const [i, b] of secButtons) b.setAttribute('aria-pressed', String(i === listState.sec));
@@ -592,13 +654,27 @@ function viewList(starredOnly = false) {
         h('span', { class: 'txt' },
           h('span', { class: 't' }, r.title, r.source !== 'base' && h('span', { class: 'badge' }, badgeText(r))),
           h('span', { class: 'c' }, r.kind === 'link' ? `Link · ${r.src?.name || 'another website'} ↗`
-            : r.categories.length ? r.categories.slice(0, 2).join(', ') : `${r.ings.length} ingredients`))),
+            : [r.categories.length ? r.categories.slice(0, 2).join(', ') : `${r.ings.length} ingredients`, metaLine(r)].filter(Boolean).join(' · ')))),
       starButton(r.id));
   }
 
   function paint() {
     let pool = matches(listState.q, listState.cat, lib.me ? listState.src : '');
+    // a typo ("choclate"): when the words find almost nothing, try the closest real words instead
+    let fixedQ = '';
+    if (listState.q.trim() && pool.length < 3) {
+      lib.vocab ??= vocabulary(lib.all);
+      const fixed = correct(listState.q, lib.vocab);
+      const better = fixed ? matches(fixed, listState.cat, lib.me ? listState.src : '') : [];
+      if (better.length > pool.length) { pool = better; fixedQ = fixed; }
+    }
+    fill(didYouMean, fixedQ && h('p', { class: 'small didyoumean' }, 'Showing results for ', h('strong', null, `“${fixedQ}”`), '.'));
     if (starredOnly) pool = pool.filter((r) => isStarred(r.id));
+    if (listState.quick) pool = pool.filter((r) => r._mins != null && r._mins <= 30);
+    if (listState.veg) pool = pool.filter((r) => r._veg);
+    const browsing = !starredOnly && !listState.q && !listState.cat && listState.sec < 0 && !listState.src && !listState.quick && !listState.veg;
+    feed.hidden = !browsing;
+    allHead.hidden = !browsing;
     results = pool;
     const shown = results.slice(0, listState.shown);
     count.textContent = starredOnly
@@ -608,7 +684,7 @@ function viewList(starredOnly = false) {
     ul.replaceChildren(...shown.map((r, i) => row(r, i)));
     more.hidden = shown.length >= results.length;
     if (results.length) { fill(empty); return; }
-    const filtered = listState.q || listState.cat || (lib.me && listState.src);
+    const filtered = listState.q || listState.cat || (lib.me && listState.src) || listState.quick || listState.veg;
     fill(empty, h('div', { class: 'empty' },
       h('span', { class: 'tile big', 'aria-hidden': 'true', 'data-sec': filtered ? 6 : 0 }, filtered ? '🔎' : '⭐'),
       h('h2', null, filtered ? 'Nothing matches' : 'Nothing starred yet'),
@@ -616,15 +692,31 @@ function viewList(starredOnly = false) {
         ? 'Try fewer words, or search by an ingredient like “lemon”.'
         : 'Tap the star on a recipe to keep it here for quick access.'),
       filtered
-        ? h('button', { onclick: () => { listState.q = ''; listState.sec = -1; listState.cat = ''; listState.src = ''; input.value = ''; chipState(); paint(); } }, 'Clear search and filters')
+        ? h('button', { onclick: () => { Object.assign(listState, { q: '', sec: -1, cat: '', src: '', quick: false, veg: false }); input.value = ''; chipState(); paint(); } }, 'Clear search and filters')
         : h('button', { onclick: () => { location.hash = '#/'; } }, 'Browse recipes')));
   }
 
   const searchbar = h('div', { class: 'searchbar' }, h('label', { class: 'search' }, icon('search', { size: 22 }), input));
-  let t;
+  const didYouMean = h('div');
+  const recentRow = h('div', { class: 'chips recent', role: 'group', 'aria-label': 'Recent searches', hidden: true });
+  const paintRecent = () => {
+    const list = recentSearches();
+    recentRow.hidden = !(document.activeElement === input && !input.value.trim() && list.length);
+    if (recentRow.hidden) return;
+    fill(recentRow, h('span', { class: 'muted small' }, 'Recent'),
+      list.map((q) => h('button', { class: 'chip', type: 'button', onmousedown: (e) => e.preventDefault(),
+        onclick: () => { input.value = q; listState.q = q; listState.shown = PAGE; paint(); paintRecent(); } }, q)),
+      h('button', { class: 'chip', type: 'button', 'aria-label': 'Clear recent searches', onmousedown: (e) => e.preventDefault(),
+        onclick: () => { forgetSearches(); paintRecent(); } }, '×'));
+  };
+  input.addEventListener('focus', paintRecent);
+  input.addEventListener('blur', () => setTimeout(paintRecent, 150));
+  let t; let keep;
   input.addEventListener('input', () => {
-    clearTimeout(t);
-    t = setTimeout(() => { listState.q = input.value; listState.shown = PAGE; paint(); }, 120);
+    clearTimeout(t); clearTimeout(keep);
+    t = setTimeout(() => { listState.q = input.value; listState.shown = PAGE; paint(); paintRecent(); }, 120);
+    // a search someone settles on (stops typing and it finds something) is worth offering again
+    keep = setTimeout(() => { if (results.length) rememberSearch(input.value); }, 1500);
   });
 
   fill($app,
@@ -632,7 +724,7 @@ function viewList(starredOnly = false) {
       h('p', { class: 'eyebrow' }, starredOnly ? 'Your favorites' : `${greeting()}${firstName() ? `, ${firstName()}` : ''}`),
       h('h1', null, starredOnly ? 'Starred' : 'What are we cooking?'),
       h('p', { class: 'sub' }, starredOnly ? 'Your go-to recipes, one tap away.' : `${lib.all.length.toLocaleString()} recipes to search, scale and cook.`)),
-    searchbar,
+    searchbar, recentRow,
     !starredOnly && h('a', { class: 'promo card', href: '#/pantry' },
       h('span', { class: 'tile', 'aria-hidden': 'true', 'data-sec': 3 }, '🧺'),
       h('span', null, h('strong', null, 'What can I make?'), h('span', { class: 'muted small' }, 'Find recipes from what you have on hand.'))),
@@ -641,12 +733,20 @@ function viewList(starredOnly = false) {
       h('div', { class: 'chips' },
         cooklog.recent(cooklog.load()).length > 0 && h('a', { class: 'chip', href: '#/cooked' }, 'Cooked', h('span', { class: 'muted' }, ` ${cooklog.recent(cooklog.load()).length}`)),
         collections.load().map((c) => h('a', { class: 'chip', href: `#/c/${c.id}` }, c.name, h('span', { class: 'muted' }, ` ${c.ids.length}`))))),
-    !starredOnly && srcRow, !starredOnly && secRow, !starredOnly && groupsRow, promo, count, ul, empty, more);
+    feed, !starredOnly && allHead,
+    !starredOnly && srcRow, !starredOnly && secRow, !starredOnly && groupsRow, quickRow, promo, didYouMean, count, ul, empty, more);
   chipState();
   paint();
   window.scrollTo(0, listState.scroll);
   onScroll = () => { listState.scroll = window.scrollY; searchbar.classList.toggle('stuck', window.scrollY > 150); };
   window.addEventListener('scroll', onScroll, { passive: true });
+}
+
+/** The amounts a step needs, shown right under it ("1 lb flour · 1 tsp salt"), at the scale on screen. */
+function stepUses(step, recipe, big = false) {
+  const idx = ingredientsIn(step, recipe.ings);
+  if (!idx.length) return null;
+  return h('span', { class: big ? 'uses big' : 'uses' }, idx.slice(0, 8).map((i) => h('span', null, formatIngredient(recipe.ings[i]))));
 }
 
 function amountSplit(text) {
@@ -857,7 +957,7 @@ function viewRecipe(id, preset = null) {
       g.items.push(ing);
     }
     const y = formatYield(s);
-    const steps = s.dir ? s.dir.split('\n').filter((l) => l.trim()) : [];
+    const steps = splitSteps(s.dir);
     fill(ingBox,
       h('div', { class: 'facts' },
         y && h('span', null, h('strong', null, 'Makes '), y),
@@ -874,7 +974,7 @@ function viewRecipe(id, preset = null) {
           const ol = e.currentTarget;
           if (e.target.closest('.tick') && ol.querySelectorAll('.tick[aria-pressed=true]').length === steps.length) celebrate(e.target);
         } }, steps.map((l, n) => h('li', null,
-          tick([h('span', { class: 'n' }, n + 1), h('span', { class: 'what' }, l)]), timerChips(l))))
+          tick([h('span', { class: 'n' }, n + 1), h('span', { class: 'what' }, l, stepUses(l, s))]), timerChips(l))))
         : steps.length === 1 && h('div', { class: 'dir' }, h('p', null, steps[0]), timerChips(steps[0])),
       warnings.length > 0 && h('p', { class: 'note' }, warnings.join(' ')));
     cc.paint();
@@ -899,7 +999,7 @@ function viewRecipe(id, preset = null) {
   // one step at a time, big text, swipe or tap to move on
   function cookMode() {
     const s = shown().recipe;
-    const steps = s.dir ? s.dir.split('\n').filter((l) => l.trim()) : [];
+    const steps = splitSteps(s.dir);
     if (!steps.length) return;
     let i = 0;
     const wasAwake = awake;
@@ -914,6 +1014,34 @@ function viewRecipe(id, preset = null) {
     let sheet = null;
 
     const closeBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close cook mode', onclick: close }, icon('close'));
+    // hands-free: read each step aloud, and/or move on by voice ("next", "back", "repeat", "start timer")
+    let reading = false; let ears = null;
+    const hint = h('p', { class: 'cook-hint', hidden: true, 'aria-live': 'polite' });
+    const readBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-pressed': 'false', 'aria-label': 'Read steps aloud', hidden: !canSpeak(), onclick: () => {
+      reading = !reading; readBtn.setAttribute('aria-pressed', String(reading));
+      if (reading) speak(steps[i]); else stopSpeaking();
+      buzz(8);
+    } }, icon('volume'));
+    const micBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-pressed': 'false', 'aria-label': 'Voice control', hidden: !canListen(), onclick: async () => {
+      if (ears) { stopEars(); return; }
+      micBtn.setAttribute('aria-pressed', 'true');
+      ears = await listen(onHeard);
+      if (!ears) { micBtn.setAttribute('aria-pressed', 'false'); toast('Voice control needs the microphone. You can allow it in your phone’s settings.', 4500); return; }
+      hint.hidden = false;
+      hint.textContent = 'Listening. Say “next”, “back”, “repeat”, “start timer” or “ingredients”.';
+    } }, icon('mic'));
+    let lastCmd = 0;
+    function onHeard(words) {
+      const cmd = voiceCommand(words);
+      if (!cmd || Date.now() - lastCmd < 1200) return;
+      lastCmd = Date.now(); ears?.heard();
+      if (cmd === 'next') go(1);
+      else if (cmd === 'back') go(-1);
+      else if (cmd === 'repeat') speak(steps[i]);
+      else if (cmd === 'timer') { const b = chips.querySelector('.tchip'); if (b) b.click(); else speak('This step has no timer.'); }
+      else if (cmd === 'ingredients') ingBtn.click();
+    }
+    function stopEars() { ears?.stop(); ears = null; micBtn.setAttribute('aria-pressed', 'false'); hint.hidden = true; }
     const ingBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Show ingredients', onclick: () => {
       if (sheet) { sheet.remove(); sheet = null; return; }
       sheet = h('div', { class: 'cook-sheet' },
@@ -923,18 +1051,19 @@ function viewRecipe(id, preset = null) {
       overlay.append(sheet);
     } }, icon('list'));
     const overlay = h('div', { class: 'cook', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Cooking ${r.title}` },
-      h('div', { class: 'cook-top' }, closeBtn, h('span', { class: 'ttl' }, r.title), ingBtn),
-      bar, body, h('div', { class: 'cook-foot' }, back, next));
+      h('div', { class: 'cook-top' }, closeBtn, h('span', { class: 'ttl' }, r.title), readBtn, micBtn, ingBtn),
+      bar, body, hint, h('div', { class: 'cook-foot' }, back, next));
 
     function paintStep(dir = 1) {
       num.textContent = `Step ${i + 1} of ${steps.length}`;
       text.textContent = steps[i];
       text.className = `cook-text${dir < 0 ? ' back' : ''}`;
       text.style.animation = 'none'; void text.offsetWidth; text.style.animation = '';
-      fill(chips, timerChips(steps[i]));
+      fill(chips, stepUses(steps[i], s, true), timerChips(steps[i]));
       [...bar.children].forEach((b, n) => b.classList.toggle('on', n <= i));
       back.disabled = i === 0;
       next.textContent = i === steps.length - 1 ? 'Done' : 'Next step';
+      if (reading) speak(steps[i]);
     }
     function go(d) {
       if (i + d >= steps.length) { close(); celebrate(); return; }
@@ -942,6 +1071,7 @@ function viewRecipe(id, preset = null) {
       i += d; paintStep(d); buzz(8);
     }
     function close() {
+      stopEars(); stopSpeaking();
       overlay.remove();
       document.removeEventListener('keydown', onKey, true);
       if (!wasAwake) setWake(false);
@@ -1052,8 +1182,11 @@ function viewRecipe(id, preset = null) {
         awakeBtn,
         !shared && starButton(r.id),
         !shared && canEdit(r) && h('a', { class: 'icon-btn', href: `#/edit/${r.id}`, 'aria-label': 'Edit recipe', title: 'Edit recipe' }, icon('edit'))),
-      h('div', { class: 'rhead' }, tile(r.categories, true), h('h1', null, r.title)),
-      r.categories.length > 0 && h('div', { class: 'labels' }, r.categories.map((c) => h('span', { class: 'label' }, c)))),
+      h('div', { class: 'rhead' }, (() => { const t = tile(r.categories, true); t.style.viewTransitionName = 'rtile'; return t; })(), h('h1', null, r.title)),
+      r.categories.length > 0 && h('div', { class: 'labels' }, r.categories.map((c) => h('span', { class: 'label' }, c))),
+      (r._mins != null || r._veg) && h('p', { class: 'rmeta', title: 'Worked out from the recipe, so it is a guide only' },
+        r._mins != null && h('span', null, icon('clock', { size: 16 }), `About ${formatMinutes(r._mins)}`),
+        r._veg && h('span', null, '🌿 Vegetarian'))),
     shared ? sharedNote(sharedFrom) : photoBlock(r),
     credit(r),
     sourceCredit(r),
@@ -1120,7 +1253,7 @@ async function shareDialog(r) {
     h('input', { class: 'full link', readonly: true, value: link, 'aria-label': 'Recipe link', onfocus: (e) => e.target.select() }),
     h('div', { class: 'row' },
       h('button', { class: 'primary', onclick: async () => toast(await copyText(link) ? 'Link copied' : 'Could not copy. Press and hold the link to copy it.', 3000) }, 'Copy link'),
-      navigator.share && h('button', { onclick: () => navigator.share({ title: r.title, text: msg }).catch(() => {}) }, 'Share…'),
+      canShare() && h('button', { onclick: () => share({ title: r.title, text: msg }) }, 'Share…'),
       h('a', { class: 'btnlink', href: `mailto:?subject=${encodeURIComponent(r.title)}&body=${encodeURIComponent(msg)}` }, 'Email'),
       h('button', { onclick: () => dlg.close() }, 'Done')));
   dlg.addEventListener('close', () => dlg.remove());
@@ -1247,7 +1380,7 @@ function viewEdit(id, template) {
 
   fill($app, 
     pageHead(existing ? 'Edit recipe' : adapting ? 'Make your own version' : template?.imported ? 'Check and save' : template ? 'Save as new recipe' : 'New recipe'),
-    !existing && !template && h('p', { class: 'row grow' }, h('a', { class: 'linkbtn', href: '#/import' }, '⤓ Import a recipe from a web page'),
+    !existing && !template && h('p', { class: 'row grow' }, h('a', { class: 'linkbtn', href: '#/import' }, '⤓ Import from a web page or a photo'),
       h('a', { class: 'linkbtn', href: '#/transfer' }, '⤓ Import files (Paprika, Mealie…)')),
     adapting && h('p', { class: 'muted' }, 'Keep or change the ingredients, then write the method in your own words. Your version can be shared with the Community and will say “Adapted from” with a link to the original.'),
     h('label', { class: 'field' }, h('span', null, 'Title'), title),
@@ -1372,17 +1505,22 @@ function viewPlan() {
       dates.map((d) => {
         const label = `${DAY_FMT.format(planner.parseDate(d))} ${DATE_FMT.format(planner.parseDate(d))}`;
         const entries = plan.days[d] || [];
-        return h('section', { class: `planday${d === today ? ' today' : ''}${d < today ? ' past' : ''}` },
+        return h('section', { class: `planday${d === today ? ' today' : ''}${d < today ? ' past' : ''}`, 'data-date': d },
           h('h2', null, DAY_FMT.format(planner.parseDate(d)), h('span', { class: 'muted' }, ` ${DATE_FMT.format(planner.parseDate(d))}`), d === today && h('span', { class: 'label' }, 'Today')),
           entries.length > 0 && h('ul', { class: 'shoprecipes' }, entries.map((e, n) => {
             const r = e.id ? lib.byId.get(e.id) : null;
-            return h('li', null,
+            const what = e.note || r?.title || 'this';
+            const moveTo = (to) => { if (to === d) return; if (planner.move(d, n, to)) { buzz(8); toast(`Moved to ${DAY_FMT.format(planner.parseDate(to))}`); } paint(); };
+            return draggable(h('li', { class: 'planitem', title: 'Press and hold, then drag to another day' },
               e.note ? h('span', { class: 'plannote' }, e.note)
                 : r ? h('a', { href: `#/r/${r.id}` }, r.title)
                   : h('span', { class: 'muted' }, 'A recipe that is no longer in the library'),
               r && h('span', { class: 'muted' }, ` ${timesLabel(Frac.parse(e.f) || new Frac(1n))}`),
-              h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Take ${e.note || r?.title || 'this'} off ${label}`, title: 'Take off the plan',
-                onclick: () => { planner.removeAt(d, n); paint(); } }, icon('close', { size: 18 })));
+              h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Move ${what} to another day`, title: 'Move to another day',
+                onclick: async () => { const to = await pickDay(`Move ${what}`); if (to) moveTo(to); } }, icon('move', { size: 18 })),
+              h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Take ${what} off ${label}`, title: 'Take off the plan',
+                onclick: () => { planner.removeAt(d, n); paint(); } }, icon('close', { size: 18 }))),
+            { home: null, targets: () => [...body.querySelectorAll('.planday')], onDrop: (sec) => moveTo(sec.dataset.date) });
           })),
           h('button', { class: 'addday', type: 'button', 'aria-label': `Add to ${label}`, onclick: async () => {
             const entry = await pickForPlan(label);
@@ -1496,9 +1634,13 @@ function viewShop() {
             onclick: () => { shop.setDone(l.key, btn.getAttribute('aria-pressed') !== 'true'); buzz(6); paint(); } },
           h('span', { class: 'box' }, icon('check', { size: 16 })),
           h('span', { class: 'what' }, l.name, (l.amounts.length > 0 || l.notes.length > 0) && h('b', null, ` ${[...l.amounts, ...l.notes].join(' + ')}`)));
-          return h('li', { class: l.extra ? 'extra' : null }, btn,
+          return swipeRow(h('li', { class: l.extra ? 'extra' : null }, btn,
             l.extra && h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Remove ${l.name}`, title: 'Remove',
-              onclick: () => { shop.removeExtra(l.key); paint(); } }, icon('close', { size: 18 })));
+              onclick: () => { shop.removeExtra(l.key); paint(); } }, icon('close', { size: 18 }))), {
+            onRight: () => { shop.setDone(l.key, !done.has(l.key)); buzz(6); paint(); },
+            rightLabel: done.has(l.key) ? 'Not yet' : 'Got it',
+            onLeft: l.extra ? () => { shop.removeExtra(l.key); buzz(6); paint(); } : null,
+          });
         }))]),
       kitchen.have.length > 0 && h('label', { class: 'check', style: 'margin-top:1.2rem' }, skipIn, 'Leave out what I already have ',
         h('a', { href: '#/pantry' }, '(my kitchen)')),
@@ -1508,7 +1650,7 @@ function viewShop() {
       h('section', { class: 'tools stack' },
         h('div', { class: 'row grow' },
           h('button', { type: 'button', onclick: async () => toast(await copyText(text()) ? 'Shopping list copied' : 'Could not copy on this browser') }, 'Copy'),
-          navigator.share && h('button', { type: 'button', onclick: () => navigator.share({ title: 'Shopping list', text: text() }).catch(() => {}) }, 'Share'),
+          canShare() && h('button', { type: 'button', onclick: () => share({ title: 'Shopping list', text: text() }) }, 'Share'),
           h('button', { type: 'button', onclick: () => window.print() }, 'Print'),
           h('button', { type: 'button', onclick: async () => {
             if (await confirmDialog('Clear the whole shopping list?', 'Clear list', true)) { shop.clear(); paint(); }
@@ -1517,8 +1659,49 @@ function viewShop() {
           lib.me ? 'The list is saved with your account.' : 'The list is kept on this device; sign in to have it follow you.'),
         lib.planSyncError && h('p', { class: 'note' }, `Not saved to your account yet: ${lib.planSyncError}`)));
   }
-  fill($app, pageHead('Shopping list', 'Everything for the recipes you picked, in one list'), planSeg('shop'), extraForm, body);
+  // sharing the list with the people you live with
+  const sharedNote = h('div');
+  const hhCard = h('div');
+  const names = (list) => list.length <= 1 ? 'just you so far' : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+  function paintHousehold() {
+    const hh = lib.household;
+    fill(sharedNote, hh && h('p', { class: 'sharednote' }, '🏠 Shared with ', h('strong', null, hh.name), ` · ${names(hh.members || [])}`));
+    if (!lib.me) { fill(hhCard); return; }
+    if (hh) {
+      const msg = `Join my household “${hh.name}” on Jones Ridge Recipes so we share one shopping list. In the app: Plan › Shopping list › Join a household, and enter ${hh.code}.`;
+      fill(hhCard, h('section', { class: 'card stack household' },
+        h('h2', null, '🏠 ', hh.name),
+        h('p', { class: 'muted small' }, `Everyone in it sees and changes this list: ${names(hh.members || [])}. Changes show up on the others’ phones within a few seconds.`),
+        h('div', { class: 'stat' }, h('span', null, 'Join code'), h('strong', { class: 'code' }, hh.code)),
+        h('div', { class: 'row grow' },
+          canShare() ? h('button', { type: 'button', class: 'primary', onclick: () => share({ title: 'Join my household on Jones Ridge Recipes', text: msg }) }, 'Invite someone')
+            : h('button', { type: 'button', class: 'primary', onclick: async () => toast(await copyText(msg) ? 'Invite copied' : 'Could not copy') }, 'Copy an invite'),
+          h('button', { type: 'button', class: 'danger', onclick: async () => {
+            if (!await confirmDialog(`Leave ${hh.name}? Your list stays on this phone, but stops being shared.`, 'Leave', true)) return;
+            try { await cloud.leaveHousehold(); } catch (err) { toast(err.message, 4000); return; }
+            lib.household = null; saveHHBase(null); toast('You left the household'); paintHousehold();
+          } }, 'Leave')),
+        lib.householdError && h('p', { class: 'note' }, `Not synced right now: ${lib.householdError}`)));
+      return;
+    }
+    const nameIn = h('input', { class: 'full', maxlength: '60', value: `${firstName() || 'Our'}${firstName() ? '’s' : ''} home`, 'aria-label': 'Household name' });
+    const codeIn = h('input', { class: 'full', maxlength: '12', placeholder: 'ABC234', autocapitalize: 'characters', autocomplete: 'off', 'aria-label': 'Household code' });
+    const after = async (fn, done) => {
+      try { await fn(); } catch (err) { toast(err.message, 4500); return; }
+      await syncHousehold(); toast(done); paint(); paintHousehold();
+    };
+    fill(hhCard, h('details', { class: 'card stack household' },
+      h('summary', null, '🏠 Share this list with your household'),
+      h('p', { class: 'muted small' }, 'Everyone in a household shares one shopping list: tick something off and it’s ticked on their phones too. Up to 8 people.'),
+      h('label', { class: 'field' }, h('span', null, 'Start one'), nameIn),
+      h('button', { type: 'button', class: 'primary', onclick: () => after(() => cloud.createHousehold(nameIn.value.trim() || 'Home'), 'Household started. Invite the others with its code.') }, 'Start a household'),
+      h('label', { class: 'field' }, h('span', null, 'Or join one with its code'), codeIn),
+      h('button', { type: 'button', onclick: () => { if (codeIn.value.trim()) after(() => cloud.joinHousehold(codeIn.value.trim()), 'You joined the household'); } }, 'Join a household')));
+  }
+  fill($app, pageHead('Shopping list', 'Everything for the recipes you picked, in one list'), planSeg('shop'), sharedNote, extraForm, body, hhCard);
   paint();
+  paintHousehold();
+  if (lib.me) syncHousehold().then(paintHousehold);
   window.scrollTo(0, 0);
 }
 
@@ -1748,10 +1931,36 @@ function viewLinks(collectionId) {
 }
 
 /** Paste one recipe link; the recipe is read, checked in the editor, then saved with credit. */
-function viewImport() {
+function viewImport(prefill = '') {
   setView('edit', 'new');
   const signedIn = !!lib.me && cloud.isSignedIn();
-  const url = h('input', { class: 'full', type: 'url', placeholder: 'https://www.noracooks.com/…', autocomplete: 'off', autocapitalize: 'off', 'aria-label': 'Recipe page address' });
+  const url = h('input', { class: 'full', type: 'url', placeholder: 'https://www.noracooks.com/…', autocomplete: 'off', autocapitalize: 'off', 'aria-label': 'Recipe page address', value: prefill });
+  // a link copied in another app: one tap instead of press-and-hold, paste
+  const pasteBtn = navigator.clipboard?.readText && h('button', { type: 'button', onclick: async () => {
+    let t = '';
+    try { t = await navigator.clipboard.readText(); } catch { toast('This browser wasn’t allowed to read the clipboard. Press and hold the box to paste instead.', 4500); return; }
+    const link = firstLink(t);
+    if (!link) { toast('There’s no web address on the clipboard'); return; }
+    url.value = link; if (signedIn) run();
+  } }, 'Paste link');
+  // a photo of a printed recipe, read on the device
+  const scanStatus = h('p', { class: 'muted small', role: 'status' });
+  const scanIn = h('input', { type: 'file', accept: 'image/*', capture: 'environment', hidden: true, onchange: async () => {
+    const file = scanIn.files?.[0]; scanIn.value = '';
+    if (!file) return;
+    scanStatus.textContent = 'Reading the photo…';
+    try {
+      const text = await readPhoto(file, (p) => { scanStatus.textContent = `Reading the photo… ${Math.round(p * 100)}%`; });
+      const got = fromText(text);
+      if (got) { viewEdit(null, got.recipe); return; }
+      scanStatus.textContent = text ? 'That didn’t look like a recipe. Here is what was read; fix it up in a new recipe.' : 'No text was found in that photo. Try again in good light, straight on.';
+      if (text) viewEdit(null, { ...fromPlainText(`Scanned recipe\n${text}`), imported: true });
+    } catch (err) {
+      scanStatus.textContent = navigator.onLine === false
+        ? 'Scanning needs a connection the first time (to fetch the text reader). Try again online.'
+        : `Couldn’t read that photo: ${err.message}`;
+    }
+  } });
   const status = h('p', { class: 'muted small', role: 'status' });
   const go = h('button', { class: 'primary', type: 'button', disabled: !signedIn, onclick: run }, 'Get recipe');
   async function run() {
@@ -1783,11 +1992,25 @@ function viewImport() {
     h('p', { class: 'muted' }, 'Paste the address of one recipe page. You check it before it is saved. It goes into your own private recipes with the author’s name and a link back to the original. Only the ingredients, method and yield are taken. Photos and stories stay on their site.'),
     !signedIn && h('p', { class: 'note' }, 'Sign in first (Settings). The phone can’t read other websites on its own, so the page is read through your account.'),
     h('label', { class: 'field' }, h('span', null, 'Recipe page address'), url),
-    h('div', { class: 'row grow' }, go),
+    h('div', { class: 'row grow' }, go, pasteBtn),
     status,
+    h('p', { class: 'muted small' }, 'Tip: in your browser or another app, choose Share › Jones Ridge Recipes (once the app is installed) to send a recipe page straight here.'),
+    h('h2', null, 'Scan a printed recipe'),
+    h('p', { class: 'muted' }, 'Take a photo of a cookbook page or a recipe card. The app reads the text on this device (the photo isn’t uploaded) and you check it before it’s saved. Printed recipes work best; handwriting is hit and miss.'),
+    h('div', { class: 'row grow' }, h('button', { type: 'button', class: 'primary', onclick: () => scanIn.click() }, icon('plus', { size: 18 }), 'Take or choose a photo'), scanIn),
+    scanStatus,
     COLLECTIONS.map((c) => h('p', { class: 'small' }, h('a', { href: `#/links/${c.id}` }, `Browse vegan recipes from ${c.site}`))));
   window.scrollTo(0, 0);
-  if (signedIn) url.focus();
+  if (signedIn && prefill) run();
+  else if (signedIn) url.focus();
+}
+
+/** A link or recipe text shared to the app (the installed web app's share target). */
+function openShared(shared) {
+  const got = fromShared(shared);
+  if (!got) { toast('That didn’t include a recipe or a link'); return; }
+  if (got.link) location.hash = `#/import/${encodeURIComponent(got.link)}`;
+  else viewEdit(null, got.recipe);
 }
 
 function viewMissing() {
@@ -1934,7 +2157,7 @@ function route() {
   stampHistory();
   clearView();
   $app.removeAttribute('aria-busy');
-  $app.classList.remove('enter'); void $app.offsetWidth; $app.classList.add('enter');
+  if (!document.documentElement.dataset.nav) { $app.classList.remove('enter'); void $app.offsetWidth; $app.classList.add('enter'); }
   const hash = location.hash.replace(/^#\/?/, '');
   const [kind, arg] = hash.split('/');
   const id = arg ? decodeURIComponent(arg) : null;
@@ -1944,7 +2167,7 @@ function route() {
   if (kind === 'new') return viewEdit(null);
   if (kind === 'settings') return viewSettings();
   if (kind === 'links') return viewLinks(id || COLLECTIONS[0].id);
-  if (kind === 'import') return viewImport();
+  if (kind === 'import') return viewImport(id || '');
   if (kind === 'admin') return viewAdmin(ctx);
   if (kind === 'meals') return viewMyMeals(ctx);
   if (kind === 'clients' || kind === 'prep' || kind === 'labels') {
@@ -1975,6 +2198,8 @@ async function boot() {
   if (linkType) history.replaceState(history.state, '', `${location.pathname}${location.search}#/settings`);
   loadCloudCache();
   restoreTimers();
+  syncStatusBar();
+  handleBackButton(() => goBack());
   document.addEventListener('timerdone', (e) => toast(`${e.detail.label} timer is done`, 6000));
   try {
     const [res, mine] = await Promise.all([fetch('data/recipes.json'), store.all()]);
@@ -1988,7 +2213,19 @@ async function boot() {
       h('p', null, 'Connect to the internet and reload once, then it will work offline.'), h('p', { class: 'muted small' }, String(err))));
     return;
   }
-  window.addEventListener('hashchange', route);
+  // pages slide forward or back (worked out from the history index, before route() updates it)
+  window.addEventListener('hashchange', () => {
+    const st = history.state;
+    const back = !!st && typeof st.i === 'number' && st.i < appIndex;
+    Promise.resolve(transition(route, { back })).then(compactTitle);
+  });
+  flyingTiles();
+  swipeableSheets();
+  if (platform() === 'ios') edgeSwipeBack(() => goBack());
+  pullToRefresh(async () => {
+    if (cloud.isSignedIn()) { try { await refreshCloud(); } catch { /* offline: keep what we have */ } }
+    route(); compactTitle();
+  });
   document.addEventListener('keydown', (e) => {
     if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('dialog[open]')) return;
     const view = document.body.dataset.view;
@@ -1996,7 +2233,18 @@ async function boot() {
     if (e.key === 'Escape' && (view === 'recipe' || view === 'edit')) { goBack('#/'); }
     else if (e.key === '/' && view === 'list' && !typing) { const s = document.querySelector('input[type=search]'); if (s) { e.preventDefault(); s.focus(); } }
   });
-  route();
+  Promise.resolve(route()).then(compactTitle);
+  // shared to the installed web app: it opens as ?title=…&text=…&url=…
+  const q = new URLSearchParams(location.search);
+  if (q.has('url') || q.has('text')) {
+    history.replaceState(history.state, '', `${location.pathname}${location.hash || '#/'}`);
+    openShared({ title: q.get('title') || '', text: q.get('text') || '', url: q.get('url') || '' });
+  }
+  // shared to the Android app (MainActivity keeps it until asked)
+  const collect = async () => { const got = await takeShared(); if (got) openShared(got); };
+  collect();
+  window.addEventListener('garnishare', collect);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') collect(); });
   registerWorker();
   loadMore();
   if (linkType === 'recovery') ctx.recovery = true;

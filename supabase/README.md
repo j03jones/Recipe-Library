@@ -161,3 +161,19 @@ Also add `https://jonesridgekitchen.com/my-meals/` to Authentication > URL Confi
 recipes behind a dish (a main plus sides or sauces), each with its scale and grocery estimate. It is chef-only, like the
 rest of that table; clients still see one dish. Until it is run, one-recipe dishes work as before and adding a second
 recipe says which file to run. `test/clients.sql` checks it.
+## Deleting your own account
+`add_delete_own_account.sql` (run after `tighten_function_access.sql`, safe to run again) adds
+`delete_my_account()`, behind Settings > Account > *Delete my account*, so people can remove their own account and
+data without asking. The app deletes the person's photos from Storage first, then the
+function deletes their recipes (Community ones too) and their account, which takes their profile, stars,
+notes, meal plan and shopping list with it. The admin account can't delete itself, and the only owner of a
+restaurant has to make someone else an owner first. New projects get this from `schema.sql`.
+
+## Households (a shared shopping list)
+`add_households.sql` (run after `add_delete_own_account.sql`, safe to run again) lets the people you live with
+share one shopping list. Someone starts a household on the Shopping list page and gets a six-letter code;
+the others join with it (up to 8 people, one household each). The list is one JSON document; each phone
+puts its own changes since its last sync on top of the latest copy (`merge3` in `web/js/shopping.js`), so
+two people ticking things off at the same time don't undo each other, and phones with the list open check
+for changes every few seconds. Leaving keeps your list on your phone; the last one out removes the
+household. Deleting your account leaves it too. New projects get this from `schema.sql`.

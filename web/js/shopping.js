@@ -221,3 +221,28 @@ export function clearDone() {
 }
 
 export const clear = () => save({ items: [], done: [], extras: [] });
+
+/**
+ * A shared (household) list: puts this phone's changes since `base` (the copy it last synced) on top of
+ * `remote` (the latest shared copy). Things added here are added, things removed here are removed, ticks
+ * set or cleared here are applied, a changed amount wins; everything else is as the others left it.
+ * So two people ticking things off at the same time don't undo each other.
+ */
+export function merge3(base, local, remote) {
+  base = clean(base); local = clean(local); remote = clean(remote);
+  const byId = (xs) => new Map(xs.map((x) => [x.id, x]));
+  const merge = (b, l, r) => {
+    const out = byId(r);
+    for (const [id, x] of byId(l)) if (!b.has(id) || b.get(id).f !== x.f || b.get(id).text !== x.text) out.set(id, x);  // added or changed here
+    for (const id of b.keys()) if (!byId(l).has(id)) out.delete(id);                                                     // removed here
+    return [...out.values()];
+  };
+  const items = merge(byId(base.items), local.items, remote.items);
+  const extras = merge(byId(base.extras), local.extras, remote.extras);
+  const bDone = new Set(base.done); const lDone = new Set(local.done);
+  const done = new Set(remote.done);
+  for (const k of lDone) if (!bDone.has(k)) done.add(k);
+  for (const k of bDone) if (!lDone.has(k)) done.delete(k);
+  return clean({ items, extras, done: [...done] });
+}
+export const sameList = (a, b) => JSON.stringify(clean(a)) === JSON.stringify(clean(b));

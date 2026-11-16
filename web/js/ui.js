@@ -1,10 +1,15 @@
 // Small presentation helpers: icons, the emoji "photo" tile for each category, and starred recipes.
 import { SECTIONS } from './groups.js';
+import { haptic } from './native.js';
 
 const ICON_PATHS = {
   book: '<path d="M5 4.5h9a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3z"/><path d="M17 8h2v12h-2"/><path d="M9 9h5M9 12.5h4"/>',
   star: '<path d="m12 3.6 2.6 5.4 5.9.8-4.3 4.1 1.1 5.9L12 17l-5.3 2.8 1.1-5.9L3.5 9.8l5.9-.8z"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  move: '<path d="M12 4v16M4 12h16M9 7l3-3 3 3M9 17l3 3 3-3M7 9l-3 3 3 3M17 9l3 3-3 3"/>',
+  volume: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M9 21h6"/>',
   sliders: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
   back: '<path d="M15 5 8 12l7 7"/>',
@@ -160,7 +165,12 @@ export function ridge(tall = false) {
 const reduced = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 /** A short buzz on phones that support it (Android; iPhones ignore it). */
-export function buzz(ms = 10) { try { if (!reduced()) navigator.vibrate?.(ms); } catch { /* unsupported */ } }
+export function buzz(ms = 10) {
+  if (reduced()) return;
+  // in the phone apps: a real haptic tap (a pattern means "done!", a longer tap a firmer one)
+  if (haptic(Array.isArray(ms) ? 'success' : ms >= 12 ? 'medium' : 'light')) return;
+  try { navigator.vibrate?.(ms); } catch { /* unsupported */ }
+}
 
 /** A burst of confetti in the brand colours, from the middle of `from` (or the screen). */
 export function confetti(from) {

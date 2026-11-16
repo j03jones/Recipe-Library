@@ -336,6 +336,59 @@ select t.expect('removed person''s pending submissions are gone', t.n($$ select 
 select t.expect('removed person''s Community recipe stays, still credited to them',
   (select owner_id = :'admin_id' and author_name = 'Lee' from public.recipes where title = 'Lee Shared Slaw'));
 
+-- deleting your own account: everything of theirs goes; admins and only-owners are refused
+select t.login(:'admin_id'); set role authenticated;
+select public.create_invite('student', null, 'staff', 1, 30) as quit_code \gset
+reset role;
+insert into auth.users(email, raw_user_meta_data) values ('quitter@x.test', jsonb_build_object('invite_code', :'quit_code', 'display_name', 'Quinn'));
+select id as quitter from auth.users where email='quitter@x.test' \gset
+insert into public.recipes(owner_id, scope, title, body) values (:'quitter', 'private', 'Quinn Private Pie', '{}');
+insert into public.recipes(owner_id, scope, status, title, body, author_name) values (:'quitter', 'community', 'approved', 'Quinn Shared Slaw', '{}', 'Quinn');
+set role anon;
+select t.denied('signed-out visitors cannot delete an account', $$ select public.delete_my_account() $$);
+reset role;
+select t.login(:'admin_id'); set role authenticated;
+select t.denied('the admin cannot delete their own account in the app', $$ select public.delete_my_account() $$);
+reset role;
+select t.login(:'c1'); set role authenticated;
+select t.denied('the only owner of a restaurant cannot delete their account', $$ select public.delete_my_account() $$);
+reset role;
+select t.login(:'quitter'); set role authenticated;
+select public.delete_my_account();
+reset role;
+select t.expect('a deleted account is gone', t.n(format($$ select count(*) from auth.users where id = %L $$, :'quitter')) = 0);
+select t.expect('a deleted account''s profile is gone', t.n(format($$ select count(*) from public.profiles where id = %L $$, :'quitter')) = 0);
+select t.expect('a deleted account''s recipes are all gone, Community ones too',
+  t.n($$ select count(*) from public.recipes where title like 'Quinn %' $$) = 0);
+select t.expect('other people are untouched', t.n(format($$ select count(*) from auth.users where id = %L $$, :'s1')) = 1);
+
+-- households: a shared shopping list
+select t.login(:'s1'); set role authenticated;
+select public.create_household('The Jones House') as hh_code \gset
+select t.denied('you can only be in one household', $$ select public.create_household('Second') $$);
+select public.save_household_list('{"items":[],"extras":[{"id":"x1","text":"Milk"}],"done":[]}', 5);
+reset role;
+select t.login(:'s2'); set role authenticated;
+select t.expect('outsiders cannot see a household', t.n($$ select count(*) from public.households $$) = 0);
+select t.denied('outsiders cannot save a household list', $$ select public.save_household_list('{}', 1) $$);
+select t.denied('a wrong code is refused', $$ select public.join_household('NOPE99') $$);
+select public.join_household(lower(:'hh_code'));
+select t.expect('a member sees the shared list', (select list -> 'extras' -> 0 ->> 'text' = 'Milk' from public.household_info()));
+select t.expect('a member sees who is in it', (select array_length(members, 1) = 2 from public.household_info()));
+select public.save_household_list('{"items":[],"extras":[],"done":["x1"]}', 1);
+select t.expect('saves always move the version on', (select list_at = 6 from public.household_info()));
+select public.leave_household();
+select t.expect('after leaving, the household is out of sight', t.n($$ select count(*) from public.households $$) = 0);
+reset role;
+select t.expect('the household stays while someone is in it', t.n($$ select count(*) from public.households where name = 'The Jones House' $$) = 1);
+select t.login(:'s1'); set role authenticated;
+select public.leave_household();
+reset role;
+select t.expect('the last one out removes the household', t.n($$ select count(*) from public.households where name = 'The Jones House' $$) = 0);
+set role anon;
+select t.denied('signed-out visitors cannot make a household', $$ select public.create_household('X') $$);
+reset role;
+
 -- ---- invite links and invite requests ----------------------------------------
 select t.login(:'admin_id'); set role authenticated;
 select public.create_invite('student', null, 'staff', 1, 30) as link_code \gset

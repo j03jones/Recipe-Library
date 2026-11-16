@@ -45,6 +45,7 @@ class Fake:
         self.notified = []   # admin emails about new requests
         self.open_signup = False
         self.sent = []       # emailed invites
+        self.households = {}  # id -> dict(name, code, list, list_at, members=[user ids])
 
     def add_user(self, email, pw, name, role):
         uid = str(uuid.uuid4())
@@ -347,6 +348,41 @@ class Fake:
             if body.get("request_id"):
                 self.requests[body["request_id"]]["status"] = "invited"
             return await ok({"ok": True, "code": code})
+        if path.startswith("/storage/v1/object/list/photos"):
+            return await ok([])
+        if path == "/storage/v1/object/photos" and req.method == "DELETE":
+            return await ok([])
+        if path.startswith("/rest/v1/rpc/") and "household" in path:
+            mine = next((h for h in self.households.values() if user["id"] in h["members"]), None)
+            name_of = {u["id"]: u["name"] for u in self.users.values()}
+            if path.endswith("/household_info"):
+                return await ok([] if not mine else [dict(id=mine["id"], name=mine["name"], code=mine["code"], list=mine["list"],
+                                                         list_at=mine["list_at"], members=[name_of.get(m, "Someone").split(" ")[0] for m in mine["members"]])])
+            if path.endswith("/create_household"):
+                if mine:
+                    return await ok({"message": "You are already in a household. Leave it first."}, 400)
+                hid = str(uuid.uuid4()); code = uuid.uuid4().hex[:6].upper()
+                self.households[hid] = dict(id=hid, name=body["p_name"], code=code, list={}, list_at=0, members=[user["id"]])
+                return await ok(code)
+            if path.endswith("/join_household"):
+                h = next((h for h in self.households.values() if h["code"] == body["p_code"].strip().upper()), None)
+                if not h:
+                    return await ok({"message": "No household has that code. Check it and try again."}, 400)
+                h["members"].append(user["id"])
+                return await route.fulfill(status=204, headers=CORS)
+            if path.endswith("/leave_household"):
+                if mine:
+                    mine["members"].remove(user["id"])
+                return await route.fulfill(status=204, headers=CORS)
+            if path.endswith("/save_household_list"):
+                mine["list"] = body["p_list"]; mine["list_at"] = max(mine["list_at"] + 1, body["p_at"])
+                return await route.fulfill(status=204, headers=CORS)
+        if path == "/rest/v1/rpc/delete_my_account":
+            if user["role"] == "admin":
+                return await ok({"message": "The administrator account cannot be deleted from the app."}, 400)
+            self.recipes = {k: r for k, r in self.recipes.items() if r["owner_id"] != user["id"]}
+            del self.users[user["email"]]
+            return await route.fulfill(status=204, headers=CORS)
         if path == "/rest/v1/rpc/admin_list_invites":
             return await ok([dict(code=c, kind=i["kind"], restaurant_name=(self.restaurants.get(i["restaurant_id"]) or {}).get("name"), member_role=i["member_role"],
                                   max_uses=i["max"], uses=i["uses"], expires_at=None, cancelled_at=None, created_at="2026-11-05T10:00:00Z",
@@ -369,7 +405,7 @@ class Fake:
 
 
 async def new_page(b, fake, w=390, h=844):
-    ctx = await b.new_context(viewport={"width": w, "height": h}, accept_downloads=True)
+    ctx = await b.new_context(viewport={"width": w, "height": h}, accept_downloads=True, reduced_motion="reduce")
     await ctx.route(re.compile(r"https://.*\.supabase\.co/.*"), fake.handle)
     page = await ctx.new_page()
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
@@ -798,8 +834,8 @@ async def run():
         await admin.wait_for_timeout(200)
         check("Nora Cooks list can be searched", await admin.locator(".rows a.rc").count() == 1)
         await admin.goto(URL + "#/new")
-        check("Add page offers import from a web page", await admin.locator("a:has-text('Import a recipe from a web page')").count() == 1)
-        await admin.click("a:has-text('Import a recipe from a web page')")
+        check("Add page offers import from a web page", await admin.locator("a:has-text('Import from a web page or a photo')").count() == 1)
+        await admin.click("a:has-text('Import from a web page or a photo')")
         await admin.fill("input[aria-label='Recipe page address']", "example.com/test-lentil-soup/")
         await admin.click("button:has-text('Get recipe')")
         await admin.wait_for_selector("h1:has-text('Check and save')")
@@ -1172,6 +1208,47 @@ async def run():
         await admin.wait_for_selector("text=add_clients.sql")
         check("a database without the client section is explained", True)
         fake.no_clients = False
+        # ---- a shopping list shared with the household
+        await admin.goto(URL + "#/shop")
+        await admin.click(".household summary")
+        await admin.click("button:has-text('Start a household')")
+        await admin.wait_for_selector(".household .code")
+        code = (await admin.inner_text(".household .code")).strip()
+        check("starting a household shows its join code", len(code) == 6)
+        await admin.fill(".addextra input", "Oat milk"); await admin.click(".addextra button")
+        await admin.wait_for_timeout(1200)
+        await o.goto(URL + "#/shop")
+        await o.click(".household summary")
+        await o.fill("input[aria-label='Household code']", code.lower())
+        await o.click("button:has-text('Join a household')")
+        await o.wait_for_selector(".household .code")
+        check("joining shows the shared list", "Oat milk" in await o.inner_text("ul.shoplist"))
+        check("joining shows who's in it", "Shared with" in await o.inner_text(".sharednote"))
+        await o.click("ul.shoplist li:has-text('Oat milk') .tick")
+        await o.wait_for_timeout(1200)
+        await admin.goto(URL + "#/plan"); await admin.goto(URL + "#/shop")
+        await admin.wait_for_timeout(1500)
+        check("a tick on one phone shows on the other", await admin.get_attribute("ul.shoplist li:has-text('Oat milk') .tick", "aria-pressed") == "true")
+        await admin.click("button:has-text('Leave')")
+        await admin.click("dialog[open] button:has-text('Leave')")
+        await admin.wait_for_timeout(500)
+        check("leaving stops the sharing", await admin.locator(".household summary").count() == 1)
+
+        # ---- deleting your own account
+        await o.goto(URL + "#/settings")
+        await o.click("details.dangerzone summary")
+        await o.click("details.dangerzone button:has-text('Delete my account')")
+        await o.wait_for_selector("dialog[open]")
+        check("deleting an account asks first", "can’t be undone" in await o.inner_text("dialog[open]"))
+        await o.click("dialog[open] button:has-text('Delete account')")
+        check("deleting an account says it is done", "Account deleted" in await close_dialog(o))
+        check("the account is gone from the server", "val@example.com" not in fake.users)
+        await o.wait_for_selector("button[role=tab]:has-text('Sign in')")
+        check("after deleting, the app is signed out", True)
+        await admin.goto(URL + "#/settings")
+        await admin.wait_for_selector("text=Sign out")
+        check("the admin has no delete-account button", await admin.locator("details.dangerzone").count() == 0)
+        await octx.close()
 
         # desktop screenshot of admin
         await admin.set_viewport_size({"width": 1280, "height": 900})

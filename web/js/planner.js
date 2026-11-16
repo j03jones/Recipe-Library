@@ -82,6 +82,18 @@ export function removeAt(date, index) {
   return save(plan);
 }
 
+/** Moves the entry at `index` on `from` to the end of `to` (dragging a meal to another day). */
+export function move(from, index, to) {
+  const plan = load();
+  const entry = plan.days[from]?.[index];
+  if (!entry || !isDate(to)) return false;
+  if (from === to) return true;
+  plan.days[from].splice(index, 1);
+  if (!plan.days[from].length) delete plan.days[from];
+  (plan.days[to] ||= []).push(entry);
+  return save(plan);
+}
+
 export function clearDates(dates) {
   const plan = load();
   for (const d of dates) delete plan.days[d];
