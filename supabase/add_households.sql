@@ -37,6 +37,8 @@ create policy households_member_read on public.households for select to authenti
 drop policy if exists household_members_read on public.household_members;
 create policy household_members_read on public.household_members for select to authenticated using (household_id = public.my_household());
 -- no insert/update/delete policies: everything goes through the functions below
+revoke all on public.households, public.household_members from anon;
+grant select on public.households, public.household_members to authenticated;
 
 -- Make a household with you in it. Returns its join code.
 create or replace function public.create_household(p_name text) returns text
