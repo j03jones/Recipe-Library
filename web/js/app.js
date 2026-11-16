@@ -7,6 +7,7 @@ import * as planner from './planner.js';
 import * as pantry from './pantry.js';
 import * as collections from './collections.js';
 import * as cooklog from './cooklog.js';
+import { tidyDirections } from './dirtidy.js';
 import * as prices from './prices.js';
 import { priceBook, recipeCosting } from './costui.js';
 import { transferPage } from './transferui.js';
@@ -746,9 +747,9 @@ function viewList(starredOnly = false) {
 /** An ingredient line as shown: no footnote stars or trailing marks ("Brown sugar*", "Raisins **", "Yeast:"),
  *  and not SHOUTED ("1 cup BUTTER" -> "1 cup butter"). The recipe itself is left as it was written. */
 function shownIng(ing) {
-  let t = formatIngredient(ing).replace(/[*#®™]+/g, ' ').replace(/\s{2,}/g, ' ').replace(/[\s:=~_^|]+$/, '').trim();
-  if (/[A-Z]{3}/.test(t) && !/[a-z]{2}/.test(t)) t = t.toLowerCase();
-  return t;
+  // the name alone decides SHOUTING ("3 oz PEPPERONI": the unit is lower case, the name isn't)
+  const item = /[A-Z]{3}/.test(ing.item || '') && !/[a-z]{2}/.test(ing.item || '') ? ing.item.toLowerCase() : ing.item;
+  return formatIngredient({ ...ing, item }).replace(/[*#®™]+/g, ' ').replace(/\s{2,}/g, ' ').replace(/[\s:=~_^|]+$/, '').trim();
 }
 
 function stepUses(step, recipe, big = false) {
@@ -955,6 +956,14 @@ function viewRecipe(id, preset = null) {
     setFactor(factorForServings(r, Frac.parse(String(next))), null);
   };
 
+  // library recipes are shown without their mailing-list sign-offs, CAPITALS and "500 DEG F" (dirtidy.js);
+  // your own and Community recipes exactly as written
+  const tidy = isLibrary(r) && !shared;
+  function method(s) {
+    if (!tidy) return { steps: splitSteps(s.dir), credits: [] };
+    const t = tidyDirections(s.dir);
+    return { steps: splitSteps(t.text), credits: hasSource(r) || isAdapted(r) ? [] : t.credits };
+  }
   function paint() {
     const { recipe: s, warnings } = shown();
     for (const [f, b] of presets) b.setAttribute('aria-pressed', String(f.eq(factor)));
@@ -965,7 +974,7 @@ function viewRecipe(id, preset = null) {
       g.items.push(ing);
     }
     const y = formatYield(s);
-    const steps = splitSteps(s.dir);
+    const { steps, credits } = method(s);
     fill(ingBox,
       h('div', { class: 'facts' },
         y && h('span', null, h('strong', null, 'Makes '), y),
@@ -984,6 +993,7 @@ function viewRecipe(id, preset = null) {
         } }, steps.map((l, n) => h('li', null,
           tick([h('span', { class: 'n' }, n + 1), h('span', { class: 'what' }, l, stepUses(l, s))]), timerChips(l))))
         : steps.length === 1 && h('div', { class: 'dir' }, h('p', null, steps[0]), timerChips(steps[0])),
+      credits.length > 0 && h('p', { class: 'muted small methodsource' }, `Source: ${credits.join('; ')}`),
       warnings.length > 0 && h('p', { class: 'note' }, warnings.join(' ')));
     cc.paint();
   }
@@ -1007,7 +1017,7 @@ function viewRecipe(id, preset = null) {
   // one step at a time, big text, swipe or tap to move on
   function cookMode() {
     const s = shown().recipe;
-    const steps = splitSteps(s.dir);
+    const { steps } = method(s);
     if (!steps.length) return;
     let i = 0;
     const wasAwake = awake;

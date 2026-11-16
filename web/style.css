@@ -829,3 +829,5 @@ li.swipe > * { position: relative; z-index: 1; }
 .household { margin-top: 1.4rem; }
 .household summary { cursor: pointer; font-weight: 700; min-height: var(--tap); display: flex; align-items: center; }
 .household .code { font-family: var(--display); letter-spacing: .12em; font-size: 1.3rem; }
+
+.methodsource { margin-top: 1.2rem; }

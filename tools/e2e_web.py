@@ -302,6 +302,16 @@ async def run():
         moved_to = await page.get_attribute(".planday:has(.planitem)", "data-date")
         check("a meal can be dragged to another day", moved_to != first_day and moved_to == await target.get_attribute("data-date"), f"{first_day} -> {moved_to}")
 
+        # ---- library methods without mailing-list sign-offs, CAPITALS or "250 deg F"
+        await page.goto(URL + "#/r/c447fab046"); await page.wait_for_selector("ol.steps, .dir")
+        method = await page.inner_text("#app")
+        check("a library method drops its sign-off and keeps the source as a credit",
+              "Posted by" not in method and "Source: A Taste of Quebec by Julian Armstrong" in await page.inner_text(".methodsource")
+              and "250°F" in method, method[-300:])
+        await page.goto(URL + "#/r/91b2d98d77"); await page.wait_for_selector(".rhead h1:has-text('Pizza Deluxe')")
+        check("a recipe written in CAPITALS reads in normal sentences", "Cook ground round and drain" in await page.inner_text("#app"))
+        check("and its ingredients aren't shouted either", "3 oz pepperoni" in await page.inner_text("ul.ing"))
+
         # ---- hands-free cook mode
         await page.goto(URL + "#/r/6cd1288901")
         await page.wait_for_selector(".cookbtn")
