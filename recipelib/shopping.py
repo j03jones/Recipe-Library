@@ -111,12 +111,74 @@ class ShoppingLine:
         return f"{self.name}: {' + '.join(parts)}" if parts else self.name
 
 
+# words in front of the thing you buy that only say how it's prepared or measured ("freshly ground pepper",
+# "large eggs", "can kidney beans"). "Fresh", "dried", "ground", "crushed" and "shredded" stay: they change what you buy.
+_LEAD = set((
+    "freshly finely coarsely roughly thinly chopped minced diced sliced grated cooked melted softened "
+    "beaten sifted packed firmly lightly loosely cold warm lukewarm boiling chilled peeled seeded cubed shelled rinsed drained "
+    "trimmed halved quartered large medium small extra-large jumbo can cans jar jars package packages pkg pkgs box boxes "
+    "envelope envelopes bottle of a an about approx approximately heaping level scant generous good quality good-quality best optional "
+    "coarsley halves half pieces piece slices slice strips chunks cubes sprigs sprig stalks stalk ribs rib cloves clove heads head "
+    "bunch bunches leaves handful pinch dash stick sticks squares square ears ear wedges").split(" "))
+# ...and after it ("pinto beans drained", "butter softened")
+_TRAIL = set((
+    "drained rinsed chopped minced diced sliced grated melted softened beaten sifted divided optional peeled "
+    "seeded cubed halved quartered trimmed cooked thawed shredded crumbled cut at room temperature to taste for garnish").split(" "))
+_KEEP_CAPS = {"BBQ", "MSG"}
+_EDGE = r"[\s:=+~_^`|<>!?\[\](){}\"&@%/;,.-]"
+
+
+def _is_caps(w: str) -> bool:
+    return bool(re.fullmatch(r"[A-Z][A-Z&'-]{2,}", w)) and w not in _KEEP_CAPS
+
+
+def _has_lower(words) -> bool:
+    return any(re.search(r"[a-z]", w) for w in words)
+
+
+def tidy_name(name: str) -> str:
+    """An ingredient name tidied for a shopping list: no brand names ("EDEN", "Eagle Brand"), no "freshly" or
+    "large" in front, no footnote stars or stray marks, and not SHOUTED. Same rules as shopping.js."""
+    s = re.sub(r"[*#\u00ae\u2122]+", " ", name)
+    s = re.sub(r"\s+-\s*(and|or|plus)\b.*$", "", s, flags=re.I)              # "flour -AND"
+    s = re.sub(r"\s+(OR|AND|PLUS)\b-?(\s.*)?$", "", s)                         # "vinegar OR- ..."
+    s = re.sub(r"\s+or\s+.*$", "", s, flags=re.I)                              # "butter or margarine": the first choice
+    s = re.sub(r"\b[A-Za-z0-9_'-]+(?:\s+[A-Za-z0-9_'-]+)?\s+brand\b", " ", s, flags=re.I)   # "Eagle Brand"
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(rf"^{_EDGE}+|{_EDGE}+$", "", s)
+    words = [w for w in s.split(" ") if w]
+    while True:   # leading preparation words and SHOUTED brand names, while something is left
+        if len(words) > 1 and words[0].lower() in _LEAD:
+            words = words[1:]
+            continue
+        if len(words) > 1 and _is_caps(words[0]) and _has_lower(words[1:]):
+            words = words[1:]
+            continue
+        break
+    while True:   # and at the end: "drained", "DISSOLVED IN"
+        last = words[-1] if words else ""
+        if len(words) > 1 and last.lower() in _TRAIL:
+            words = words[:-1]
+            continue
+        if len(words) > 1 and _is_caps(re.sub(r"[^A-Za-z&'-]", "", last) or "x") and _has_lower(words[:-1]):
+            words = words[:-1]
+            continue
+        if len(words) > 1 and re.fullmatch(r"(in|of|and|with|for|to)", last, flags=re.I):
+            words = words[:-1]
+            continue
+        break
+    s = " ".join(words)
+    if s and not re.search(r"[a-z]", s):
+        s = s.lower()                                                         # "BUTTER" -> "butter"
+    return s   # the list capitalises names when it shows them
+
+
 def item_name(item: str) -> str:
     """'Onions; finely chopped' -> 'Onions' (the part you buy, without the preparation)."""
     item = re.sub(r"^\s*(\([^)]*\)\s*)+", "", item) or item   # "(10 oz) raspberries" -> "raspberries"
     name = re.split(r"[;,(]", item, maxsplit=1)[0]
-    name = re.sub(r"\s+", " ", name).strip(" .-")
-    return name or re.sub(r"\s+", " ", item).strip()
+    name = tidy_name(re.sub(r"\s+", " ", name).strip(" .-"))
+    return name or tidy_name(re.sub(r"\s+", " ", item).strip())   # nothing but marks ("****"): no name, so not on the list
 
 
 def item_key(item: str) -> str:

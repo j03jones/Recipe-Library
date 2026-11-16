@@ -104,3 +104,20 @@ export function labelFor(meal, client, madeOn) {
     lines, allergens: a.length ? `Contains: ${a.join(', ')}` : 'No major allergens listed', macros,
   };
 }
+
+/**
+ * Where a restaurant's plan stands, the same way the database decides it (supabase/add_restaurant_trials.sql):
+ * { on, trial, ends (Date|null), daysLeft (whole days, rounded up), ended }. A trial with no end date stays on.
+ */
+export function restaurantPlan(r, now = new Date()) {
+  const status = r?.subscription_status || 'inactive';
+  const ends = status === 'trialing' && r?.trial_ends_at ? new Date(r.trial_ends_at) : null;
+  const ended = !!ends && ends <= now;
+  return {
+    on: status === 'active' || (status === 'trialing' && !ended),
+    trial: status === 'trialing',
+    ends,
+    daysLeft: ends && !ended ? Math.ceil((ends - now) / 86400000) : 0,
+    ended,
+  };
+}

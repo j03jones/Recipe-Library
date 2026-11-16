@@ -24,7 +24,9 @@ PORT = 8791
 URL = f"http://127.0.0.1:{PORT}/"
 errors, results = [], []
 # how many recipes the app should show: the built-in set, plus the on-demand set once its index has loaded
-CORE = len(json.loads((ROOT / "web" / "data" / "recipes.json").read_text(encoding="utf-8"))["recipes"])
+# (built-in recipes tagged needs-work by tools/clean_library.mjs aren't listed)
+CORE = sum(1 for r in json.loads((ROOT / "web" / "data" / "recipes.json").read_text(encoding="utf-8"))["recipes"]
+           if not {"needs-work", "duplicate"} & set(r[8] if len(r) > 8 else []))
 _more = ROOT / "web" / "data" / "more.json"
 MORE = json.loads(_more.read_text(encoding="utf-8")) if _more.exists() else {"v": "", "count": 0}
 TOTAL = f"{CORE + MORE['count']:,}"
@@ -301,6 +303,16 @@ async def run():
         await page.wait_for_timeout(300)
         moved_to = await page.get_attribute(".planday:has(.planitem)", "data-date")
         check("a meal can be dragged to another day", moved_to != first_day and moved_to == await target.get_attribute("data-date"), f"{first_day} -> {moved_to}")
+
+        # ---- library methods without mailing-list sign-offs, CAPITALS or "250 deg F"
+        await page.goto(URL + "#/r/c447fab046"); await page.wait_for_selector("ol.steps, .dir")
+        method = await page.inner_text("#app")
+        check("a library method drops its sign-off and keeps the source as a credit",
+              "Posted by" not in method and "Source: A Taste of Quebec by Julian Armstrong" in await page.inner_text(".methodsource")
+              and "250°F" in method, method[-300:])
+        await page.goto(URL + "#/r/91b2d98d77"); await page.wait_for_selector(".rhead h1:has-text('Pizza Deluxe')")
+        check("a recipe written in CAPITALS reads in normal sentences", "Cook ground round and drain" in await page.inner_text("#app"))
+        check("and its ingredients aren't shouted either", "3 oz pepperoni" in await page.inner_text("ul.ing"))
 
         # ---- hands-free cook mode
         await page.goto(URL + "#/r/6cd1288901")
@@ -619,6 +631,18 @@ async def run():
         await page.click("button:has-text('Read pasted text')")
         await page.wait_for_selector(".foundlist")
         check("pasted text is read and listed before anything is added", await page.locator(".foundlist li:has-text('Wild Rice Soup')").count() == 1)
+        # a table copied from a web page or Word, pasted: its cells arrive as columns, not as stray ingredients
+        await page.evaluate("""() => { const t = document.querySelector('.transfer textarea'); t.value = ''; t.focus();
+          const dt = new DataTransfer();
+          dt.setData('text/html', '<h2>Brisket Rub</h2><table><tr><th>Ingredient</th><th>Measurement</th></tr><tr><td>Paprika</td><td>2 Tbsp</td></tr><tr><td>Brown sugar</td><td>1/4 cup</td></tr></table><p>Instructions</p><p>Mix and rub on the brisket the night before.</p><h2>Slaw</h2><p>Ingredients</p><p>1 head cabbage</p><p>Directions</p><p>Shred it.</p>');
+          dt.setData('text/plain', 'Brisket Rub Ingredient Measurement Paprika 2 Tbsp');
+          t.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); }""")
+        check("a pasted table keeps its columns", "Paprika\t2 Tbsp" in await page.input_value(".transfer textarea"))
+        await page.click("button:has-text('Read pasted text')")
+        await page.wait_for_selector(".foundlist li:has-text('Slaw')")
+        check("several pasted recipes become one each, the table's two rows as ingredients",
+              await page.locator(".foundlist li").all_inner_texts() == [" Brisket Rub 2 ingredients", " Slaw 1 ingredient"],
+              await page.locator(".foundlist li").all_inner_texts())
         cook = Path(tempfile.mkdtemp()) / "pan-toast.cook"
         cook.write_text(">> servings: 2\nToast @bread{2%slices} with @butter{1%Tbsp}.\n")
         await page.set_input_files(".transfer input[type=file]", str(cook))

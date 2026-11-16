@@ -76,6 +76,19 @@ update public.restaurants set subscription_status='canceled' where id=:'r1';
 select t.login(:'c1'); set role authenticated;
 select t.expect('lapsed subscription hides the collection again', t.n($$ select count(*) from public.recipes where scope='restaurant' $$) = 0);
 reset role;
+-- trials (add_restaurant_trials.sql): shown until the end date, then hidden again, nothing deleted
+update public.restaurants set subscription_status='trialing', trial_ends_at = now() + interval '14 days' where id=:'r1';
+select t.login(:'c1'); set role authenticated;
+select t.expect('a restaurant on a trial sees its collection', t.n($$ select count(*) from public.recipes where title='Alpha House Gumbo' $$) = 1);
+select t.expect('and its staff count as paid during the trial', public.is_paid(auth.uid()));
+reset role;
+update public.restaurants set trial_ends_at = now() - interval '1 minute' where id=:'r1';
+select t.login(:'c1'); set role authenticated;
+select t.expect('an ended trial hides the collection', t.n($$ select count(*) from public.recipes where scope='restaurant' $$) = 0);
+select t.expect('and its staff are back on the free plan', not public.is_paid(auth.uid()));
+reset role;
+select t.expect('an ended trial deletes nothing', t.n($$ select count(*) from public.recipes where title='Alpha House Gumbo' $$) = 1);
+update public.restaurants set subscription_status='canceled', trial_ends_at = null where id=:'r1';
 
 -- ---- private recipes and the free limit ---------------------------------------
 update public.app_settings set free_recipe_limit = 2;

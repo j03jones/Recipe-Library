@@ -8,7 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 SCRIPT = r"""
-import { importFile, toPaprika, toSchemaJson, toMarkdown, fromCooklang, fromPlainText, writeZip, readZip, crc32 } from './web/js/transfer.js';
+import { importFile, toPaprika, toSchemaJson, toMarkdown, fromCooklang, fromPlainText, splitRecipes, docxToText, writeZip, readZip, crc32 } from './web/js/transfer.js';
+import { linesFromItems } from './web/js/pdfread.js';
 import { formatIngredient, formatYield } from './web/js/units.js';
 const bytes = (o) => new TextEncoder().encode(typeof o === 'string' ? o : JSON.stringify(o));
 const shape = (r) => ({ title: r.title, yield: formatYield(r), ings: r.ings.map((i) => (i.group ? `${i.group}: ` : '') + formatIngredient(i)),
@@ -50,6 +51,36 @@ for (const [k, n, b] of [['empty', 'e.txt', bytes('')], ['backup', 'b.json', byt
   try { await importFile(n, b); errs[k] = 'no error'; } catch (e) { errs[k] = e.message; }
 }
 out.errs = errs;
+// ingredient tables, as pasted from a web page or Word (cells separated by tabs) or written in Markdown
+out.table = shape(fromPlainText(`Chicken Stock\nYield: 2 gallons\nIngredient\tMeasurement\nChicken bones\t5 lb\nWater\t2 gal\nBay leaves\t3\nInstructions\nRoast the bones until browned.\nCover with water and simmer 4 hours.`));
+out.tableCols = shape(fromPlainText(`Biscuits\nIngredients\tAmount\tUnit\tNotes\nAll-purpose flour\t2\tcups\tsifted\nButter\t6\tTbsp\tcold\nButtermilk\t3/4\tcup\t\nCut the butter into the flour until it looks like coarse meal.\nBake at 450°F for 12 minutes.`));
+out.tableNoHead = shape(fromPlainText(`Rub\n2 Tbsp\tpaprika\nkosher salt\t1 tsp\nMix and store.`));
+out.markdown = shape(fromPlainText(`Salsa\n| Amount | Ingredient |\n|---|---|\n| 4 | tomatoes, diced |\n| 1/2 cup | onion |\nMix and chill.`));
+out.numbered = shape(fromPlainText(`Pancakes\nIngredients\n1 cup flour\n2 eggs\n1. Whisk everything together until smooth.\n2. Cook on a hot griddle.`));
+// several recipes in one text
+const book = `My Cookbook\n\nTomato Soup\nServes 4\nA warm soup for winter days, simple and quick.\nIngredients\n4 tomatoes\n1 onion\nDirections\nSimmer everything.\nBlend until smooth\n\nGarlic Bread\nIngredients\n1 baguette\n2 cloves garlic\nDirections\nToast it.\n\nBrisket Rub\nIngredient\tAmount\nPaprika\t2 Tbsp\nSalt\t1 Tbsp\nMix.`;
+out.split = splitRecipes(book).map((t) => t.split('\n')[0]);
+out.splitOne = splitRecipes(`Toast\nIngredients\n2 slices bread\nDirections\nToast it.`).length;
+out.splitPages = splitRecipes(`Soup\n1 onion\nSimmer.\n\fBread\n1 cup flour\nBake.`).map((t) => t.split('\n')[0]);
+const many = await importFile('pasted.txt', bytes(book));
+out.many = many.recipes.map(shape);
+// a Word document: paragraphs, an ingredient table, a page break, a second recipe
+const p = (t, extra = '') => `<w:p>${extra}<w:r><w:t xml:space="preserve">${t}</w:t></w:r></w:p>`;
+const row = (...cells) => `<w:tr>${cells.map((c) => `<w:tc><w:p><w:r><w:t>${c}</w:t></w:r></w:p></w:tc>`).join('')}</w:tr>`;
+const xml = `<?xml version="1.0"?><w:document><w:body>${p('Cajun Shrimp &amp; Grits')}${p('Serves 4')}
+<w:tbl>${row('Ingredient', 'Quantity')}${row('Shrimp, peeled', '1 lb')}${row('Stone-ground grits', '1 cup')}</w:tbl>
+${p('Method')}${p('Cook the grits slowly, stirring often.')}${p('Sear the shrimp and spoon over the grits.')}
+<w:p><w:r><w:br w:type="page"/></w:r></w:p>${p('Hush Puppies')}${p('Ingredients')}${p('1 cup cornmeal')}${p('1 egg')}${p('Directions')}${p('Fry by the spoonful at 350°F.')}</w:body></w:document>`;
+out.docxText = docxToText(xml);
+const docx = writeZip([{ name: '[Content_Types].xml', data: bytes('<Types/>') }, { name: 'word/document.xml', data: bytes(xml) }]);
+const w = await importFile('Family recipes.docx', docx);
+out.docx = { kind: w.kind, recipes: w.recipes.map(shape) };
+try { await importFile('old.doc', bytes('x')); out.doc = 'no error'; } catch (e) { out.doc = e.message; }
+// a PDF page's text items (what pdf.js gives) back into lines, with table columns as tabs
+const item = (str, x, y, size = 12) => ({ str, transform: [size, 0, 0, size, x, y], width: str.length * size * 0.5 });
+out.pdfLines = linesFromItems([item('Corn Bread', 72, 700, 18), item('Ingredient', 72, 660), item('Amount', 300, 660),
+  item('Cornmeal', 72, 645), item('1 cup', 300, 645), item('Buttermilk', 72, 630), item('1', 300, 630), item('cup', 309, 630),
+  item('Bake at 425°F for', 72, 590), item('20 minutes.', 179, 590)]);
 console.log(JSON.stringify(out));
 """
 
@@ -115,6 +146,47 @@ class TransferTests(unittest.TestCase):
         self.assertIn("No recipe", e["empty"])
         self.assertIn("backup", e["backup"])
         self.assertNotEqual(e["badzip"], "no error")
+
+
+    def test_ingredient_tables(self):
+        t = self.o["table"]
+        self.assertEqual((t["title"], t["yield"]), ("Chicken Stock", "2 gallons"))
+        self.assertEqual(t["ings"], ["5 lb Chicken bones", "2 gallons Water", "3 Bay leaves"])   # no "Measurement" ingredient
+        self.assertEqual(t["steps"], 2)
+        c = self.o["tableCols"]
+        self.assertEqual(c["ings"], ["2 cups All-purpose flour, sifted", "6 Tbsp Butter, cold", "3/4 cup Buttermilk"])
+        self.assertEqual(c["steps"], 2)                       # the method after the table, with no heading
+        self.assertEqual(self.o["tableNoHead"]["ings"], ["2 Tbsp paprika", "1 tsp kosher salt"])
+        self.assertEqual(self.o["tableNoHead"]["steps"], 1)
+        self.assertEqual(self.o["markdown"]["ings"], ["4 tomatoes, diced", "1/2 cup onion"])
+        self.assertEqual(self.o["markdown"]["steps"], 1)
+        self.assertEqual(self.o["numbered"]["ings"], ["1 cup flour", "2 eggs"])
+        self.assertEqual(self.o["numbered"]["steps"], 2)
+
+    def test_several_recipes_in_one_text(self):
+        self.assertEqual(self.o["split"], ["Tomato Soup", "Garlic Bread", "Brisket Rub"])
+        self.assertEqual(self.o["splitOne"], 1)
+        self.assertEqual(self.o["splitPages"], ["Soup", "Bread"])
+        soup, bread, rub = self.o["many"]
+        self.assertEqual((soup["title"], soup["yield"], soup["ings"], soup["steps"]), ("Tomato Soup", "4 servings", ["4 tomatoes", "1 onion"], 3))   # its description leads the method
+        self.assertEqual((bread["title"], bread["ings"]), ("Garlic Bread", ["1 baguette", "2 cloves garlic"]))
+        self.assertEqual((rub["title"], rub["ings"], rub["steps"]), ("Brisket Rub", ["2 Tbsp Paprika", "1 Tbsp Salt"], 1))
+
+    def test_word_documents(self):
+        self.assertIn("Ingredient\tQuantity\nShrimp, peeled\t1 lb", self.o["docxText"])
+        self.assertIn("\f", self.o["docxText"])
+        w = self.o["docx"]
+        self.assertEqual(w["kind"], "Word")
+        shrimp, pups = w["recipes"]
+        self.assertEqual((shrimp["title"], shrimp["yield"]), ("Cajun Shrimp & Grits", "4 servings"))
+        self.assertEqual(shrimp["ings"], ["1 lb Shrimp, peeled", "1 cup Stone-ground grits"])
+        self.assertEqual(shrimp["steps"], 2)
+        self.assertEqual((pups["title"], pups["ings"], pups["steps"]), ("Hush Puppies", ["1 cup cornmeal", "1 egg"], 1))
+        self.assertIn(".docx", self.o["doc"])
+
+    def test_pdf_text_items_become_lines_and_columns(self):
+        self.assertEqual(self.o["pdfLines"].split("\n"),
+                         ["Corn Bread", "", "Ingredient\tAmount", "Cornmeal\t1 cup", "Buttermilk\t1 cup", "", "Bake at 425°F for 20 minutes."])
 
 
 if __name__ == "__main__":

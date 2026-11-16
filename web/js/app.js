@@ -7,6 +7,7 @@ import * as planner from './planner.js';
 import * as pantry from './pantry.js';
 import * as collections from './collections.js';
 import * as cooklog from './cooklog.js';
+import { tidyDirections } from './dirtidy.js';
 import * as prices from './prices.js';
 import { priceBook, recipeCosting } from './costui.js';
 import { transferPage } from './transferui.js';
@@ -471,6 +472,9 @@ function rebuild() {
   }
   lib.byId = map;
   for (const r of map.values()) {
+    // built-in recipes the clean-up found broken (no ingredients or no method): not listed, still open from a link
+    // (and spare copies of the same recipe: tools/polish_library.py)
+    if (r.source === 'base' && (r.tags?.includes('needs-work') || r.tags?.includes('duplicate'))) r.hidden = true;
     // worked out from the recipe's own text (estimated: the old archive recipes don't say); kept on the object
     if (r._mins === undefined || r._dirSeen !== r.dir) { r._mins = estimateMinutes(r); r._veg = !!dietOf(r)?.vegetarian; r._dirSeen = r.dir; }
     r._sort ??= sortKey(r.title);
@@ -743,10 +747,18 @@ function viewList(starredOnly = false) {
 }
 
 /** The amounts a step needs, shown right under it ("1 lb flour · 1 tsp salt"), at the scale on screen. */
+/** An ingredient line as shown: no footnote stars or trailing marks ("Brown sugar*", "Raisins **", "Yeast:"),
+ *  and not SHOUTED ("1 cup BUTTER" -> "1 cup butter"). The recipe itself is left as it was written. */
+function shownIng(ing) {
+  // the name alone decides SHOUTING ("3 oz PEPPERONI": the unit is lower case, the name isn't)
+  const item = /[A-Z]{3}/.test(ing.item || '') && !/[a-z]{2}/.test(ing.item || '') ? ing.item.toLowerCase() : ing.item;
+  return formatIngredient({ ...ing, item }).replace(/[*#®™]+/g, ' ').replace(/\s{2,}/g, ' ').replace(/[\s:=~_^|]+$/, '').trim();
+}
+
 function stepUses(step, recipe, big = false) {
   const idx = ingredientsIn(step, recipe.ings);
   if (!idx.length) return null;
-  return h('span', { class: big ? 'uses big' : 'uses' }, idx.slice(0, 8).map((i) => h('span', null, formatIngredient(recipe.ings[i]))));
+  return h('span', { class: big ? 'uses big' : 'uses' }, idx.slice(0, 8).map((i) => h('span', null, shownIng(recipe.ings[i]))));
 }
 
 function amountSplit(text) {
@@ -947,6 +959,14 @@ function viewRecipe(id, preset = null) {
     setFactor(factorForServings(r, Frac.parse(String(next))), null);
   };
 
+  // library recipes are shown without their mailing-list sign-offs, CAPITALS and "500 DEG F" (dirtidy.js);
+  // your own and Community recipes exactly as written
+  const tidy = isLibrary(r) && !shared;
+  function method(s) {
+    if (!tidy) return { steps: splitSteps(s.dir), credits: [] };
+    const t = tidyDirections(s.dir);
+    return { steps: splitSteps(t.text), credits: hasSource(r) || isAdapted(r) ? [] : t.credits };
+  }
   function paint() {
     const { recipe: s, warnings } = shown();
     for (const [f, b] of presets) b.setAttribute('aria-pressed', String(f.eq(factor)));
@@ -957,7 +977,7 @@ function viewRecipe(id, preset = null) {
       g.items.push(ing);
     }
     const y = formatYield(s);
-    const steps = splitSteps(s.dir);
+    const { steps, credits } = method(s);
     fill(ingBox,
       h('div', { class: 'facts' },
         y && h('span', null, h('strong', null, 'Makes '), y),
@@ -965,7 +985,7 @@ function viewRecipe(id, preset = null) {
       s.ings.length > 0 && h('h2', null, 'Ingredients'),
       groups.map((g) => [g.name && h('h3', null, g.name),
         h('ul', { class: 'ing' }, g.items.map((i) => h('li', null,
-          tick([h('span', { class: 'box' }, icon('check', { size: 16 })), h('span', { class: 'what' }, amountSplit(formatIngredient(i)))]))))]));
+          tick([h('span', { class: 'box' }, icon('check', { size: 16 })), h('span', { class: 'what' }, amountSplit(shownIng(i)))]))))]));
     fill(dirBox,
       steps.length > 0 && h('h2', null, 'Method'),
       steps.length > 0 && h('button', { class: 'cookbtn', type: 'button', onclick: cookMode }, icon('play', { size: 20 }), 'Start cook mode'),
@@ -976,6 +996,7 @@ function viewRecipe(id, preset = null) {
         } }, steps.map((l, n) => h('li', null,
           tick([h('span', { class: 'n' }, n + 1), h('span', { class: 'what' }, l, stepUses(l, s))]), timerChips(l))))
         : steps.length === 1 && h('div', { class: 'dir' }, h('p', null, steps[0]), timerChips(steps[0])),
+      credits.length > 0 && h('p', { class: 'muted small methodsource' }, `Source: ${credits.join('; ')}`),
       warnings.length > 0 && h('p', { class: 'note' }, warnings.join(' ')));
     cc.paint();
   }
@@ -999,7 +1020,7 @@ function viewRecipe(id, preset = null) {
   // one step at a time, big text, swipe or tap to move on
   function cookMode() {
     const s = shown().recipe;
-    const steps = splitSteps(s.dir);
+    const { steps } = method(s);
     if (!steps.length) return;
     let i = 0;
     const wasAwake = awake;
@@ -1046,7 +1067,7 @@ function viewRecipe(id, preset = null) {
       if (sheet) { sheet.remove(); sheet = null; return; }
       sheet = h('div', { class: 'cook-sheet' },
         h('h2', null, 'Ingredients'),
-        h('ul', null, s.ings.map((ing) => h('li', null, amountSplit(formatIngredient(ing))))),
+        h('ul', null, s.ings.map((ing) => h('li', null, amountSplit(shownIng(ing))))),
         h('button', { class: 'primary', type: 'button', style: 'margin-top:1.2rem;width:100%', onclick: () => { sheet.remove(); sheet = null; } }, 'Back to the step'));
       overlay.append(sheet);
     } }, icon('list'));

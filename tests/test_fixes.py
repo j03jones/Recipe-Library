@@ -167,7 +167,7 @@ class ShoppingList(unittest.TestCase):
         text = shopping.to_text(shopping.combine(self.recipes()))
         self.assertEqual(text.splitlines(), [
             "[ ] Butter: 1 1/2 lb", "[ ] Flour: 1 1/4 cups + 500 g", "[ ] Onions: 3", "[ ] Parsley: 2-3 Tbsp",
-            "[ ] Pepper to taste", "[ ] Salt: 1 Tbsp", "[ ] Tomatoes: 1 can"])
+            "[ ] Pepper", "[ ] Salt: 1 Tbsp", "[ ] Tomatoes: 1 can"])
 
     def test_scaled_and_sources(self):
         a, b = self.recipes()

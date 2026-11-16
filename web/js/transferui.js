@@ -14,14 +14,50 @@ function download(h, blob, name) {
  * h, fill, toast: the app's helpers. add(recipes) saves them and resolves to how many were saved.
  * mine() and starred() return recipes in the working shape for export.
  */
+/** Copied HTML as text: one line per paragraph or list item, table rows as tab-separated cells. */
+export function htmlToText(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const BLOCK = /^(P|DIV|LI|H[1-6]|TR|BR|SECTION|ARTICLE|BLOCKQUOTE|PRE|UL|OL|TABLE|THEAD|TBODY|DT|DD)$/;
+  let out = '';
+  const walk = (node) => {
+    for (const n of node.childNodes) {
+      if (n.nodeType === 3) { out += n.nodeValue.replace(/\s+/g, ' '); continue; }
+      if (n.nodeType !== 1 || /^(SCRIPT|STYLE|HEAD|TITLE)$/.test(n.tagName)) continue;
+      if (n.tagName === 'TD' || n.tagName === 'TH') {
+        const cell = n.textContent.replace(/\s+/g, ' ').trim();
+        out += (/[^\n]$/.test(out) && n.previousElementSibling ? '\t' : '') + cell;
+        continue;
+      }
+      if (BLOCK.test(n.tagName) && out && !out.endsWith('\n')) out += '\n';
+      walk(n);
+      if (BLOCK.test(n.tagName) && !out.endsWith('\n')) out += '\n';
+    }
+  };
+  walk(doc.body);
+  return out.split('\n').map((l) => l.replace(/[ \u00a0]+/g, ' ').replace(/ ?\t ?/g, '\t').trim()).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 export function transferPage({ h, fill, toast, add, mine, starred, signedIn }) {
   const root = h('div', { class: 'transfer stack' });
   let found = [];                       // [{ r, on }]
   const files = h('input', { type: 'file', multiple: true, hidden: true,
-    accept: '.paprikarecipes,.zip,.json,.jsonld,.cook,.html,.htm,.txt,.md,text/plain,application/json,application/zip' });
-  const paste = h('textarea', { class: 'full', rows: 6, placeholder: 'Or paste a recipe here: the title on the first line, then Ingredients and Directions.', 'aria-label': 'Paste a recipe' });
+    accept: '.paprikarecipes,.zip,.json,.jsonld,.cook,.html,.htm,.txt,.md,.docx,.pdf,text/plain,application/json,application/zip,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  const paste = h('textarea', { class: 'full', rows: 6, placeholder: 'Or paste recipes here: the title on the first line, then Ingredients (a list or a table) and Directions. Several recipes at once is fine.', 'aria-label': 'Paste a recipe' });
   const status = h('p', { class: 'muted small', role: 'status' });
   const found$ = h('div', { class: 'stack' });
+
+  // a table copied from a web page or Word: take the copied formatting, so each row arrives as cells
+  // ("Flour<tab>2 cups") that the importer can read, instead of whatever the plain-text copy made of it
+  paste.addEventListener('paste', (e) => {
+    const html = e.clipboardData?.getData('text/html') || '';
+    if (!/<table[\s>]/i.test(html)) return;
+    const t = htmlToText(html);
+    if (!t.trim()) return;
+    e.preventDefault();
+    const { selectionStart: a, selectionEnd: b, value } = paste;
+    paste.value = value.slice(0, a) + t + value.slice(b);
+    paste.selectionStart = paste.selectionEnd = a + t.length;
+  });
 
   function showFound() {
     if (!found.length) { fill(found$); return; }
@@ -85,7 +121,7 @@ export function transferPage({ h, fill, toast, add, mine, starred, signedIn }) {
   fill(root,
     h('section', { class: 'card stack' },
       h('h2', null, 'Bring recipes in'),
-      h('p', { class: 'muted' }, 'Choose a file you exported from Paprika (.paprikarecipes), Mealie or Tandoor (.json or .zip), a Cooklang file (.cook), a saved web page, or any text file. You see what was found before anything is added.'),
+      h('p', { class: 'muted' }, 'Choose a Word document (.docx) or PDF, a file you exported from Paprika (.paprikarecipes), Mealie or Tandoor (.json or .zip), a Cooklang file (.cook), a saved web page, or any text file. A document with several recipes becomes one recipe each, and ingredient tables are read column by column. You see what was found before anything is added.'),
       h('div', { class: 'row grow' }, h('button', { class: 'primary', type: 'button', onclick: () => files.click() }, 'Choose files'), files),
       paste, h('div', { class: 'row grow' }, readPaste),
       status, found$),
