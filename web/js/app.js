@@ -743,10 +743,18 @@ function viewList(starredOnly = false) {
 }
 
 /** The amounts a step needs, shown right under it ("1 lb flour · 1 tsp salt"), at the scale on screen. */
+/** An ingredient line as shown: no footnote stars or trailing marks ("Brown sugar*", "Raisins **", "Yeast:"),
+ *  and not SHOUTED ("1 cup BUTTER" -> "1 cup butter"). The recipe itself is left as it was written. */
+function shownIng(ing) {
+  let t = formatIngredient(ing).replace(/[*#®™]+/g, ' ').replace(/\s{2,}/g, ' ').replace(/[\s:=~_^|]+$/, '').trim();
+  if (/[A-Z]{3}/.test(t) && !/[a-z]{2}/.test(t)) t = t.toLowerCase();
+  return t;
+}
+
 function stepUses(step, recipe, big = false) {
   const idx = ingredientsIn(step, recipe.ings);
   if (!idx.length) return null;
-  return h('span', { class: big ? 'uses big' : 'uses' }, idx.slice(0, 8).map((i) => h('span', null, formatIngredient(recipe.ings[i]))));
+  return h('span', { class: big ? 'uses big' : 'uses' }, idx.slice(0, 8).map((i) => h('span', null, shownIng(recipe.ings[i]))));
 }
 
 function amountSplit(text) {
@@ -965,7 +973,7 @@ function viewRecipe(id, preset = null) {
       s.ings.length > 0 && h('h2', null, 'Ingredients'),
       groups.map((g) => [g.name && h('h3', null, g.name),
         h('ul', { class: 'ing' }, g.items.map((i) => h('li', null,
-          tick([h('span', { class: 'box' }, icon('check', { size: 16 })), h('span', { class: 'what' }, amountSplit(formatIngredient(i)))]))))]));
+          tick([h('span', { class: 'box' }, icon('check', { size: 16 })), h('span', { class: 'what' }, amountSplit(shownIng(i)))]))))]));
     fill(dirBox,
       steps.length > 0 && h('h2', null, 'Method'),
       steps.length > 0 && h('button', { class: 'cookbtn', type: 'button', onclick: cookMode }, icon('play', { size: 20 }), 'Start cook mode'),
@@ -1046,7 +1054,7 @@ function viewRecipe(id, preset = null) {
       if (sheet) { sheet.remove(); sheet = null; return; }
       sheet = h('div', { class: 'cook-sheet' },
         h('h2', null, 'Ingredients'),
-        h('ul', null, s.ings.map((ing) => h('li', null, amountSplit(formatIngredient(ing))))),
+        h('ul', null, s.ings.map((ing) => h('li', null, amountSplit(shownIng(ing))))),
         h('button', { class: 'primary', type: 'button', style: 'margin-top:1.2rem;width:100%', onclick: () => { sheet.remove(); sheet = null; } }, 'Back to the step'));
       overlay.append(sheet);
     } }, icon('list'));

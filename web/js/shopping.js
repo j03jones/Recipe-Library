@@ -18,11 +18,52 @@ const FAMILY_ORDER = ['', 'volume', 'weight', 'metric volume', 'metric weight'];
 
 const squash = (s) => s.replace(/\s+/g, ' ');
 
+// words in front of the thing you buy that only say how it's prepared or measured ("freshly ground pepper",
+// "large eggs", "can kidney beans"). "Fresh", "dried", "ground", "crushed" and "shredded" stay: they change what you buy.
+const LEAD = new Set(('freshly finely coarsely roughly thinly chopped minced diced sliced grated cooked melted softened '
+  + 'beaten sifted packed firmly lightly loosely cold warm lukewarm boiling chilled peeled seeded cubed shelled rinsed drained '
+  + 'trimmed halved quartered large medium small extra-large jumbo can cans jar jars package packages pkg pkgs box boxes '
+  + 'envelope envelopes bottle of a an about approx approximately heaping level scant generous good quality good-quality best optional '
+  + 'coarsley halves half pieces piece slices slice strips chunks cubes sprigs sprig stalks stalk ribs rib cloves clove heads head '
+  + 'bunch bunches leaves handful pinch dash stick sticks squares square ears ear wedges').split(' '));
+// ...and after it ("pinto beans drained", "butter softened")
+const TRAIL = new Set(('drained rinsed chopped minced diced sliced grated melted softened beaten sifted divided optional peeled '
+  + 'seeded cubed halved quartered trimmed cooked thawed shredded crumbled cut at room temperature to taste for garnish').split(' '));
+const KEEP_CAPS = new Set(['BBQ', 'MSG']);
+const isCaps = (w) => /^[A-Z][A-Z&'-]{2,}$/.test(w) && !KEEP_CAPS.has(w);
+
+/** An ingredient name tidied for a shopping list: no brand names ("EDEN", "Eagle Brand"), no "freshly" or
+ *  "large" in front, no footnote stars or stray marks, and not SHOUTED. Same rules as shopping.py. */
+export function tidyName(name) {
+  let s = name.replace(/[*#®™]+/g, ' ');
+  s = s.replace(/\s+-\s*(and|or|plus)\b.*$/i, '').replace(/\s+(OR|AND|PLUS)\b-?(\s.*)?$/, '');   // "flour -AND", "vinegar OR- ..."
+  s = s.replace(/\s+or\s+.*$/i, '');                                                  // "butter or margarine": the first choice
+  s = s.replace(/\b[A-Za-z0-9_'-]+(?:\s+[A-Za-z0-9_'-]+)?\s+brand\b/gi, ' ');                      // "Eagle Brand", "JELL-O Brand"
+  s = squash(s).replace(/^[\s:=+~_^`|<>!?[\](){}"&@%/;,.-]+|[\s:=+~_^`|<>!?[\](){}"&@%/;,.-]+$/g, '');
+  let words = s.split(' ').filter(Boolean);
+  const hasLower = (ws) => ws.some((w) => /[a-z]/.test(w));
+  for (;;) {   // leading preparation words and SHOUTED brand names, while something is left
+    if (words.length > 1 && LEAD.has(words[0].toLowerCase())) { words = words.slice(1); continue; }
+    if (words.length > 1 && isCaps(words[0]) && hasLower(words.slice(1))) { words = words.slice(1); continue; }
+    break;
+  }
+  for (;;) {   // and at the end: "drained", "DISSOLVED IN"
+    const last = words[words.length - 1] || '';
+    if (words.length > 1 && TRAIL.has(last.toLowerCase())) { words = words.slice(0, -1); continue; }
+    if (words.length > 1 && isCaps(last.replace(/[^A-Za-z&'-]/g, '') || 'x') && hasLower(words.slice(0, -1))) { words = words.slice(0, -1); continue; }
+    if (words.length > 1 && /^(in|of|and|with|for|to)$/i.test(last)) { words = words.slice(0, -1); continue; }
+    break;
+  }
+  s = words.join(' ');
+  if (s && !/[a-z]/.test(s)) s = s.toLowerCase();                                    // "BUTTER" -> "butter"
+  return s;   // the list capitalises names when it shows them
+}
+
 /** 'Onions; finely chopped' -> 'Onions' (the part you buy, without the preparation). */
 export function itemName(item) {
   item = item.replace(/^\s*(\([^)]*\)\s*)+/, '') || item;   // "(10 oz) raspberries" -> "raspberries"
-  const name = squash(item.split(/[;,(]/)[0]).replace(/^[ .-]+|[ .-]+$/g, '');
-  return name || squash(item).trim();
+  const name = tidyName(squash(item.split(/[;,(]/)[0]).replace(/^[ .-]+|[ .-]+$/g, ''));
+  return name || tidyName(squash(item).trim());   // nothing but marks ("****"): no name, so not on the list
 }
 
 /** Lower-case name with simple plurals folded, so 'Onion' and 'onions' share a line. */
