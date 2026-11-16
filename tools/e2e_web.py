@@ -26,7 +26,7 @@ errors, results = [], []
 # how many recipes the app should show: the built-in set, plus the on-demand set once its index has loaded
 # (built-in recipes tagged needs-work by tools/clean_library.mjs aren't listed)
 CORE = sum(1 for r in json.loads((ROOT / "web" / "data" / "recipes.json").read_text(encoding="utf-8"))["recipes"]
-           if "needs-work" not in (r[8] if len(r) > 8 else []))
+           if not {"needs-work", "duplicate"} & set(r[8] if len(r) > 8 else []))
 _more = ROOT / "web" / "data" / "more.json"
 MORE = json.loads(_more.read_text(encoding="utf-8")) if _more.exists() else {"v": "", "count": 0}
 TOTAL = f"{CORE + MORE['count']:,}"

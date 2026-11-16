@@ -107,7 +107,7 @@ function main() {
   const out = path.join(DATA, 'more', version);
   fs.rmSync(path.join(DATA, 'more'), { recursive: true, force: true });
   fs.mkdirSync(out, { recursive: true });
-  const listed = more.filter((r) => !r[8].includes(NEEDS_WORK));
+  const listed = more.filter((r) => !r[8].includes(NEEDS_WORK) && !r[8].includes('duplicate'));   // copies: tools/polish_library.py
   fs.writeFileSync(path.join(out, 'index.json'), dump({ v: version, recipes: listed.map(indexRow) }));
   const shards = new Map();
   for (const row of more) {

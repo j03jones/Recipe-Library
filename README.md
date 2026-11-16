@@ -216,6 +216,16 @@ lists (headings like "For the sauce:" become groups, "Or 3 stalks celery" joins 
 ranges are mended, empty lines go) and tags recipes with no ingredients or no method `needs-work`, which
 keeps them out of lists and search. `--dry-run` only counts.
 
+And polish it (also safe to run again):
+
+    python3 tools/polish_library.py
+
+It hides spare copies of the same recipe (the duplicate finder's "same" and "probably the same"; the
+built-in copy with the most telling title is kept and gets the copies' labels), tidies titles ("#2",
+"**", "<T>", "W/"), fixes common misspellings and words glued together by old line wrapping, joins
+ingredient lines that were the wrapped end of the line above, and files "Uncategorized" recipes from
+their title or main ingredient. `--dry-run --examples` shows what it would do.
+
 ## What can I make? and collections (v0.15)
 
 - **What can I make?** (on the Recipes page) Type what is in your kitchen. You get the recipes you can
