@@ -46,6 +46,20 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## A tidier Admin tools, and previewing a restaurant's portal (v0.28)
+
+Admin tools is now four tabs, each one screen, remembered on this device (`#/admin/restaurants`, `/people`,
+`/invites`, `/community`). A count on Invites and Community says when something is waiting.
+- **Restaurants:** one folding card per restaurant (name, plan, how many recipes), with the plan, logins, trial
+  buttons, collection and **View their portal ↗**; *+ Add a restaurant* folds away at the bottom.
+- **View their portal** opens `jonesridgekitchen.com/my-meals/?preview=<restaurant>`: the admin sees that
+  restaurant's page exactly as its team does (its recipes, the trial's days left, or the paused message), marked
+  Preview. Sign in there once with the admin account. For anyone else the link is just their own page.
+- **People:** one line each (initials, name, email, role), opening for the details and Remove; search by name or
+  email; Students / Restaurant staff / Everyone with counts.
+- **Invites:** invite requests, Invite someone, invite codes (folded) and the sign-up switch.
+- **Community:** recipes waiting for approval.
+
 ## Restaurant trials, a cleaner library, and Word and PDF imports (v0.27)
 
 **Restaurant accounts on a free trial** (Admin tools > Restaurants). *Add a restaurant* takes its name, a plan

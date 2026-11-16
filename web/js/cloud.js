@@ -232,6 +232,8 @@ export async function saveStars(ids) {
 export const reviewRecipe = (id, approve, note) => authed(`/rest/v1/recipes?id=eq.${enc(id)}`, {
   method: 'PATCH', body: { status: approve ? 'approved' : 'declined', review_note: note || null } });
 export const listRestaurants = () => authed('/rest/v1/restaurants?select=*&order=name');
+/** One restaurant, or null (the admin, or its members, can read it). */
+export const getRestaurant = async (id) => (await authed(`/rest/v1/restaurants?id=eq.${enc(id)}&select=*`))[0] || null;
 export async function createRestaurant(name, seatLimit = 3, fields = {}) {
   const [row] = await authed('/rest/v1/restaurants', {
     method: 'POST', headers: { Prefer: 'return=representation' }, body: { name, seat_limit: seatLimit, ...fields } })
