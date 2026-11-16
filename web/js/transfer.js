@@ -263,6 +263,12 @@ const NAME_COL = /^(ingredients?|items?|products?|foods?|names?|descriptions?)$/
 const AMOUNT_COL = /^(amounts?|quantity|quantities|qty\.?|measures?|measurements?|measuring|weights?|volumes?|units?|uom|us|metric|imperial|portions?|sizes?)$/i;
 const NOTE_COL = /^(notes?|prep(aration)?|comments?|remarks?|how prepared|preparation notes?)$/i;
 const SKIP_COL = /^(costs?|prices?|unit costs?|extensions?|totals?|bakers?\W*%|%|yield %|\$)$/i;
+// recipe books often give one amount per batch size: "Full Recipe | Unit | Half Recipe | Unit | Double Recipe | Unit"
+const UNIT_COL = /^(units?|uom|unit of measure)$/i;
+const BATCH = String.raw`(?:\s+(?:recipe|batch|amount|amt\.?|qty\.?|quantity|yield))?`;
+const MAIN_BATCH_COL = new RegExp(`^(?:full|base|single|original|standard|regular|whole|1\\s*[x×]|[x×]\\s*1|one)${BATCH}$`, 'i');
+const OTHER_BATCH_COL = new RegExp(`^(?:half|double|triple|quadruple|quarter|[2-9]\\s*[x×]|[x×]\\s*[2-9]|½|1/2|two|three)${BATCH}$`, 'i');
+const isHeaderCell = (c) => NAME_COL.test(c) || AMOUNT_COL.test(c) || NOTE_COL.test(c) || SKIP_COL.test(c) || MAIN_BATCH_COL.test(c) || OTHER_BATCH_COL.test(c);
 const isTabbed = (line) => line.includes('\t') || (line.match(/\|/g) || []).length >= 2;
 const cellsOf = (line) => line.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split(/\t+|\s*\|\s*/).map((c) => text(c));
 const isRule = (cells) => cells.every((c) => !c || /^:?-{2,}:?$/.test(c));           // Markdown's |---|---|
@@ -272,13 +278,22 @@ const isAmountCell = (c) => QTY.test(c) || canonicalUnit(c.replace(/\.$/, '')) !
 /** A table header row's columns, or null: { name, amount: [..], note: [..] } (indexes into the row's cells). */
 function headerColumns(cells) {
   const filled = cells.map((c, n) => [c, n]).filter(([c]) => c);
-  if (filled.length < 2 || !filled.every(([c]) => NAME_COL.test(c) || AMOUNT_COL.test(c) || NOTE_COL.test(c) || SKIP_COL.test(c))) return null;
+  if (filled.length < 2 || !filled.every(([c]) => isHeaderCell(c))) return null;
+  // columns of amounts in groups: an amount column and the Unit column after it. With several batch sizes
+  // (Full / Half / Double) only the main one is read; the app scales recipes itself.
+  const groups = [];
   const cols = { name: -1, amount: [], note: [] };
   for (const [c, n] of filled) {
     if (NAME_COL.test(c) && cols.name < 0) cols.name = n;
-    else if (AMOUNT_COL.test(c)) cols.amount.push(n);
+    else if (UNIT_COL.test(c) && groups.length && groups[groups.length - 1].cols.length === 1) groups[groups.length - 1].cols.push(n);
+    else if (MAIN_BATCH_COL.test(c)) groups.push({ main: true, cols: [n] });
+    else if (OTHER_BATCH_COL.test(c)) groups.push({ other: true, cols: [n] });
+    else if (AMOUNT_COL.test(c)) groups.push({ cols: [n] });
     else if (NOTE_COL.test(c)) cols.note.push(n);
   }
+  const batches = groups.some((g) => g.main || g.other);
+  const chosen = batches ? [groups.find((g) => g.main) || groups.find((g) => !g.other) || groups[0]].filter(Boolean) : groups;
+  cols.amount = chosen.flatMap((g) => g.cols);
   return cols.name >= 0 || cols.amount.length ? cols : null;
 }
 
@@ -298,6 +313,7 @@ function rowToLine(cells, cols) {
       else notes.push(c);
     }
   }
+  amount = amount.filter((c, n) => c.toLowerCase() !== (amount[n - 1] || '').toLowerCase());   // "As needed | As needed"
   return [amount.join(' '), name].filter(Boolean).join(' ') + (notes.length ? `, ${notes.join(', ')}` : '');
 }
 
@@ -356,6 +372,9 @@ export function fromPlainText(source) {
 }
 
 // ----------------------------------------------------------------------------------------- several recipes in one
+/** A contents-page line: a name, dot leaders, a page number ("Comeback Sauce…...8", "Crema………. 9"). */
+const TOC_LINE = /^\s*\S.{0,90}?(?:[.…·_]\s*){3,}\s*\d{1,4}\s*$/;
+const SECTION_LINE = /^\f?\s*section:\s*(\S.*)$/i;
 const META_LINE = /^(serves|servings|yield|yields|makes|serving size|portions?|prep(aration)? time|cook(ing)? time|total time|time|category|categories|course|cuisine|source|from|by|author|difficulty|level)\b/i;
 /** An "Ingredients" heading, or an ingredient table's header row: where a recipe's list begins. */
 const startsIngredients = (line) => {
@@ -370,8 +389,22 @@ const startsIngredients = (line) => {
  * Text with one recipe comes back unchanged.
  */
 export function splitRecipes(source) {
-  const all = String(source || '').replace(/\r/g, '');
-  const lines = all.split('\n');
+  // a book's contents pages ("Avocado Cream……… 1") are left out, and "Section: Sauces" lines (from a Word
+  // file's big headings) become the category of each recipe after them
+  const lines = [], sectionOf = [];
+  let section = '';
+  for (const raw of String(source || '').replace(/\r/g, '').split('\n')) {
+    const sm = SECTION_LINE.exec(raw);
+    if (sm) { section = text(sm[1]); if (raw.startsWith('\f')) { lines.push('\f'); sectionOf.push(section); } continue; }
+    if (TOC_LINE.test(raw.replace(/\t+/g, ' '))) continue;
+    lines.push(raw); sectionOf.push(section);
+  }
+  const all = lines.join('\n');
+  const withSection = (piece, at) => {
+    if (!sectionOf[at]) return piece;
+    const [first, ...rest] = piece.split('\n');
+    return [first, `Category: ${sectionOf[at]}`, ...rest].join('\n');
+  };
   const anchors = lines.map((l, n) => (startsIngredients(l) ? n : -1)).filter((n) => n >= 0);
   if (anchors.length >= 2) {
     const starts = [];
@@ -387,10 +420,16 @@ export function splitRecipes(source) {
       starts.push(t < 0 ? a : t);
       floor = a + 1;
     }
-    const pieces = starts.map((st, n) => lines.slice(st, starts[n + 1] ?? lines.length).join('\n').replace(/\f/g, '\n').trim());
+    const pieces = starts.map((st, n) => withSection(lines.slice(st, starts[n + 1] ?? lines.length).join('\n').replace(/\f/g, '\n').trim(), st));
     if (pieces.every((p) => p)) return pieces;
   }
-  const pages = all.split('\f').map((p) => p.trim()).filter((p) => p.split('\n').filter((l) => l.trim()).length >= 3);
+  const pages = [];
+  let at = 0;
+  for (const page of all.split('\f')) {
+    const first = at + page.split('\n').findIndex((l) => l.trim());
+    if (page.split('\n').filter((l) => l.trim()).length >= 3) pages.push(withSection(page.trim(), Math.max(at, first)));
+    at += page.split('\n').length - 1;
+  }
   return pages.length >= 2 ? pages : [all.replace(/\f/g, '\n').trim()];
 }
 
@@ -412,10 +451,17 @@ function paraText(xml) {
   return out;
 }
 
-/** The text of a Word document: paragraphs as lines, table rows as tab-separated cells, page breaks as \f. */
+/** A paragraph's type size in half-points (the first sized run, or its paragraph mark), 0 when it doesn't say. */
+const sizeOf = (xml) => +((xml.match(/<w:r[\s>][\s\S]*?<w:sz w:val="(\d+)"/) || xml.match(/<w:sz w:val="(\d+)"/) || [])[1] || 0);
+
+/**
+ * The text of a Word document: paragraphs as lines, table rows as tab-separated cells, page and section breaks
+ * as \f. When the document uses two sizes of heading (a book's "Sauces" over each recipe's "Avocado Cream"), the
+ * bigger, rarer one comes out as "Section: Sauces" so each recipe under it can be filed there.
+ */
 export function docxToText(xml) {
   const body = (xml.match(/<w:body>([\s\S]*)<\/w:body>/) || [, xml])[1];
-  const out = [];
+  const blocks = [];
   const re = /<w:tbl>([\s\S]*?)<\/w:tbl>|<w:p(?:\s[^>]*)?>([\s\S]*?)<\/w:p>|<w:p(?:\s[^>]*)?\/>/g;
   let m;
   while ((m = re.exec(body))) {
@@ -423,11 +469,29 @@ export function docxToText(xml) {
       for (const row of m[1].match(/<w:tr[\s>][\s\S]*?<\/w:tr>/g) || []) {
         const cells = (row.match(/<w:tc[\s>][\s\S]*?<\/w:tc>/g) || [])
           .map((c) => (c.match(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g) || []).map((p) => paraText(p).replace(/[\t\n\f]+/g, ' ').trim()).filter(Boolean).join(' '));
-        out.push(cells.join('\t'));
+        blocks.push({ text: cells.join('\t') });
       }
-      out.push('');
-    } else out.push(m[2] != null ? paraText(m[2]) : '');
+      blocks.push({ text: '' });
+    } else {
+      const p = m[2] || '';
+      const t = paraText(p);
+      blocks.push({ text: t, size: sizeOf(p), short: !!t.trim() && t.trim().length <= 60 && !/\t/.test(t) });
+      if (/<w:sectPr[\s>]/.test(p)) blocks.push({ text: '\f' });          // the end of a section starts a new page
+    }
   }
+  // heading sizes: bigger than most of the text; the biggest is a section heading when a smaller heading size
+  // is used more often (the recipe titles)
+  // (text with no size of its own is the document's normal size, counted as 0)
+  const all = new Map(), short = new Map();
+  for (const b of blocks) {
+    if (b.size == null || !b.text.trim()) continue;
+    all.set(b.size, (all.get(b.size) || 0) + b.text.length);
+    if (b.short) short.set(b.size, (short.get(b.size) || 0) + 1);
+  }
+  const normal = [...all].sort((a, b) => b[1] - a[1])[0]?.[0] || 0;
+  const heads = [...short].filter(([sz]) => sz > normal).sort((a, b) => b[0] - a[0]);
+  const section = heads.length >= 2 && heads[0][1] < heads[1][1] ? heads[0][0] : 0;
+  const out = blocks.map((b) => (section && b.short && b.size === section ? `\fSection: ${b.text.trim()}` : b.text));
   return out.join('\n').replace(/\n{3,}/g, '\n\n');
 }
 

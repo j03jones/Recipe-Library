@@ -73,6 +73,11 @@ SHOUTING. How to run the tools again is under *The on-demand library* below.
   one recipe each, split at each recipe's ingredients (or at page breaks). You see the list and untick any before
   they are added. PDFs are read on the device with pdf.js, fetched the first time; scanned PDFs have no text, so use
   *Scan a printed recipe* for those. Older .doc files: save as .docx first.
+- **Recipe books** (v0.27.1). A Word book laid out like a kitchen's recipe binder imports as one recipe each: its
+  contents pages are skipped, Word section breaks count as page breaks, tables with an amount per batch size
+  ("Full Recipe | Unit | Half Recipe | Unit | Double Recipe | Unit") use the Full amounts (the app scales recipes
+  itself), and the book's big section headings ("Sauces", "Proteins") become each recipe's category. An empty
+  template page is skipped.
 
 
 For the chef. On a menu, each dish shows its recipes as a row of chips under

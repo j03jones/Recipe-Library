@@ -76,6 +76,23 @@ const docx = writeZip([{ name: '[Content_Types].xml', data: bytes('<Types/>') },
 const w = await importFile('Family recipes.docx', docx);
 out.docx = { kind: w.kind, recipes: w.recipes.map(shape) };
 try { await importFile('old.doc', bytes('x')); out.doc = 'no error'; } catch (e) { out.doc = e.message; }
+// a recipe book laid out like a restaurant's (Word): a blank template page, a contents page, big section headings,
+// recipe titles in a smaller heading size, "Full Recipe | Unit | Half Recipe | Unit | Double Recipe | Unit" tables,
+// and Word section breaks between recipes
+const sz = (t, size) => `<w:p><w:pPr><w:rPr><w:b/><w:sz w:val="${size}"/></w:rPr></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="${size}"/></w:rPr><w:t>${t}</w:t></w:r></w:p>`;
+const brk = '<w:p><w:pPr><w:sectPr><w:type w:val="nextPage"/></w:sectPr></w:pPr></w:p>';
+const batch = row('Ingredient', 'Full Recipe', 'Unit', 'Half Recipe', 'Unit', 'Double Recipe', 'Unit');
+const bookXml = `<w:document><w:body>${sz('Recipe Template', 36)}<w:tbl>${batch}${row('', '', '', '', '', '', '')}</w:tbl>${sz('Procedure', 32)}${brk}
+${sz('Sauces', 48)}${p('Buffalo Sauce………………. 1')}${p('Crema…...2')}${brk}
+${sz('Buffalo Sauce', 36)}<w:tbl>${batch}${row('Butter', '1', 'lbs', '1/2', 'lbs', '2', 'lbs')}${row('Pan Spray', 'As Needed', 'As Needed', 'As Needed', 'As Needed', 'As Needed', 'As Needed')}</w:tbl>
+${sz('Procedure', 32)}${p('Melt butter on low heat.')}${p('Whisk in the hot sauce.')}${brk}
+${sz('Crema', 36)}<w:tbl>${row('Ingredient', 'Full Recipe', 'Unit', 'Double Recipe', 'Unit')}${row('Sour Cream', '5', 'lbs', '10', 'lbs')}${row('Lime Juice', '1/2', 'Cup', '1', 'Cup')}</w:tbl>
+${sz('Procedure', 32)}${p('Whisk together.')}${brk}
+${sz('Proteins', 48)}${p('Carnitas…….. 3')}${brk}
+${sz('Carnitas', 36)}<w:tbl>${batch}${row('Pork Butt', '8', 'lbs', '4', 'lbs', '16', 'lbs')}</w:tbl>${sz('Procedure', 32)}${p('Braise for four hours.')}
+</w:body></w:document>`;
+const book2 = await importFile('Native Recipe Book.docx', writeZip([{ name: 'word/document.xml', data: bytes(bookXml) }]));
+out.recipeBook = { skipped: book2.skipped, recipes: book2.recipes.map(shape) };
 // a PDF page's text items (what pdf.js gives) back into lines, with table columns as tabs
 const item = (str, x, y, size = 12) => ({ str, transform: [size, 0, 0, size, x, y], width: str.length * size * 0.5 });
 out.pdfLines = linesFromItems([item('Corn Bread', 72, 700, 18), item('Ingredient', 72, 660), item('Amount', 300, 660),
@@ -183,6 +200,16 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(shrimp["steps"], 2)
         self.assertEqual((pups["title"], pups["ings"], pups["steps"]), ("Hush Puppies", ["1 cup cornmeal", "1 egg"], 1))
         self.assertIn(".docx", self.o["doc"])
+
+    def test_a_recipe_book_in_word(self):
+        b = self.o["recipeBook"]
+        self.assertEqual([r["title"] for r in b["recipes"]], ["Buffalo Sauce", "Crema", "Carnitas"])   # not the contents or template
+        self.assertEqual(b["skipped"], 1)                                                               # the blank template
+        buffalo, crema, carnitas = b["recipes"]
+        self.assertEqual(buffalo["ings"], ["1 lb Butter", "As Needed Pan Spray"])     # the Full Recipe column only
+        self.assertEqual((buffalo["steps"], buffalo["cats"]), (2, ["Sauces"]))         # the section it is in
+        self.assertEqual((crema["ings"], crema["cats"]), (["5 lb Sour Cream", "1/2 cup Lime Juice"], ["Sauces"]))
+        self.assertEqual((carnitas["ings"], carnitas["cats"], carnitas["steps"]), (["8 lb Pork Butt"], ["Proteins"], 1))
 
     def test_pdf_text_items_become_lines_and_columns(self):
         self.assertEqual(self.o["pdfLines"].split("\n"),
