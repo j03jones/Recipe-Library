@@ -46,6 +46,24 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Restaurant kitchens: their own recipes, costing and help (v0.29)
+
+A restaurant's page on jonesridgekitchen.com/my-meals/ is now its kitchen, in tabs (`web/portal/kitchen.js`):
+- **Recipes:** everything in the collection, searchable, by category, and *Everyone's / From Jones Ridge Kitchen /
+  Ours*. **+ Add a recipe** (name, categories, makes, ingredients one per line with "Sauce:" groups or a pasted
+  table, method). The team's recipes are marked **Ours**: staff can change or delete the ones they added, owners any
+  the team added. **Recipes you add can't be changed or deleted by the restaurant**; they can *Make our own version*
+  instead. Each recipe shows its allergens (from the ingredient names) and its food cost.
+- **Costing:** one shared price book per restaurant. Open a recipe to price each ingredient (per lb, quart, each...);
+  a price is used in every recipe with that ingredient. Portions per batch, menu price, food cost % (red above the
+  target) and the menu price for the target food cost. The overview lists every recipe.
+- **Help:** a message to Joseph by topic, sent through the website's contact form from the signed-in email (Reply
+  answers them), or a ready email where that form isn't available.
+- **Team** (owners): invite staff.
+In Admin tools, recipes a restaurant added are tagged *Theirs* in its collection; you can still take any out.
+The database enforces all of it: `supabase/add_restaurant_kitchen.sql` (team recipes while the plan is on, the
+chef's read-only to them, a 2,000-recipe cap per restaurant, the `restaurant_kitchen` price book).
+
 ## A tidier Admin tools, and previewing a restaurant's portal (v0.28)
 
 Admin tools is now four tabs, each one screen, remembered on this device (`#/admin/restaurants`, `/people`,

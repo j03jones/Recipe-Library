@@ -252,6 +252,18 @@ export const updateRestaurant = (id, fields) => authed(`/rest/v1/restaurants?id=
   .catch((err) => { throw trialError(err); });
 /** The admin puts a copy of a recipe into a restaurant's collection (the copy is the restaurant's from then on). */
 export const addToCollection = (record, restaurantId) => createRecipe(record, { scope: 'restaurant', restaurant_id: restaurantId, status: 'approved' });
+/** Delete one of a restaurant team's recipes (the database refuses the chef's, and other people's for staff). */
+export async function deleteKitchenRecipe(id) {
+  const rows = await authed(`/rest/v1/recipes?id=eq.${enc(id)}`, { method: 'DELETE', headers: { Prefer: 'return=representation' } });
+  if (!rows || !rows.length) throw new CloudError('That recipe can’t be deleted from here.', 403);
+}
+/** A restaurant's shared price book (supabase/add_restaurant_kitchen.sql), or {} when there is none yet. */
+export async function loadKitchen(restaurantId) {
+  const [row] = await authed(`/rest/v1/restaurant_kitchen?restaurant_id=eq.${enc(restaurantId)}&select=prices`);
+  return row?.prices || {};
+}
+export const saveKitchen = (restaurantId, prices) => authed('/rest/v1/restaurant_kitchen', {
+  method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: { restaurant_id: restaurantId, prices } });
 export const createInvite = (kind, restaurantId = null, memberRole = 'staff', maxUses = 1, days = 14) =>
   authed('/rest/v1/rpc/create_invite', { method: 'POST', body: { p_kind: kind, p_restaurant: restaurantId, p_member_role: memberRole, p_max_uses: maxUses, p_days: days } });
 export const removeMember = (restaurantId, userId) =>

@@ -103,3 +103,58 @@
 /* the admin's preview of a restaurant's page */
 #jrk-portal .jrk-preview { background: #fff4d6; border: 1px solid #e8c766; border-radius: 8px; padding: .6rem .8rem; margin: 0 0 1rem; color: #4a3a0a; }
 #jrk-portal .jrk-preview a { color: inherit; font-weight: 600; }
+
+/* A restaurant's kitchen (kitchen.js): tabs, team recipes, the editor, costing */
+#jrk-portal h2.jrk-kitchen { margin: .2rem 0 .3rem; }
+#jrk-portal .jrk-subnav { display: flex; gap: .2rem; flex-wrap: wrap; border-bottom: 1px solid var(--jrk-line); margin: .4rem 0 1.1rem; }
+#jrk-portal .jrk-subnav a { padding: .55rem .8rem .5rem; font-weight: 600; text-decoration: none; color: var(--jrk-muted); border-bottom: 3px solid transparent; margin-bottom: -1px; }
+#jrk-portal .jrk-subnav a[aria-current=page] { color: var(--jrk-ridge); border-bottom-color: var(--jrk-clay); }
+#jrk-portal .jrk-actions { margin: 0 0 .6rem; }
+#jrk-portal .jrk-tag { display: inline-block; margin-left: .5rem; padding: .05rem .45rem; border-radius: 999px; background: var(--jrk-soft); border: 1px solid var(--jrk-line);
+  font-size: .72rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--jrk-ridge); vertical-align: .1rem; }
+#jrk-portal .jrk-facts { margin-top: 1.4rem; padding-top: .8rem; border-top: 1px solid var(--jrk-line); }
+#jrk-portal .jrk-facts p { margin: .4rem 0; }
+#jrk-portal .btn.danger, .jrk-dialog .btn.danger { background: #8a2a12; border-color: #8a2a12; color: #fff; }
+#jrk-portal .btn.line.danger { background: transparent; color: #8a2a12; }
+#jrk-portal .jrk-editor textarea, #jrk-portal .jrk-card .field input, #jrk-portal .jrk-card .field select, #jrk-portal .jrk-card .field textarea,
+#jrk-portal .jrk-summary input, #jrk-portal .jrk-target input, #jrk-portal .jrk-pricein input, #jrk-portal .jrk-pricein select, #jrk-portal .jrk-prices input {
+  font: inherit; padding: .6rem .7rem; border: 1px solid #aeb7b1; border-radius: 6px; background: #fff; box-sizing: border-box; max-width: 100%; }
+#jrk-portal .jrk-editor textarea, #jrk-portal .jrk-card .field textarea { width: 100%; line-height: 1.5; }
+#jrk-portal .jrk-card .field { margin-bottom: .9rem; }
+#jrk-portal .field .hint { font-weight: 400; color: var(--jrk-muted); font-size: .9rem; }
+#jrk-portal .jrk-target { flex: 0 0 auto; font-weight: 600; }
+#jrk-portal .jrk-target input { width: 4.5rem; }
+#jrk-portal .jrk-tablewrap { overflow-x: auto; margin: .8rem 0 1.2rem; }
+#jrk-portal table.jrk-cost { width: 100%; border-collapse: collapse; font-size: .95rem; }
+#jrk-portal table.jrk-cost th, #jrk-portal table.jrk-cost td { text-align: left; padding: .55rem .5rem; border-bottom: 1px solid var(--jrk-line); vertical-align: top; }
+#jrk-portal table.jrk-cost thead th { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--jrk-muted); white-space: nowrap; }
+#jrk-portal table.jrk-cost td { white-space: nowrap; }
+#jrk-portal table.jrk-cost tbody th { font-weight: 600; min-width: 10rem; }
+#jrk-portal table.jrk-cost tfoot th, #jrk-portal table.jrk-cost tfoot td { border-bottom: 0; }
+#jrk-portal .jrk-missing { display: block; font-weight: 400; font-size: .85rem; }
+#jrk-portal .jrk-over { color: #8a2a12; font-weight: 700; }
+#jrk-portal .jrk-pricein { flex-wrap: nowrap; gap: .3rem; }
+#jrk-portal .jrk-pricein input { width: 5.5rem; }
+#jrk-portal .jrk-summary .jrk-row .field { flex: 1 1 10rem; }
+#jrk-portal .jrk-summary input { width: 100%; }
+#jrk-portal details.jrk-prices summary { cursor: pointer; }
+#jrk-portal details.jrk-prices input[type=search] { width: 100%; margin-top: .8rem; }
+@media print { #jrk-portal .jrk-subnav, #jrk-portal .jrk-facts .jrk-noprint { display: none !important; } }
+#jrk-portal .jrk-find .jrk-target { flex: 0 0 auto; display: flex; align-items: center; gap: .4rem; white-space: nowrap; }
+#jrk-portal .jrk-find .jrk-target input { flex: none; width: 4.5rem; min-width: 0; }
+/* on a phone the costing tables become a card per row, each value labelled */
+@media (max-width: 600px) {
+  #jrk-portal table.jrk-cost thead { display: none; }
+  #jrk-portal table.jrk-cost, #jrk-portal table.jrk-cost tbody, #jrk-portal table.jrk-cost tfoot { display: block; }
+  #jrk-portal table.jrk-cost tr { display: grid; grid-template-columns: 1fr 1fr; gap: .2rem .8rem; padding: .7rem 0; border-bottom: 1px solid var(--jrk-line); }
+  #jrk-portal table.jrk-cost th, #jrk-portal table.jrk-cost td { border: 0; padding: 0; white-space: normal; min-width: 0; }
+  #jrk-portal table.jrk-cost tr > th { grid-column: 1 / -1; }
+  #jrk-portal table.jrk-cost td[data-label]::before { content: attr(data-label); display: block; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--jrk-muted); }
+  #jrk-portal table.jrk-cost:not(.jrk-costlines) tr { grid-template-columns: repeat(3, 1fr); }
+  #jrk-portal table.jrk-costlines tr { grid-template-columns: 1fr auto; align-items: end; }
+  #jrk-portal table.jrk-costlines td.jrk-linecost { text-align: right; }
+  #jrk-portal table.jrk-costlines td.jrk-empty { display: none; }
+  #jrk-portal table.jrk-costlines tfoot tr { grid-template-columns: 1fr auto; }
+  #jrk-portal table.jrk-costlines tfoot tr > th { grid-column: auto; align-self: end; }
+  #jrk-portal table.jrk-costlines tfoot td.jrk-linecost::before { display: none; }
+}
