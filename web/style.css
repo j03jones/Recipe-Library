@@ -831,3 +831,11 @@ li.swipe > * { position: relative; z-index: 1; }
 .household .code { font-family: var(--display); letter-spacing: .12em; font-size: 1.3rem; }
 
 .methodsource { margin-top: 1.2rem; }
+
+/* Admin tools: a restaurant's collection */
+.restcard details.collection { border-top: 1px solid var(--line); padding-top: .6rem; }
+.restcard details.collection summary { cursor: pointer; font-weight: 600; padding: .3rem 0; }
+.restcard details.collection .asks li { flex-wrap: nowrap; }
+.restcard details.collection .asks a { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.restcard details.collection > button { margin-top: .6rem; }
+.addrest h3 { margin: 0; }

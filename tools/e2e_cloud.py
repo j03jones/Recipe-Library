@@ -181,11 +181,19 @@ class Fake:
     def token_resp(self, u):
         return {"access_token": f"tok-{u['id']}", "refresh_token": "r", "expires_in": 3600, "user": {"id": u["id"], "email": u["email"]}}
 
+    @staticmethod
+    def on_plan(r):
+        # as the database decides it (add_restaurant_trials.sql): active, or a trial that has not ended
+        from datetime import datetime, timezone
+        ends = r.get("trial_ends_at")
+        return r["subscription_status"] == "active" or (r["subscription_status"] == "trialing" and (
+            not ends or datetime.fromisoformat(ends.replace("Z", "+00:00")) > datetime.now(timezone.utc)))
+
     def visible(self, u):
         out = []
         for r in self.recipes.values():
             mem = any(m["user_id"] == u["id"] for m in self.members if m["restaurant_id"] == r.get("restaurant_id"))
-            active = r.get("restaurant_id") and self.restaurants[r["restaurant_id"]]["subscription_status"] in ("active", "trialing")
+            active = r.get("restaurant_id") and self.on_plan(self.restaurants[r["restaurant_id"]])
             if (u["role"] == "admin" or r["owner_id"] == u["id"] or (r["scope"] == "community" and r["status"] == "approved")
                     or (r["scope"] == "restaurant" and mem and active)):
                 out.append(r)
@@ -401,6 +409,11 @@ class Fake:
             if req.method == "PATCH":
                 self.restaurants[eq("id")].update(body)
                 return await route.fulfill(status=204, headers=CORS)
+            if req.method == "DELETE":
+                gone = self.restaurants.pop(eq("id"), None)
+                for k in [k for k, r in self.recipes.items() if r.get("restaurant_id") == eq("id")]:
+                    del self.recipes[k]
+                return await ok([gone] if gone else [])
         return await ok({"message": f"unhandled {req.method} {path}"}, 404)
 
 
@@ -484,6 +497,48 @@ async def run():
         await admin.select_option("select[aria-label='Subscription for Maple Street Grill']", "active")
         await admin.wait_for_timeout(300)
         check("admin can mark a restaurant active", fake.restaurants[rid]["subscription_status"] == "active")
+
+        # ---- a restaurant on a free trial, its owner invited, and its collection filled from the library (v0.27)
+        from datetime import datetime, timedelta, timezone
+        await admin.fill("input[aria-label='New restaurant name']", "Test Kitchen")
+        await admin.fill("input[aria-label='Owner’s name']", "Jo Owner")
+        await admin.fill("input[aria-label='Owner’s email']", "jo+test@example.com")
+        await admin.click("button:has-text('Add restaurant')")
+        await admin.wait_for_selector("strong:has-text('Test Kitchen')")
+        tk = next(r for r in fake.restaurants.values() if r["name"] == "Test Kitchen")
+        ends = datetime.fromisoformat(tk["trial_ends_at"].replace("Z", "+00:00"))
+        check("a new restaurant starts on a 14-day free trial", tk["subscription_status"] == "trialing"
+              and timedelta(days=13, hours=23) < ends - datetime.now(timezone.utc) <= timedelta(days=14), tk)
+        check("its owner is emailed an owner invite", any(x["email"] == "jo+test@example.com" and x["member_role"] == "owner"
+                                                         and x["restaurant_id"] == tk["id"] for x in fake.sent), fake.sent[-1:])
+        check("the card says how long the trial has left", "14 days left" in await admin.inner_text(".restcard:has-text('Test Kitchen')"))
+        await admin.click(".restcard:has-text('Test Kitchen') summary")
+        await admin.click(".restcard:has-text('Test Kitchen') button:has-text('Add a recipe')")
+        await admin.fill("dialog.pickdialog input[type=search]", "gumbo")
+        await admin.wait_for_timeout(300)
+        picked = (await admin.locator("dialog.pickdialog .picklist button >> nth=0").inner_text()).strip().split("\n")[0]
+        await admin.click("dialog.pickdialog .picklist button >> nth=0")
+        await admin.wait_for_selector(".restcard:has-text('Test Kitchen') summary:has-text('1 recipe')", timeout=10000)
+        copy = next((r for r in fake.recipes.values() if r.get("restaurant_id") == tk["id"]), None)
+        check("the admin can add a library recipe to a restaurant's collection",
+              copy and copy["scope"] == "restaurant" and copy["body"].get("ings") and copy["body"].get("dir"), copy and copy["title"])
+        check("and it is listed on the restaurant's card, still open", await admin.locator(".restcard:has-text('Test Kitchen') details[open] .asks li").count() == 1)
+        tk["trial_ends_at"] = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        await admin.reload()
+        await admin.wait_for_selector(".restcard:has-text('Test Kitchen')")
+        check("an ended trial is shown on the card", "Trial ended" in await admin.inner_text(".restcard:has-text('Test Kitchen')"))
+        await admin.click(".restcard:has-text('Test Kitchen') button:has-text('Start 14 more days')")
+        await admin.wait_for_timeout(600)
+        check("and the admin can start it again", fake.on_plan(tk) and "14 days left" in await admin.inner_text(".restcard:has-text('Test Kitchen')"))
+        await admin.click(".restcard:has-text('Test Kitchen') summary")
+        await admin.click(".restcard:has-text('Test Kitchen') .asks button.icon-btn")
+        await admin.click("dialog[open] button:has-text('Take it out')")
+        await admin.wait_for_selector(".restcard:has-text('Test Kitchen') summary:has-text('0 recipes')")
+        check("a recipe can be taken out of a collection", not any(r.get("restaurant_id") == tk["id"] for r in fake.recipes.values()))
+        await admin.click(".restcard:has-text('Test Kitchen') button.danger")
+        await admin.click("dialog[open] button:has-text('Delete restaurant')")
+        await admin.wait_for_selector("h1:has-text('Admin tools')")
+        await admin.wait_for_timeout(500)
 
         student_code, student_link = await make_link(admin, "student")
         check("invite link shows a QR code", await admin.locator("section .invite-share .qr svg path").count() == 1)
@@ -1186,7 +1241,16 @@ async def run():
         await joe.reload()
         await joe.wait_for_selector("text=Your recipe collection is paused")
         check("a lapsed plan shows a paused message instead of recipes", await joe.locator(".jrk-recipes").count() == 0)
-        fake.restaurants[rid]["subscription_status"] = "active"
+        from datetime import datetime, timedelta, timezone
+        fake.restaurants[rid].update(subscription_status="trialing", trial_ends_at=(datetime.now(timezone.utc) + timedelta(days=3, hours=1)).isoformat())
+        await joe.reload()
+        await joe.wait_for_selector("#jrk-portal .jrk-recipes")
+        check("a restaurant on a trial sees its recipes and the days left", "Free trial: 4 days left" in await joe.inner_text("#jrk-portal"))
+        fake.restaurants[rid]["trial_ends_at"] = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        await joe.reload()
+        await joe.wait_for_selector("text=Your trial has ended")
+        check("an ended trial says so and hides the recipes", await joe.locator(".jrk-recipes").count() == 0)
+        fake.restaurants[rid].update(subscription_status="active", trial_ends_at=None)
 
         # a login that is both a meal prep client and on a restaurant team gets a switcher
         fake.members.append(dict(user_id=fake.users["anna@example.com"]["id"], restaurant_id=rid, member_role="staff"))

@@ -161,7 +161,7 @@ export async function loadMe() {
   const u = currentUser();
   const [profile] = await authed(`/rest/v1/profiles?id=eq.${enc(u.id)}&select=display_name,role,avatar`);
   const memberships = await authed(
-    `/rest/v1/restaurant_members?user_id=eq.${enc(u.id)}&select=member_role,restaurant:restaurants(id,name,subscription_status,seat_limit)`);
+    `/rest/v1/restaurant_members?user_id=eq.${enc(u.id)}&select=member_role,restaurant:restaurants(*)`);   // * so trial_ends_at comes along once add_restaurant_trials.sql has run
   return { id: u.id, email: u.email, displayName: profile?.display_name || '', role: profile?.role || 'student', avatar: profile?.avatar || null, memberships };
 }
 
@@ -232,14 +232,24 @@ export async function saveStars(ids) {
 export const reviewRecipe = (id, approve, note) => authed(`/rest/v1/recipes?id=eq.${enc(id)}`, {
   method: 'PATCH', body: { status: approve ? 'approved' : 'declined', review_note: note || null } });
 export const listRestaurants = () => authed('/rest/v1/restaurants?select=*&order=name');
-export const createRestaurant = (name, seatLimit = 3) => authed('/rest/v1/restaurants', {
-  method: 'POST', headers: { Prefer: 'return=representation' }, body: { name, seat_limit: seatLimit } });
+export async function createRestaurant(name, seatLimit = 3, fields = {}) {
+  const [row] = await authed('/rest/v1/restaurants', {
+    method: 'POST', headers: { Prefer: 'return=representation' }, body: { name, seat_limit: seatLimit, ...fields } })
+    .catch((err) => { throw trialError(err); });
+  return row;
+}
+/** The database has no trial end date yet: say which file adds it. */
+const trialError = (err) => (/trial_ends_at/.test(err.message)
+  ? new CloudError('Trials need a database update: run supabase/add_restaurant_trials.sql in Supabase > SQL Editor.', err.status) : err);
 export async function deleteRestaurant(id) {
   const rows = await authed(`/rest/v1/restaurants?id=eq.${enc(id)}`, { method: 'DELETE', headers: { Prefer: 'return=representation' } });
   if (!rows || !rows.length) throw new CloudError('That restaurant could not be deleted. Only the admin can delete restaurants.', 403);
 }
 export const restaurantMembers = (id) => authed(`/rest/v1/restaurant_members?restaurant_id=eq.${enc(id)}&select=user_id,member_role`);
-export const updateRestaurant = (id, fields) => authed(`/rest/v1/restaurants?id=eq.${enc(id)}`, { method: 'PATCH', body: fields });
+export const updateRestaurant = (id, fields) => authed(`/rest/v1/restaurants?id=eq.${enc(id)}`, { method: 'PATCH', body: fields })
+  .catch((err) => { throw trialError(err); });
+/** The admin puts a copy of a recipe into a restaurant's collection (the copy is the restaurant's from then on). */
+export const addToCollection = (record, restaurantId) => createRecipe(record, { scope: 'restaurant', restaurant_id: restaurantId, status: 'approved' });
 export const createInvite = (kind, restaurantId = null, memberRole = 'staff', maxUses = 1, days = 14) =>
   authed('/rest/v1/rpc/create_invite', { method: 'POST', body: { p_kind: kind, p_restaurant: restaurantId, p_member_role: memberRole, p_max_uses: maxUses, p_days: days } });
 export const removeMember = (restaurantId, userId) =>

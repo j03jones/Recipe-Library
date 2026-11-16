@@ -5,6 +5,8 @@ import { canShare, share } from './native.js';
 import { copyText } from './ui.js';
 import * as photos from './photos.js';
 import { qrSvg } from './qr.js';
+import { restaurantPlan } from './clientcore.js';
+import { toRecord } from './model.js';
 
 /** What the admin needs to check on a submission that credits someone else: the original link. */
 function reviewCredit(h, body) {
@@ -29,6 +31,13 @@ export function avatarEl(path, name, small = false) {
 
 const STATUSES = ['inactive', 'trialing', 'active', 'past_due', 'canceled'];
 const STATUS_LABEL = { inactive: 'Not subscribed', trialing: 'Trial', active: 'Active', past_due: 'Payment overdue', canceled: 'Canceled' };
+/** "Active", "Trial until Nov 30", "Trial ended"... for a restaurant (add_restaurant_trials.sql). */
+const planText = (r) => {
+  const p = restaurantPlan(r);
+  if (p.trial && p.ended) return 'Trial ended';
+  if (p.trial && p.ends) return `Trial until ${p.ends.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+  return STATUS_LABEL[r.subscription_status] || r.subscription_status;
+};
 
 const APP_NAME = 'Jones Ridge Recipes';
 function inviteMessage(link, what = '') {
@@ -290,7 +299,7 @@ export function accountCard(ctx) {
       h('p', { class: 'muted small' }, user?.email || ''),
       (me?.memberships || []).filter((m) => m.restaurant).map((m) => h('div', { class: 'stat' },
         h('span', null, m.restaurant.name, m.member_role === 'owner' ? ' (owner)' : ''),
-        h('strong', null, STATUS_LABEL[m.restaurant.subscription_status] || m.restaurant.subscription_status))),
+        h('strong', null, planText(m.restaurant)))),
       lib.syncError && !/\boffline\b/i.test(lib.syncError) && h('p', { class: 'note' }, `Your stars are only saved on this device right now: ${lib.syncError}`),
       !me && h('p', { class: 'note' }, 'You are signed in, but account details could not be loaded. Connect to the internet to refresh.'),
       owned.length > 0 && h('div', { class: 'stack' },
@@ -584,40 +593,151 @@ export async function viewAdmin(ctx) {
   const requestsHead = h('h2', null, 'Invite requests');
   loadRequests();
 
-  // restaurants
-  const nameIn = h('input', { class: 'full', placeholder: 'Restaurant name', 'aria-label': 'New restaurant name' });
-  const addRest = async (e) => {
-    e.preventDefault();
-    if (!nameIn.value.trim()) return;
-    try { await cloud.createRestaurant(nameIn.value.trim()); toast('Restaurant added'); viewAdmin(ctx); } catch (err) { toast(err.message, 4000); }
-  };
-  const restRows = restaurants.map((r) => {
-    const status = h('select', { 'aria-label': `Subscription for ${r.name}` },
-      STATUSES.map((s) => h('option', { value: s, selected: s === r.subscription_status }, STATUS_LABEL[s])));
-    status.value = r.subscription_status;
-    const seats = h('input', { type: 'number', min: '1', max: '50', value: String(r.seat_limit), 'aria-label': `Logins allowed for ${r.name}`, style: 'width:5rem' });
-    const save = async () => {
-      try { await cloud.updateRestaurant(r.id, { subscription_status: status.value, seat_limit: Math.max(1, Number(seats.value) || 1) }); toast('Saved'); await ctx.refreshCloud(); } catch (err) { toast(err.message, 4000); }
-    };
-    status.addEventListener('change', save);
-    seats.addEventListener('change', save);
-    const del = async () => {
-      let members = [];
-      try { members = await cloud.restaurantMembers(r.id); } catch { /* still ask */ }
-      const recipes = lib.cloud.filter((x) => x.scope === 'restaurant' && x.restaurant_id === r.id);
-      const msg = `Delete ${r.name}? This deletes its collection (${plural(recipes.length, 'recipe')}) and its invite codes, and ${plural(members.length, 'staff login')} will lose access to the collection. Their accounts stay, as free accounts. This cannot be undone.`;
-      if (!await ctx.confirmDialog(msg, 'Delete restaurant', true)) return;
-      try { await cloud.deleteRestaurant(r.id); } catch (err) { toast(err.message, 5000); return; }
-      toast(`${r.name} deleted`);
-      await ctx.refreshCloud();
-      const keep = new Set(lib.cloud.map((x) => x.photo).filter(Boolean));
-      await photos.discard(recipes.map((x) => x.photo).filter((p) => p && !keep.has(p)));   // collection photos nobody else uses
-      viewAdmin(ctx);
-    };
-    return h('div', { class: 'card stack' }, h('strong', null, r.name),
-      h('div', { class: 'row' }, h('label', { class: 'row' }, 'Plan', status), h('label', { class: 'row' }, 'Logins', seats)),
-      h('div', null, h('button', { type: 'button', class: 'danger', onclick: del }, 'Delete restaurant')));
-  });
+  // restaurants: add one (on a free trial, with its owner invited), set its plan, fill its collection
+  const DAY = 86400000;
+  const LONG = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  const trialEnd = (days, from = Date.now()) => new Date(Math.max(from, Date.now()) + days * DAY).toISOString();
+  const restBox = h('div', { class: 'stack' });
+
+  const addForm = (() => {
+    const nameIn = h('input', { class: 'full', maxlength: '200', placeholder: 'Restaurant name', 'aria-label': 'New restaurant name' });
+    const planSel = h('select', { class: 'full', 'aria-label': 'Plan for the new restaurant' },
+      h('option', { value: 'trial14' }, 'Free trial: 14 days'), h('option', { value: 'trial30' }, 'Free trial: 30 days'),
+      h('option', { value: 'active' }, 'Active'), h('option', { value: 'inactive' }, 'Not subscribed yet'));
+    const seatsIn = h('input', { type: 'number', min: '1', max: '50', value: '3', 'aria-label': 'Logins allowed', style: 'width:5rem' });
+    const emailIn = h('input', { type: 'email', class: 'full', autocomplete: 'off', placeholder: 'owner@restaurant.com (optional)', 'aria-label': 'Owner’s email' });
+    const ownerIn = h('input', { type: 'text', class: 'full', maxlength: '80', placeholder: 'Owner’s name (optional)', 'aria-label': 'Owner’s name' });
+    const out = h('p', { class: 'note', role: 'status', hidden: true });
+    const btn = h('button', { class: 'primary', type: 'submit' }, 'Add restaurant');
+    return h('form', { class: 'card stack addrest', onsubmit: async (e) => {
+      e.preventDefault();
+      const name = nameIn.value.trim();
+      if (!name) { nameIn.focus(); return; }
+      const plan = planSel.value;
+      const fields = plan.startsWith('trial')
+        ? { subscription_status: 'trialing', trial_ends_at: trialEnd(plan === 'trial30' ? 30 : 14) }
+        : { subscription_status: plan };
+      btn.disabled = true;
+      try {
+        const r = await cloud.createRestaurant(name, Math.max(1, Number(seatsIn.value) || 3), fields);
+        let msg = `${name} added`;
+        if (emailIn.value.trim()) {
+          try {
+            await cloud.sendInvite({ email: emailIn.value.trim(), name: ownerIn.value.trim(), kind: 'restaurant', restaurantId: r.id, memberRole: 'owner' });
+            msg += `, and ${emailIn.value.trim()} has an email to set up their owner login`;
+            codes.reload();
+          } catch (err) { msg += `, but the invite was not sent: ${err.message}`; }
+        }
+        out.hidden = false; out.textContent = `${msg}.`;
+        nameIn.value = ''; emailIn.value = ''; ownerIn.value = '';
+        restaurants = await cloud.listRestaurants(); lib.restaurants = restaurants;
+        paintRestaurants();
+      } catch (err) { out.hidden = false; out.textContent = err.message; }
+      finally { btn.disabled = false; }
+    } },
+    h('h3', null, 'Add a restaurant'),
+    nameIn,
+    h('div', { class: 'row' }, h('label', { class: 'row grow' }, 'Plan', planSel), h('label', { class: 'row' }, 'Logins', seatsIn)),
+    h('p', { class: 'muted small' }, 'A trial shows the restaurant its collection until the end date, then hides it again (nothing is deleted). You can extend it or mark it Active any time.'),
+    ownerIn, emailIn,
+    h('p', { class: 'muted small' }, 'With an email, the owner gets an invite to set up their login. To try the restaurant side yourself, use a second address of yours (with Gmail, you+test@gmail.com works).'),
+    btn, out);
+  })();
+
+  function planLine(r) {
+    const p = restaurantPlan(r);
+    if (p.trial && p.ended) return h('p', { class: 'note danger' }, `Trial ended ${LONG.format(p.ends)}: the collection is hidden from its staff.`);
+    if (p.trial && p.ends) return h('p', { class: 'muted small' }, `Free trial: ${plural(p.daysLeft, 'day')} left (until ${LONG.format(p.ends)}).`);
+    if (p.trial) return h('p', { class: 'muted small' }, 'Free trial with no end date.');
+    return null;
+  }
+
+  function collectionBox(r) {
+    const recipes = lib.cloud.filter((x) => x.scope === 'restaurant' && x.restaurant_id === r.id)
+      .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+    const add = h('button', { type: 'button', onclick: async () => {
+      const pick = await ctx.pickRecipe(`${r.name}’s collection`);
+      if (!pick?.id) return;
+      add.disabled = true;
+      try {
+        const missing = await ctx.ensureFull([pick.id]);
+        const recipe = lib.byId.get(pick.id);
+        if (!recipe || missing?.length) { toast('That recipe needs a connection the first time', 4000); return; }
+        if (recipes.some((x) => x.title.toLowerCase() === recipe.title.toLowerCase())
+          && !await ctx.confirmDialog(`${r.name} already has a recipe called “${recipe.title}”. Add another copy?`, 'Add it')) return;
+        const { id, updated, ...record } = toRecord(recipe);
+        await cloud.addToCollection(record, r.id);
+        await ctx.refreshCloud();
+        toast(`Added to ${r.name}`);
+        paintRestaurants(r.id);
+      } catch (err) { toast(err.message, 5000); } finally { add.disabled = false; }
+    } }, ctx.icon('plus', { size: 18 }), 'Add a recipe');
+    return h('details', { class: 'collection', open: openRest === r.id || null },
+      h('summary', null, `Collection: ${plural(recipes.length, 'recipe')}`),
+      recipes.length
+        ? h('ul', { class: 'asks' }, recipes.map((x) => h('li', null,
+          h('a', { href: `#/r/${x.id}` }, x.title),
+          h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Take ${x.title} out of ${r.name}’s collection`, onclick: async () => {
+            if (!await ctx.confirmDialog(`Take “${x.title}” out of ${r.name}’s collection? Its staff will no longer see it.`, 'Take it out', true)) return;
+            try {
+              await cloud.deleteRecipe(x.id);
+              await ctx.refreshCloud();
+              const keep = new Set(lib.cloud.map((y) => y.photo).filter(Boolean));
+              if (x.photo && !keep.has(x.photo)) await photos.discard([x.photo]);
+              paintRestaurants(r.id);
+            } catch (err) { toast(err.message, 4000); }
+          } }, ctx.icon('close', { size: 18 })))))
+        : h('p', { class: 'muted small' }, 'No recipes yet. Add copies from the library or your own recipes; the restaurant’s copy stays as it is if you change yours later.'),
+      add);
+  }
+
+  let openRest = null;
+  function paintRestaurants(keepOpen = openRest) {
+    openRest = keepOpen;
+    const rows = restaurants.map((r) => {
+      const status = h('select', { 'aria-label': `Subscription for ${r.name}` },
+        STATUSES.map((st) => h('option', { value: st, selected: st === r.subscription_status }, STATUS_LABEL[st])));
+      status.value = r.subscription_status;
+      const seats = h('input', { type: 'number', min: '1', max: '50', value: String(r.seat_limit), 'aria-label': `Logins allowed for ${r.name}`, style: 'width:5rem' });
+      const save = async (extra = {}) => {
+        const fields = { subscription_status: status.value, seat_limit: Math.max(1, Number(seats.value) || 1), ...extra };
+        // a trial with no end date, or one that has ended, gets a fresh 14 days when it is switched on
+        if (fields.subscription_status === 'trialing' && !('trial_ends_at' in extra) && (r.subscription_status !== 'trialing' || restaurantPlan(r).ended)) {
+          fields.trial_ends_at = trialEnd(14);
+        }
+        try {
+          await cloud.updateRestaurant(r.id, fields); Object.assign(r, fields);
+          toast('Saved'); await ctx.refreshCloud(); paintRestaurants(openRest);
+        } catch (err) { toast(err.message, 5000); }
+      };
+      status.addEventListener('change', () => save());
+      seats.addEventListener('change', () => save());
+      const p = restaurantPlan(r);
+      const del = async () => {
+        let members = [];
+        try { members = await cloud.restaurantMembers(r.id); } catch { /* still ask */ }
+        const recipes = lib.cloud.filter((x) => x.scope === 'restaurant' && x.restaurant_id === r.id);
+        const msg = `Delete ${r.name}? This deletes its collection (${plural(recipes.length, 'recipe')}) and its invite codes, and ${plural(members.length, 'staff login')} will lose access to the collection. Their accounts stay, as free accounts. This cannot be undone.`;
+        if (!await ctx.confirmDialog(msg, 'Delete restaurant', true)) return;
+        try { await cloud.deleteRestaurant(r.id); } catch (err) { toast(err.message, 5000); return; }
+        toast(`${r.name} deleted`);
+        await ctx.refreshCloud();
+        const keep = new Set(lib.cloud.map((x) => x.photo).filter(Boolean));
+        await photos.discard(recipes.map((x) => x.photo).filter((ph) => ph && !keep.has(ph)));   // collection photos nobody else uses
+        viewAdmin(ctx);
+      };
+      return h('div', { class: 'card stack restcard' }, h('strong', null, r.name),
+        h('div', { class: 'row' }, h('label', { class: 'row' }, 'Plan', status), h('label', { class: 'row' }, 'Logins', seats)),
+        planLine(r),
+        p.trial && h('div', { class: 'row' },
+          h('button', { type: 'button', onclick: () => save({ trial_ends_at: trialEnd(14, p.ended || !p.ends ? Date.now() : p.ends.getTime()) }) }, p.ended ? 'Start 14 more days' : 'Add 14 days'),
+          h('button', { type: 'button', onclick: () => { status.value = 'active'; save({ trial_ends_at: null }); } }, 'Mark active')),
+        collectionBox(r),
+        h('div', null, h('button', { type: 'button', class: 'danger', onclick: del }, 'Delete restaurant')));
+    });
+    fill(restBox, rows, addForm);
+  }
+  paintRestaurants();
 
   fill(ctx.$app,
     ctx.pageHead('Admin tools'),
@@ -643,9 +763,8 @@ export async function viewAdmin(ctx) {
     h('h2', null, 'People'),
     people.el,
     h('h2', null, 'Restaurants'),
-    h('div', { class: 'stack' }, restRows,
-      h('form', { class: 'card stack', onsubmit: addRest }, nameIn, h('button', { type: 'submit' }, 'Add restaurant'))),
-    h('p', { class: 'muted small', style: 'margin-top:1.4rem' }, 'Until billing is connected, set a restaurant’s plan to Active by hand. Setting it to anything else hides its collection and returns its staff to the free plan.'));
+    restBox,
+    h('p', { class: 'muted small', style: 'margin-top:1.4rem' }, 'Until billing is connected, set a restaurant’s plan by hand: Active, or Trial until its end date. Anything else, or a trial that has ended, hides its collection and returns its staff to the free plan.'));
   window.scrollTo(0, 0);
 }
 

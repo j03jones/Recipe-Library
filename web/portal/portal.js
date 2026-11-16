@@ -16,7 +16,7 @@
 // so the website and this repository never drift apart.
 import * as cloud from '../js/cloud.js';
 import { ALLERGENS, clean as cleanAllergens, conflicts } from '../js/allergens.js';
-import { MACROS, history as dishHistory, nutritionSummary, planOf, tally } from '../js/clientcore.js';
+import { MACROS, history as dishHistory, nutritionSummary, planOf, restaurantPlan, tally } from '../js/clientcore.js';
 import { Frac, adaptedLine, creditLine, formatIngredient, formatYield, scaleRecipe } from '../js/units.js';
 import { fromRecord } from '../js/model.js';
 
@@ -333,15 +333,18 @@ async function kitchenRecipes(restaurantId, fresh = false) {
   return list;
 }
 
-const ACTIVE = ['active', 'trialing'];
+const DAYDATE = new Intl.DateTimeFormat(undefined, { month: 'long', day: 'numeric' });
 
 async function viewKitchen(m) {
   const mine = ++viewId;
   const r = m.restaurant;
   const key = `kitchen/${r.id}`;
-  if (!ACTIVE.includes(r.subscription_status)) {
-    fill(root, ...top(key), h('h2', null, r.name), h('div', { class: 'jrk-card' }, h('h2', null, 'Your recipe collection is paused'),
-      h('p', null, `${r.name}’s plan with Jones Ridge Kitchen is not active right now, so the recipes are hidden. They are kept safe and come back as soon as the plan is renewed.`),
+  const plan = restaurantPlan(r);
+  if (!plan.on) {
+    fill(root, ...top(key), h('h2', null, r.name), h('div', { class: 'jrk-card' }, h('h2', null, plan.ended ? 'Your trial has ended' : 'Your recipe collection is paused'),
+      h('p', null, plan.ended
+        ? `${r.name}’s free trial ended on ${DAYDATE.format(plan.ends)}, so the recipes are hidden. They are kept safe and come back as soon as the plan starts.`
+        : `${r.name}’s plan with Jones Ridge Kitchen is not active right now, so the recipes are hidden. They are kept safe and come back as soon as the plan is renewed.`),
       h('p', null, h('a', { href: CONTACT_ANY }, 'Contact Jones Ridge Kitchen'), ' about the plan.')));
     return;
   }
@@ -377,6 +380,7 @@ async function viewKitchen(m) {
 
   fill(root, ...top(key),
     h('h2', null, r.name),
+    plan.trial && plan.ends && h('p', { class: 'note' }, `Free trial: ${plan.daysLeft} ${plan.daysLeft === 1 ? 'day' : 'days'} left (until ${DAYDATE.format(plan.ends)}).`),
     list.length
       ? [h('div', { class: 'jrk-row jrk-find' }, search, cat), count, out]
       : h('div', { class: 'jrk-card' }, h('h2', null, 'No recipes yet'), h('p', null, 'Joseph is building your collection. Recipes appear here as soon as they are added.')),
@@ -417,7 +421,7 @@ async function viewRecipe(m, recipeId) {
   const key = `kitchen/${r.id}`;
   fill(root, ...top(key), h('p', { class: 'note' }, 'Loading…'));
   let list;
-  try { list = ACTIVE.includes(r.subscription_status) ? await kitchenRecipes(r.id) : []; } catch (err) {
+  try { list = restaurantPlan(r).on ? await kitchenRecipes(r.id) : []; } catch (err) {
     if (mine !== viewId) return;
     fill(root, ...top(key), h('p', { class: 'jrk-msg' }, `Could not load the recipe: ${err.message}`), h('a', { href: `#${key}` }, '← All recipes'));
     return;
