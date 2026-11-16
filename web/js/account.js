@@ -29,6 +29,8 @@ export function avatarEl(path, name, small = false) {
   return el;
 }
 
+/** The client portal on the website (web/portal/), where restaurant teams see their collection. */
+const PORTAL = 'https://jonesridgekitchen.com/my-meals/';
 const STATUSES = ['inactive', 'trialing', 'active', 'past_due', 'canceled'];
 const STATUS_LABEL = { inactive: 'Not subscribed', trialing: 'Trial', active: 'Active', past_due: 'Payment overdue', canceled: 'Canceled' };
 /** "Active", "Trial until Nov 30", "Trial ended"... for a restaurant (add_restaurant_trials.sql). */
@@ -417,8 +419,14 @@ function peopleSection(ctx) {
 
   const kind = h('select', { 'aria-label': 'Show' },
     h('option', { value: 'student' }, 'Students'), h('option', { value: 'client' }, 'Restaurant staff'), h('option', { value: 'all' }, 'Everyone'));
-  const search = h('input', { class: 'full', type: 'search', placeholder: 'Search by name or email', 'aria-label': 'Search people' });
-  const list = h('div', { class: 'stack' });
+  const label = () => {   // "Students (24)" in the menu
+    for (const o of kind.options) {
+      const n = o.value === 'all' ? people.length : people.filter((p) => p.role === o.value).length;
+      o.textContent = `${{ student: 'Students', client: 'Restaurant staff', all: 'Everyone' }[o.value]} (${n})`;
+    }
+  };
+  const search = h('input', { type: 'search', placeholder: 'Search by name or email', 'aria-label': 'Search people' });
+  const list = h('div', { class: 'peoplelist' });
   const count = h('p', { class: 'muted small' });
 
   const personCard = (p) => {
@@ -437,14 +445,17 @@ function peopleSection(ctx) {
         await photos.discard(files.filter((f) => !keep.has(f)));
       } catch { /* a leftover file only costs a little storage */ }
     } }, 'Remove');
-    return h('div', { class: 'card stack' },
-      h('div', { class: 'row' }, avatarEl(avatars[p.id], p.display_name || p.email, true),
-        h('strong', null, p.display_name || p.email), h('span', { class: 'badge', style: 'margin-left:0' }, ROLE_TEXT[p.role] || p.role)),
-      h('p', { class: 'small', style: 'overflow-wrap:anywhere' }, p.email),
-      p.restaurants.length ? h('p', { class: 'small' }, p.restaurants.join(', ')) : null,
-      p.email_confirmed ? null : h('p', { class: 'small', style: 'color:var(--danger)' }, 'Has not confirmed their email yet. Ask them to check spam for the email from Jones Ridge Kitchen.'),
-      h('p', { class: 'muted small' }, facts.join(' · ')),
-      remove);
+    // one line each (name, role, email); open it for the details and Remove
+    return h('details', { class: 'person' },
+      h('summary', null, avatarEl(avatars[p.id], p.display_name || p.email, true),
+        h('span', { class: 'who' }, h('strong', null, p.display_name || p.email), h('span', { class: 'muted small' }, p.email)),
+        h('span', { class: 'badge' }, ROLE_TEXT[p.role] || p.role),
+        !p.email_confirmed && h('span', { class: 'badge warn', title: 'Has not confirmed their email' }, 'Unconfirmed')),
+      h('div', { class: 'stack' },
+        p.restaurants.length ? h('p', { class: 'small' }, p.restaurants.join(', ')) : null,
+        p.email_confirmed ? null : h('p', { class: 'small', style: 'color:var(--danger)' }, 'Has not confirmed their email yet. Ask them to check spam for the email from Jones Ridge Kitchen.'),
+        h('p', { class: 'muted small' }, facts.join(' · ')),
+        remove));
   };
 
   const paint = () => {
@@ -463,7 +474,8 @@ function peopleSection(ctx) {
       fill(el, h('p', { class: 'muted small' }, `Could not load people: ${err.message}`));
       return;
     }
-    fill(el, h('div', { class: 'row' }, kind, count), search, list);
+    label();
+    fill(el, h('div', { class: 'row peoplefind' }, kind, search), count, list);
     paint();
   };
   reload();
@@ -569,6 +581,7 @@ export async function viewAdmin(ctx) {
     let reqs = [];
     try { reqs = await cloud.listInviteRequests(); } catch (err) { fill(requestsEl, h('p', { class: 'muted small' }, `Could not load requests: ${err.message}`)); return; }
     requestsHead.textContent = `Invite requests${reqs.length ? ` (${reqs.length})` : ''}`;
+    ctx.adminInviteCount?.(reqs.length);
     const ABOUT = { student: 'Culinary student', restaurant: 'From a restaurant', other: 'Other' };
     fill(requestsEl, reqs.length === 0 ? h('p', { class: 'muted' }, 'Nobody is waiting for an invite.') : reqs.map((r) => {
       const out = h('p', { class: 'note', role: 'status' });
@@ -582,7 +595,7 @@ export async function viewAdmin(ctx) {
         h('p', { class: 'small', style: 'overflow-wrap:anywhere' }, r.email),
         r.note && h('p', { class: 'small' }, `“${r.note}”`),
         h('p', { class: 'muted small' }, `Asked ${whenText(r.created_at)}`),
-        r.about === 'restaurant' && h('p', { class: 'muted small' }, 'For a restaurant owner: add their restaurant below, then use Invite someone > A restaurant owner, and dismiss this request.'),
+        r.about === 'restaurant' && h('p', { class: 'muted small' }, 'For a restaurant owner: on the Restaurants tab, use Add a restaurant with their email (it invites them as the owner), then dismiss this request.'),
         h('div', { class: 'row grow' }, send,
           h('button', { type: 'button', onclick: async () => {
             try { await cloud.dismissInviteRequest(r.id); toast('Dismissed'); loadRequests(); } catch (err) { toast(err.message, 4000); }
@@ -609,7 +622,7 @@ export async function viewAdmin(ctx) {
     const ownerIn = h('input', { type: 'text', class: 'full', maxlength: '80', placeholder: 'Owner’s name (optional)', 'aria-label': 'Owner’s name' });
     const out = h('p', { class: 'note', role: 'status', hidden: true });
     const btn = h('button', { class: 'primary', type: 'submit' }, 'Add restaurant');
-    return h('form', { class: 'card stack addrest', onsubmit: async (e) => {
+    return h('details', { class: 'card addrest', open: !restaurants.length || null }, h('summary', null, h('strong', null, '+ Add a restaurant')), h('form', { class: 'stack', onsubmit: async (e) => {
       e.preventDefault();
       const name = nameIn.value.trim();
       if (!name) { nameIn.focus(); return; }
@@ -635,13 +648,12 @@ export async function viewAdmin(ctx) {
       } catch (err) { out.hidden = false; out.textContent = err.message; }
       finally { btn.disabled = false; }
     } },
-    h('h3', null, 'Add a restaurant'),
     nameIn,
     h('div', { class: 'row' }, h('label', { class: 'row grow' }, 'Plan', planSel), h('label', { class: 'row' }, 'Logins', seatsIn)),
     h('p', { class: 'muted small' }, 'A trial shows the restaurant its collection until the end date, then hides it again (nothing is deleted). You can extend it or mark it Active any time.'),
     ownerIn, emailIn,
     h('p', { class: 'muted small' }, 'With an email, the owner gets an invite to set up their login. To try the restaurant side yourself, use a second address of yours (with Gmail, you+test@gmail.com works).'),
-    btn, out);
+    btn, out));
   })();
 
   function planLine(r) {
@@ -692,8 +704,10 @@ export async function viewAdmin(ctx) {
   }
 
   let openRest = null;
+  const openCards = new Set();
   function paintRestaurants(keepOpen = openRest) {
     openRest = keepOpen;
+    if (keepOpen) openCards.add(keepOpen);
     const rows = restaurants.map((r) => {
       const status = h('select', { 'aria-label': `Subscription for ${r.name}` },
         STATUSES.map((st) => h('option', { value: st, selected: st === r.subscription_status }, STATUS_LABEL[st])));
@@ -726,45 +740,78 @@ export async function viewAdmin(ctx) {
         await photos.discard(recipes.map((x) => x.photo).filter((ph) => ph && !keep.has(ph)));   // collection photos nobody else uses
         viewAdmin(ctx);
       };
-      return h('div', { class: 'card stack restcard' }, h('strong', null, r.name),
+      const nRecipes = lib.cloud.filter((x) => x.scope === 'restaurant' && x.restaurant_id === r.id).length;
+      const card = h('details', { class: 'card restcard', open: openCards.has(r.id) || restaurants.length === 1 || null },
+        h('summary', null, h('strong', null, r.name),
+          h('span', { class: `badge${p.on ? '' : ' warn'}` }, planText(r)),
+          h('span', { class: 'muted small' }, plural(nRecipes, 'recipe'))),
+        h('div', { class: 'stack' },
+        h('a', { class: 'linkbtn preview', href: `${PORTAL}?preview=${encodeURIComponent(r.id)}`, target: '_blank', rel: 'noopener' }, 'View their portal ↗'),
         h('div', { class: 'row' }, h('label', { class: 'row' }, 'Plan', status), h('label', { class: 'row' }, 'Logins', seats)),
         planLine(r),
         p.trial && h('div', { class: 'row' },
           h('button', { type: 'button', onclick: () => save({ trial_ends_at: trialEnd(14, p.ended || !p.ends ? Date.now() : p.ends.getTime()) }) }, p.ended ? 'Start 14 more days' : 'Add 14 days'),
           h('button', { type: 'button', onclick: () => { status.value = 'active'; save({ trial_ends_at: null }); } }, 'Mark active')),
         collectionBox(r),
-        h('div', null, h('button', { type: 'button', class: 'danger', onclick: del }, 'Delete restaurant')));
+        h('div', null, h('button', { type: 'button', class: 'danger', onclick: del }, 'Delete restaurant'))));
+      card.addEventListener('toggle', () => { if (card.open) openCards.add(r.id); else openCards.delete(r.id); });
+      return card;
     });
-    fill(restBox, rows, addForm);
+    fill(restBox, rows.length ? rows : h('p', { class: 'muted' }, 'No restaurants yet. Add one below.'), addForm);
   }
   paintRestaurants();
 
-  fill(ctx.$app,
-    ctx.pageHead('Admin tools'),
-    h('h2', null, `Waiting for approval${pending.length ? ` (${pending.length})` : ''}`),
-    approvals,
-    h('h2', null, 'Sign-up'),
-    signupBox,
-    requestsHead,
-    requestsEl,
-    h('h2', null, 'Invite someone'),
-    h('section', { class: 'card stack' },
-      h('label', { class: 'field' }, h('span', null, 'Who are you inviting?'), whoSel),
-      rRow,
-      h('h3', null, 'Email them an invite'),
-      h('p', { class: 'muted small' }, 'They get an email with a button. One tap and a password, and they’re in.'),
-      emailInviteForm(ctx, who, () => codes.reload()),
-      h('h3', null, 'Or share a link / QR code'),
-      h('p', { class: 'muted small' }, 'Good for a class: show the QR code on screen and everyone scans it.'),
-      h('div', { class: 'row' }, usesRow, linkBtn),
-      inviteOut),
-    h('h2', null, 'Invite codes'),
-    codes.el,
-    h('h2', null, 'People'),
-    people.el,
-    h('h2', null, 'Restaurants'),
-    restBox,
-    h('p', { class: 'muted small', style: 'margin-top:1.4rem' }, 'Until billing is connected, set a restaurant’s plan by hand: Active, or Trial until its end date. Anything else, or a trial that has ended, hides its collection and returns its staff to the free plan.'));
+  // the page: four tabs, so each job is one screen (#/admin/<tab>, remembered on this device)
+  const TABS = [['restaurants', 'Restaurants'], ['people', 'People'], ['invites', 'Invites'], ['community', 'Community']];
+  const panels = {
+    restaurants: [restBox,
+      h('p', { class: 'muted small', style: 'margin-top:1.4rem' }, 'Until billing is connected, set a restaurant’s plan by hand: Active, or Trial until its end date. Anything else, or a trial that has ended, hides its collection and returns its staff to the free plan. “View their portal” opens the page their team uses on jonesridgekitchen.com; the first time, sign in there with this admin account.')],
+    people: [people.el],
+    invites: [
+      requestsHead, requestsEl,
+      h('h2', null, 'Invite someone'),
+      h('section', { class: 'card stack' },
+        h('label', { class: 'field' }, h('span', null, 'Who are you inviting?'), whoSel),
+        rRow,
+        h('h3', null, 'Email them an invite'),
+        h('p', { class: 'muted small' }, 'They get an email with a button. One tap and a password, and they’re in.'),
+        emailInviteForm(ctx, who, () => codes.reload()),
+        h('h3', null, 'Or share a link / QR code'),
+        h('p', { class: 'muted small' }, 'Good for a class: show the QR code on screen and everyone scans it.'),
+        h('div', { class: 'row' }, usesRow, linkBtn),
+        inviteOut),
+      h('details', { class: 'admincodes' }, h('summary', null, h('h2', null, 'Invite codes')), codes.el),
+      h('h2', null, 'Sign-up'),
+      signupBox],
+    community: [h('h2', null, `Waiting for approval${pending.length ? ` (${pending.length})` : ''}`), approvals],
+  };
+  const fromHash = location.hash.replace(/^#\/?/, '').split('/')[1];
+  let saved = '';
+  try { saved = sessionStorage.getItem('admin-tab') || ''; } catch { /* private mode */ }
+  let tab = [fromHash, saved].find((t) => panels[t]) || 'restaurants';
+  const counts = { community: pending.length, invites: 0 };
+  const tabBtns = TABS.map(([k, label]) => [k, h('button', { type: 'button', role: 'tab', class: 'admintab', id: `admintab-${k}`, 'aria-controls': `adminpanel-${k}`,
+    onclick: () => show(k) }, label, h('span', { class: 'count' }))]);
+  const panelEls = Object.fromEntries(TABS.map(([k]) => [k, h('div', { role: 'tabpanel', id: `adminpanel-${k}`, 'aria-labelledby': `admintab-${k}`, class: 'adminpanel' }, panels[k])]));
+  function badges() {
+    for (const [k, b] of tabBtns) { const n = counts[k] || 0; b.querySelector('.count').textContent = n ? String(n) : ''; b.querySelector('.count').hidden = !n; }
+  }
+  function show(k) {
+    tab = k;
+    for (const [key, b] of tabBtns) { b.setAttribute('aria-selected', String(key === k)); b.tabIndex = key === k ? 0 : -1; }
+    for (const [key, el] of Object.entries(panelEls)) el.hidden = key !== k;
+    try { sessionStorage.setItem('admin-tab', k); } catch { /* private mode */ }
+    if (location.hash !== `#/admin/${k}`) history.replaceState(history.state, '', `#/admin/${k}`);
+  }
+  ctx.adminInviteCount = (n) => { counts.invites = n; badges(); };
+  const tabBar = h('div', { class: 'admintabs', role: 'tablist', 'aria-label': 'Admin tools', onkeydown: (e) => {
+    const i = TABS.findIndex(([k]) => k === tab);
+    const j = e.key === 'ArrowRight' ? (i + 1) % TABS.length : e.key === 'ArrowLeft' ? (i + TABS.length - 1) % TABS.length : -1;
+    if (j >= 0) { e.preventDefault(); show(TABS[j][0]); tabBtns[j][1].focus(); }
+  } }, tabBtns.map(([, b]) => b));
+  badges();
+  show(tab);
+  fill(ctx.$app, ctx.pageHead('Admin tools'), tabBar, Object.values(panelEls));
   window.scrollTo(0, 0);
 }
 

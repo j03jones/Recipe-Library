@@ -288,7 +288,17 @@ class Fake:
             self.user_data[user["id"]] = row
             return await ok([row], 201)
         if path == "/rest/v1/profiles":
+            if "avatar=not.is.null" in (u.query or ""):
+                return await ok([])
             return await ok([{"display_name": user["name"], "role": user["role"]}])
+        if path == "/rest/v1/rpc/admin_list_people":
+            if user["role"] != "admin":
+                return await ok({"message": "Only the admin can see the list of people."}, 400)
+            return await ok([dict(id=x["id"], display_name=x["name"], email=x["email"], role=x["role"], invite_code=None,
+                                  restaurants=[self.restaurants[m["restaurant_id"]]["name"] for m in self.members if m["user_id"] == x["id"] and m["restaurant_id"] in self.restaurants],
+                                  joined_at="2026-11-05T10:00:00Z", email_confirmed=True, last_sign_in_at=None,
+                                  private_recipes=sum(1 for r in self.recipes.values() if r["owner_id"] == x["id"] and r["scope"] == "private"))
+                             for x in self.users.values()])
         if path == "/rest/v1/restaurant_members":
             return await ok([{"member_role": m["member_role"], "restaurant": self.restaurants[m["restaurant_id"]]}
                              for m in self.members if m["user_id"] == user["id"]])
@@ -445,8 +455,21 @@ async def sign_in(page, email, pw):
     await page.wait_for_selector("text=Sign out")
 
 
+async def admin_tab(admin, name):
+    """Admin tools has tabs (Restaurants, People, Invites, Community): show one."""
+    await admin.click(f".admintab:has-text('{name}')")
+
+
+async def open_card(admin, name):
+    """Restaurant cards in Admin tools fold away: open this one."""
+    await admin.wait_for_selector(f"details.restcard summary:has-text('{name}')")
+    await admin.evaluate("""(n) => { for (const d of document.querySelectorAll('details.restcard'))
+      if (d.querySelector(':scope > summary strong').textContent === n) d.open = true; }""", name)
+
+
 async def make_link(admin, who="student", restaurant=None):
-    """Admin tools > Invite someone > Make a link & QR code. Returns (code, link)."""
+    """Admin tools > Invites > Invite someone > Make a link & QR code. Returns (code, link)."""
+    await admin_tab(admin, "Invites")
     await admin.select_option("select[aria-label='Who are you inviting']", who)
     if restaurant:
         await admin.select_option("select[aria-label=Restaurant]", label=restaurant)
@@ -511,14 +534,18 @@ async def run():
               and timedelta(days=13, hours=23) < ends - datetime.now(timezone.utc) <= timedelta(days=14), tk)
         check("its owner is emailed an owner invite", any(x["email"] == "jo+test@example.com" and x["member_role"] == "owner"
                                                          and x["restaurant_id"] == tk["id"] for x in fake.sent), fake.sent[-1:])
+        await open_card(admin, "Test Kitchen")
         check("the card says how long the trial has left", "14 days left" in await admin.inner_text(".restcard:has-text('Test Kitchen')"))
+        await admin.screenshot(path="/tmp/cloud_admin_restaurants.png", full_page=True)
+        check("each restaurant has a link to view its portal as its team sees it",
+              await admin.get_attribute(".restcard:has-text('Test Kitchen') a.preview", "href") == f"https://jonesridgekitchen.com/my-meals/?preview={tk['id']}")
         # one of the chef's own recipes (an imported recipe book): the picker opens on them, no typing needed
         fake.recipes["mine1"] = dict(id="mine1", owner_id=fake.users["chef@example.com"]["id"], scope="private", restaurant_id=None, status="approved",
                                      title="House Chimichurri", categories=["Sauces"], author_name=None, review_note=None, source_recipe_id=None,
                                      body=dict(tags=[], yq="4", yu="cups", yr="", dir="Blend everything.", ings=[["3", "", "cup", "parsley", ""]]))
         await admin.reload()
-        await admin.wait_for_selector(".restcard:has-text('Test Kitchen')")
-        await admin.click(".restcard:has-text('Test Kitchen') summary")
+        await open_card(admin, "Test Kitchen")
+        await admin.click(".restcard:has-text('Test Kitchen') details.collection summary")
         await admin.click(".restcard:has-text('Test Kitchen') button:has-text('Add a recipe')")
         await admin.wait_for_selector("dialog.pickdialog .picklist")
         check("adding to a restaurant opens on your own recipes, listed without searching",
@@ -535,7 +562,7 @@ async def run():
         check("in All recipes, yours come first and say Mine", "House Chimichurri" in await admin.inner_text("dialog.pickdialog .picklist button >> nth=0")
               and await admin.locator("dialog.pickdialog .picklist button >> nth=0 >> .badge:has-text('Mine')").count() == 1)
         await admin.click("dialog.pickdialog .picklist button >> nth=0")
-        await admin.wait_for_selector(".restcard:has-text('Test Kitchen') summary:has-text('1 recipe')", timeout=10000)
+        await admin.wait_for_selector(".restcard:has-text('Test Kitchen') details.collection summary:has-text('1 recipe')", timeout=10000)
         copy = next((r for r in fake.recipes.values() if r.get("restaurant_id") == tk["id"]), None)
         check("the admin can add their own recipe to a restaurant's collection",
               copy and copy["scope"] == "restaurant" and copy["title"] == "House Chimichurri" and copy["body"].get("ings") and copy["body"].get("dir"), copy and copy["title"])
@@ -543,15 +570,15 @@ async def run():
         fake.recipes.pop("mine1", None)            # later checks count private recipes
         tk["trial_ends_at"] = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         await admin.reload()
-        await admin.wait_for_selector(".restcard:has-text('Test Kitchen')")
+        await open_card(admin, "Test Kitchen")
         check("an ended trial is shown on the card", "Trial ended" in await admin.inner_text(".restcard:has-text('Test Kitchen')"))
         await admin.click(".restcard:has-text('Test Kitchen') button:has-text('Start 14 more days')")
         await admin.wait_for_timeout(600)
         check("and the admin can start it again", fake.on_plan(tk) and "14 days left" in await admin.inner_text(".restcard:has-text('Test Kitchen')"))
-        await admin.click(".restcard:has-text('Test Kitchen') summary")
+        await admin.click(".restcard:has-text('Test Kitchen') details.collection summary")
         await admin.click(".restcard:has-text('Test Kitchen') .asks button.icon-btn")
         await admin.click("dialog[open] button:has-text('Take it out')")
-        await admin.wait_for_selector(".restcard:has-text('Test Kitchen') summary:has-text('0 recipes')")
+        await admin.wait_for_selector(".restcard:has-text('Test Kitchen') details.collection summary:has-text('0 recipes')")
         check("a recipe can be taken out of a collection", not any(r.get("restaurant_id") == tk["id"] for r in fake.recipes.values()))
         await admin.click(".restcard:has-text('Test Kitchen') button.danger")
         await admin.click("dialog[open] button:has-text('Delete restaurant')")
@@ -655,6 +682,7 @@ async def run():
 
         # ---- admin approves
         await admin.reload()
+        await admin_tab(admin, "Community")
         await admin.wait_for_selector("text=Sam Secret Biscuits")
         check("admin sees the submission with the author", await admin.locator("text=Shared by Sam").count() == 1)
         await admin.click("button:has-text('Approve')")
@@ -682,7 +710,7 @@ async def run():
 
         # ---- restaurant staff
         await admin.reload()
-        await admin.wait_for_selector("button:has-text('Make a link & QR code')")
+        await admin.wait_for_selector(".admintabs")
         code2, link2 = await make_link(admin, "staff", "Maple Street Grill")
         rctx, rs = await new_page(b, fake)
         await rs.goto(URL + "#/settings")
@@ -945,7 +973,7 @@ async def run():
         card = [r for r in fake.recipes.values() if r["scope"] == "community" and r["body"].get("kind") == "link"]
         check("link card goes to Community with no recipe text", len(card) == 1 and card[0]["body"]["dir"] == "" and card[0]["body"]["ings"] == []
               and card[0]["body"]["src"]["url"] == "https://example.com/test-lentil-soup/")
-        await admin.goto(URL + "#/admin")
+        await admin.goto(URL + "#/admin/community")
         await admin.wait_for_selector("text=Link card: Pat Example")
         check("admin sees the original link when reviewing a link card",
               await admin.get_attribute("a:has-text('Check the original')", "href") == "https://example.com/test-lentil-soup/")
@@ -995,16 +1023,31 @@ async def run():
         check("the request reaches the admin's list", any(r["email"] == "dee@example.com" and r["note"] == "Tuesday class" for r in fake.requests.values()))
         check("the admin is emailed about a new request", fake.notified == ["dee@example.com"])
         await q.screenshot(path="/tmp/cloud_request.png", full_page=True)
-        await admin.goto(URL + "#/admin")
+        await admin.goto(URL + "#/admin/invites")
         await admin.wait_for_selector("h2:has-text('Invite requests (1)')")
+        check("the Invites tab shows how many are waiting", (await admin.inner_text(".admintab:has-text('Invites') .count")).strip() == "1")
         await admin.click("button:has-text('Send student invite')")
         await admin.wait_for_selector("text=Nobody is waiting for an invite")
+        # ---- People: one line each, searchable, opening for the details
+        await admin_tab(admin, "People")
+        await admin.wait_for_selector("details.person")
+        students = sum(1 for x in fake.users.values() if x["role"] == "student")
+        check("People lists students one line each, with a count in the menu",
+              await admin.locator("details.person").count() == students and f"Students ({students})" in await admin.inner_text("select[aria-label='Show']"))
+        await admin.screenshot(path="/tmp/cloud_admin_people.png")
+        await admin.fill("input[aria-label='Search people']", "pat@")
+        check("People can be searched by email", await admin.locator("details.person").count() == 1)
+        check("a person's details are folded away until opened", not await admin.locator("details.person button:has-text('Remove')").is_visible())
+        await admin.click("details.person summary")
+        check("opening a person shows their details and Remove", await admin.locator("details.person button:has-text('Remove')").is_visible()
+              and "private recipe" in await admin.inner_text("details.person"))
+        await admin_tab(admin, "Invites")
         check("admin can answer a request with an emailed invite",
               fake.sent[-1]["email"] == "dee@example.com" and fake.sent[-1]["request_id"] and
               all(r["status"] == "invited" for r in fake.requests.values()))
 
         # ---- open sign-up switch
-        await admin.goto(URL + "#/admin")
+        await admin.goto(URL + "#/admin/invites")
         await admin.wait_for_selector("text=Off: people need an invite")
         await admin.click("input[aria-label='Open sign-up']")
         await admin.wait_for_selector("dialog[open]")
@@ -1269,6 +1312,21 @@ async def run():
         await joe.wait_for_selector("text=Your trial has ended")
         check("an ended trial says so and hides the recipes", await joe.locator(".jrk-recipes").count() == 0)
         fake.restaurants[rid].update(subscription_status="active", trial_ends_at=None)
+
+        # the admin's "View their portal": the restaurant's page as its team sees it, marked as a preview
+        await admin.goto(PORTAL + f"?preview={rid}")
+        await admin.wait_for_selector("#jrk-portal .jrk-recipes", timeout=15000)
+        ptext = await admin.inner_text("#jrk-portal")
+        check("the admin can preview a restaurant's portal without being on its team",
+              "Preview." in ptext and "Maple Street Grill" in ptext and await admin.locator(".jrk-recipes a:has-text('Maple House Vinaigrette')").count() == 1
+              and await admin.locator("button:has-text('Invite someone')").count() == 0)
+        await admin.click(".jrk-recipes a:has-text('Maple House Vinaigrette')")
+        await admin.wait_for_selector(".jrk-recipe")
+        check("and open its recipes there", "olive oil" in await admin.inner_text(".jrk-recipe") and "Preview." in await admin.inner_text("#jrk-portal"))
+        await rae.goto(PORTAL + f"?preview={rid}")
+        await rae.reload()
+        await rae.wait_for_selector("#jrk-portal .jrk-recipes", timeout=15000)
+        check("a preview link does nothing special for anyone but the admin", "Preview." not in await rae.inner_text("#jrk-portal"))
 
         # a login that is both a meal prep client and on a restaurant team gets a switcher
         fake.members.append(dict(user_id=fake.users["anna@example.com"]["id"], restaurant_id=rid, member_role="staff"))

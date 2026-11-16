@@ -510,7 +510,7 @@ select { font: inherit; min-height: 2.6rem; border-radius: 6px; border: 1.5px so
 .tile.pic { background-size: cover; background-position: center; }
 .avatar { width: 3rem; height: 3rem; border-radius: 50%; object-fit: cover; flex: none; background: var(--line); }
 .avatar.sm { width: 1.7rem; height: 1.7rem; vertical-align: middle; margin-right: .4rem; }
-.avatar.empty { display: inline-grid; place-items: center; font-family: var(--slab); font-weight: 700; font-size: 1rem; color: var(--muted); }
+.avatar.empty { display: inline-grid; place-items: center; padding: 0; text-align: center; font-family: var(--slab); font-weight: 700; font-size: 1rem; color: var(--muted); }
 .avatar.sm.empty { font-size: .7rem; }
 .credit { display: flex; align-items: center; }
 
@@ -843,3 +843,41 @@ li.swipe > * { position: relative; z-index: 1; }
 .restcard details.collection .asks a { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .restcard details.collection > button { margin-top: .6rem; }
 .addrest h3 { margin: 0; }
+
+/* Admin tools: tabs (Restaurants, People, Invites, Community) */
+.admintabs { display: flex; gap: .1rem; overflow-x: auto; scrollbar-width: none; margin: .2rem calc(var(--gx) * -1) 1rem; padding: 0 var(--gx);
+  border-bottom: 1px solid var(--line); }
+.admintabs::-webkit-scrollbar { display: none; }
+.admintab { flex: none; display: inline-flex; align-items: center; gap: .3rem; border: 0; border-bottom: 3px solid transparent; border-radius: 0;
+  background: none; padding: .7rem .32rem .55rem; font-size: .87rem; font-weight: 600; color: var(--muted); min-height: 0; }
+.admintab[aria-selected=true] { color: var(--ink); border-bottom-color: var(--rust); }
+.admintab .count { min-width: 1.2rem; padding: 0 .3rem; border-radius: 99px; background: var(--rust); color: #fff; font-size: .7rem; line-height: 1.2rem; text-align: center; }
+.adminpanel > h2:first-child { margin-top: .4rem; }
+.badge.warn { background: var(--soft); color: var(--danger); }
+
+/* collapsible restaurant cards and the Add a restaurant form */
+details.restcard, details.addrest { padding: 0; }
+details.restcard > summary, details.addrest > summary { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .6rem; padding: .85rem 2.4rem .85rem 1rem; cursor: pointer; list-style: none; }
+details.restcard > summary::-webkit-details-marker, details.addrest > summary::-webkit-details-marker { display: none; }
+details.restcard > summary::after, details.addrest > summary::after { content: "›"; position: absolute; right: 1rem; top: .8rem; font-size: 1.3rem; line-height: 1; color: var(--muted); transition: transform .15s; }
+details.restcard[open] > summary::after, details.addrest[open] > summary::after { transform: rotate(90deg); }
+details.restcard > summary .badge { margin-left: 0; }
+details.restcard > .stack, details.addrest > form { padding: 0 1rem 1rem; }
+details.restcard .linkbtn.preview { align-self: flex-start; }
+
+/* People: one line each */
+.peoplefind { flex-wrap: nowrap; }
+.peoplefind select { flex: 0 0 auto; max-width: 48%; }
+.peoplefind input[type=search] { flex: 1 1 8rem; min-width: 0; }
+.peoplelist { border-top: 1px solid var(--line); }
+details.person { border-bottom: 1px solid var(--line); }
+details.person > summary { display: flex; align-items: center; gap: .6rem; padding: .55rem .1rem; cursor: pointer; list-style: none; }
+details.person > summary::-webkit-details-marker { display: none; }
+details.person > summary .avatar { flex: none; align-self: center; width: 2.1rem; height: 2.1rem; min-height: 0; margin: 0; padding: 0; font-size: .85rem; }
+details.person > summary .who { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+details.person > summary .who > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+details.person > summary .badge { margin-left: 0; flex: none; }
+details.person[open] > summary { background: var(--stone); }
+details.person > .stack { padding: .3rem .1rem .9rem 2.8rem; }
+details.admincodes > summary { cursor: pointer; }
+details.admincodes > summary h2 { display: inline; }

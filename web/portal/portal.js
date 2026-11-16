@@ -25,6 +25,9 @@ const CONTACT = 'https://jonesridgekitchen.com/contact/?service=meal-prep';
 const CONTACT_ANY = 'https://jonesridgekitchen.com/contact/';
 const APP = 'https://recipes.jonesridgekitchen.com/';
 const JOIN = new URLSearchParams(location.search).get('join') || '';   // a restaurant invite link: …/my-meals/?join=CODE
+// the admin's "View their portal" (Admin tools > Restaurants): …/my-meals/?preview=<restaurant id> shows that restaurant's
+// page as its team sees it, to the admin only; anyone else just gets their own page
+const PREVIEW = new URLSearchParams(location.search).get('preview') || '';
 const SHORT = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 const WHEN = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 const parseDate = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
@@ -143,6 +146,7 @@ function viewSignedOut(mode = JOIN ? 'up' : 'in', message = '') {
     } }, 'Forgot password?')));
 
   fill(root, h('div', { class: 'jrk-card' },
+    PREVIEW && h('p', { class: 'jrk-preview' }, h('strong', null, 'Admin preview. '), 'Sign in with your admin account to see this restaurant’s page as its team does.'),
     h('h2', null, 'Client login'),
     h('p', null, 'Meal prep clients: approve your week and see what is in every dish. Restaurant clients: your recipe collection, ready for the line.'),
     tabs, form),
@@ -172,7 +176,12 @@ const signOutBar = () => h('p', { class: 'jrk-who note' }, `Signed in as ${cloud
 let areas = [];
 /** The sign-out line, plus a switcher when the login is for more than one thing. */
 function top(current) {
-  return [signOutBar(), areas.length > 1 && h('nav', { class: 'jrk-switch', 'aria-label': 'Your client areas' },
+  const preview = areas.find((a) => a.preview);
+  return [signOutBar(),
+    preview && h('p', { class: 'jrk-preview', role: 'note' }, h('strong', null, 'Preview. '),
+      `This is ${preview.label}’s page as their team sees it. Owners also get a Your team card for inviting staff. `,
+      h('a', { href: 'https://recipes.jonesridgekitchen.com/#/admin/restaurants' }, 'Back to Admin tools')),
+    areas.length > 1 && h('nav', { class: 'jrk-switch', 'aria-label': 'Your client areas' },
     areas.map((a) => h('a', { href: `#${a.key}`, 'aria-current': a.key === current ? 'page' : null }, a.label)))];
 }
 
@@ -510,6 +519,14 @@ async function start() {
   }
   if (JOIN) history.replaceState(history.state, '', location.pathname + location.hash);   // the invite has been used
   recipeCache.clear();
+  if (PREVIEW && me.role === 'admin') {
+    let r = null;
+    try { r = await cloud.getRestaurant(PREVIEW); } catch { /* shown below */ }
+    if (!r) { fill(root, signOutBar(), h('div', { class: 'jrk-card' }, h('h2', null, 'Restaurant not found'), h('p', null, 'It may have been deleted. Open the preview again from Admin tools.'))); return; }
+    areas = [{ key: `kitchen/${r.id}`, label: r.name, membership: { member_role: 'staff', restaurant: r }, preview: true }];
+    if (!location.hash.startsWith(`#kitchen/${r.id}`)) history.replaceState(history.state, '', `${location.pathname}${location.search}#kitchen/${r.id}`);
+    return route();
+  }
   areas = [
     ...clients.slice(0, 1).map((client) => ({ key: 'meals', label: 'My meals', client })),
     ...(me.memberships || []).filter((m) => m.restaurant).map((m) => ({ key: `kitchen/${m.restaurant.id}`, label: m.restaurant.name, membership: m })),

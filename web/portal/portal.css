@@ -99,3 +99,7 @@
   #jrk-portal .jrk-photo img { max-height: 3in; }
   #jrk-portal .jrk-steps li { break-inside: avoid; }
 }
+
+/* the admin's preview of a restaurant's page */
+#jrk-portal .jrk-preview { background: #fff4d6; border: 1px solid #e8c766; border-radius: 8px; padding: .6rem .8rem; margin: 0 0 1rem; color: #4a3a0a; }
+#jrk-portal .jrk-preview a { color: inherit; font-weight: 600; }
