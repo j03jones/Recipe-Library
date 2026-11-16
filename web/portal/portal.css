@@ -92,8 +92,8 @@
 /* Printing a recipe: only the recipe, none of the website around it. */
 @media print {
   body * { visibility: hidden !important; }
-  #jrk-portal .jrk-recipe, #jrk-portal .jrk-recipe * { visibility: visible !important; }
-  #jrk-portal .jrk-recipe { position: absolute; inset: 0 auto auto 0; width: 100%; color: #000; }
+  #jrk-portal .jrk-recipe, #jrk-portal .jrk-recipe *, #jrk-portal .jrk-prepout, #jrk-portal .jrk-prepout * { visibility: visible !important; }
+  #jrk-portal .jrk-recipe, #jrk-portal .jrk-prepout { position: absolute; inset: 0 auto auto 0; width: 100%; color: #000; }
   #jrk-portal .jrk-noprint { display: none !important; }
   #jrk-portal .jrk-printnote { display: block; margin-top: 2rem; }
   #jrk-portal .jrk-photo img { max-height: 3in; }
@@ -106,8 +106,8 @@
 
 /* A restaurant's kitchen (kitchen.js): tabs, team recipes, the editor, costing */
 #jrk-portal h2.jrk-kitchen { margin: .2rem 0 .3rem; }
-#jrk-portal .jrk-subnav { display: flex; gap: .2rem; flex-wrap: wrap; border-bottom: 1px solid var(--jrk-line); margin: .4rem 0 1.1rem; }
-#jrk-portal .jrk-subnav a { padding: .55rem .8rem .5rem; font-weight: 600; text-decoration: none; color: var(--jrk-muted); border-bottom: 3px solid transparent; margin-bottom: -1px; }
+#jrk-portal .jrk-subnav { display: flex; gap: .1rem; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--jrk-line); margin: .4rem 0 1.1rem; }
+#jrk-portal .jrk-subnav a { flex: none; white-space: nowrap; padding: .55rem .55rem .5rem; font-weight: 600; text-decoration: none; color: var(--jrk-muted); border-bottom: 3px solid transparent; margin-bottom: -1px; }
 #jrk-portal .jrk-subnav a[aria-current=page] { color: var(--jrk-ridge); border-bottom-color: var(--jrk-clay); }
 #jrk-portal .jrk-actions { margin: 0 0 .6rem; }
 #jrk-portal .jrk-tag { display: inline-block; margin-left: .5rem; padding: .05rem .45rem; border-radius: 999px; background: var(--jrk-soft); border: 1px solid var(--jrk-line);
@@ -158,3 +158,24 @@
   #jrk-portal table.jrk-costlines tfoot tr > th { grid-column: auto; align-self: end; }
   #jrk-portal table.jrk-costlines tfoot td.jrk-linecost::before { display: none; }
 }
+
+/* New recipes, prep list, plates, team, photos (v0.30) */
+#jrk-portal .jrk-tag.new { background: #fff1d6; border-color: #e8c766; color: #6b4c00; }
+#jrk-portal .jrk-newnote { background: #fff8e8; border: 1px solid #f0dca0; border-radius: 8px; padding: .55rem .8rem; margin: 0 0 1rem; }
+#jrk-portal .jrk-prepitems li input { width: 5rem; font: inherit; padding: .4rem .5rem; border: 1px solid #aeb7b1; border-radius: 6px; }
+#jrk-portal .jrk-find select { background: #fff; }
+#jrk-portal .jrk-prepout h4 { margin: 1rem 0 .3rem; font-family: var(--slab, Georgia, serif); color: var(--jrk-muted); }
+#jrk-portal .jrk-preplines { list-style: none; margin: 0; padding: 0; }
+#jrk-portal .jrk-preplines li { padding: .35rem 0; border-bottom: 1px solid var(--jrk-line); }
+#jrk-portal .jrk-preplines input[type=checkbox] { width: 1.1rem; height: 1.1rem; vertical-align: -.15rem; }
+#jrk-portal .jrk-prepcost { margin-top: 1rem; }
+#jrk-portal .jrk-plateparts { display: grid; gap: .4rem; margin: .4rem 0 .8rem; }
+#jrk-portal .jrk-platepart { padding: .5rem 0; border-bottom: 1px solid var(--jrk-line); }
+#jrk-portal .jrk-platepart .jrk-ptitle { flex: 1 1 12rem; }
+#jrk-portal .jrk-platepart input { width: 4.5rem; font: inherit; padding: .4rem .5rem; border: 1px solid #aeb7b1; border-radius: 6px; }
+#jrk-portal .jrk-platepart .jrk-linecost { min-width: 4rem; text-align: right; font-weight: 600; }
+#jrk-portal .jrk-card .jrk-row > .field { flex: 1 1 12rem; }
+#jrk-portal .jrk-teamlist select { font: inherit; padding: .4rem .5rem; border: 1px solid #aeb7b1; border-radius: 6px; background: #fff; }
+#jrk-portal .jrk-help li { align-items: flex-start; }
+#jrk-portal .jrk-photobtns { margin: -.2rem 0 .6rem; }
+@media print { #jrk-portal .jrk-prepout .jrk-noprint, #jrk-portal .jrk-prepitems button, #jrk-portal .jrk-find { display: none !important; } }

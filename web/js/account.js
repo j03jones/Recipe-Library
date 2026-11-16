@@ -664,6 +664,35 @@ export async function viewAdmin(ctx) {
     return null;
   }
 
+  /** A restaurant's team: who is on it and what each staff member may do with the costing (the owner's to share;
+   *  the admin can change it too). Loaded when opened. */
+  function teamBox(r) {
+    const body = h('div', { class: 'stack' }, h('p', { class: 'muted small' }, 'Loading…'));
+    const COST = { none: 'No costing', view: 'Can view costing', edit: 'Can edit costing' };
+    const paint = async () => {
+      let team;
+      try { team = await cloud.restaurantTeam(r.id); } catch (err) { fill(body, h('p', { class: 'muted small' }, `Could not load the team: ${err.message}`)); return; }
+      fill(body, team.length ? h('ul', { class: 'asks' }, team.map((p) => {
+        const sel = p.member_role === 'owner' ? null : h('select', { 'aria-label': `Costing for ${p.display_name || p.email}` },
+          Object.entries(COST).map(([v, t]) => h('option', { value: v, selected: v === p.costing }, t)));
+        if (sel) {
+          sel.value = p.costing;
+          sel.addEventListener('change', async () => { try { await cloud.setMemberCosting(r.id, p.user_id, sel.value); toast('Saved'); } catch (err) { toast(err.message, 4000); sel.value = p.costing; } });
+        }
+        return h('li', null, h('span', null, h('strong', null, p.display_name || p.email), h('br'), h('span', { class: 'muted small' }, p.email)),
+          h('span', { class: 'row' }, p.member_role === 'owner' ? h('span', { class: 'badge' }, 'Owner') : sel,
+            p.member_role !== 'owner' && h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Remove ${p.display_name || p.email} from ${r.name}`, onclick: async () => {
+              if (!await ctx.confirmDialog(`Remove ${p.display_name || p.email} from ${r.name}? Their login stays, as a free account.`, 'Remove', true)) return;
+              try { await cloud.removeMember(r.id, p.user_id); toast('Removed'); paint(); } catch (err) { toast(err.message, 4000); }
+            } }, ctx.icon('close', { size: 18 }))));
+      })) : h('p', { class: 'muted small' }, 'Nobody has joined yet. Invite the owner from Add a restaurant, or from the Invites tab.'),
+      h('p', { class: 'muted small' }, 'Owners always see and change the costing and decide it for their staff; new staff start with none.'));
+    };
+    const box = h('details', { class: 'collection team' }, h('summary', null, 'Team and costing access'), body);
+    box.addEventListener('toggle', () => { if (box.open) paint(); }, { once: true });
+    return box;
+  }
+
   function collectionBox(r) {
     const recipes = lib.cloud.filter((x) => x.scope === 'restaurant' && x.restaurant_id === r.id)
       .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
@@ -753,6 +782,7 @@ export async function viewAdmin(ctx) {
           h('button', { type: 'button', onclick: () => save({ trial_ends_at: trialEnd(14, p.ended || !p.ends ? Date.now() : p.ends.getTime()) }) }, p.ended ? 'Start 14 more days' : 'Add 14 days'),
           h('button', { type: 'button', onclick: () => { status.value = 'active'; save({ trial_ends_at: null }); } }, 'Mark active')),
         collectionBox(r),
+        teamBox(r),
         h('div', null, h('button', { type: 'button', class: 'danger', onclick: del }, 'Delete restaurant'))));
       card.addEventListener('toggle', () => { if (card.open) openCards.add(r.id); else openCards.delete(r.id); });
       return card;
@@ -762,9 +792,32 @@ export async function viewAdmin(ctx) {
   paintRestaurants();
 
   // the page: four tabs, so each job is one screen (#/admin/<tab>, remembered on this device)
+  // help messages from restaurants (saved by the portal's Help tab, as well as emailed)
+  const inbox = h('div', { class: 'stack inbox' });
+  const loadInbox = async () => {
+    let rows = [];
+    try { rows = await cloud.listHelpMessages(); } catch { fill(inbox); return; }
+    const open = rows.filter((x) => x.status === 'open');
+    const answered = rows.filter((x) => x.status !== 'open');
+    const nameOf = (id) => restaurants.find((x) => x.id === id)?.name || 'A restaurant';
+    counts.restaurants = open.length; badges();
+    const card = (x) => h('div', { class: `card stack msg ${x.status}` },
+      h('div', null, h('strong', null, nameOf(x.restaurant_id)), h('span', { class: 'badge' }, x.topic || 'Help')),
+      h('p', { class: 'muted small' }, `${x.author_name || 'Someone'}${x.author_email ? ` · ${x.author_email}` : ''} · ${whenText(x.created_at)}`),
+      h('p', { class: 'small', style: 'white-space:pre-wrap' }, x.body),
+      h('div', { class: 'row' },
+        x.author_email && h('a', { class: 'linkbtn', href: `mailto:${x.author_email}?subject=${encodeURIComponent(`Re: ${x.topic || 'your question'} (${nameOf(x.restaurant_id)})`)}` }, 'Reply by email'),
+        h('button', { type: 'button', onclick: async () => {
+          try { await cloud.setHelpMessageStatus(x.id, x.status === 'open' ? 'done' : 'open'); loadInbox(); } catch (err) { toast(err.message, 4000); }
+        } }, x.status === 'open' ? 'Mark answered' : 'Reopen')));
+    fill(inbox, h('h2', null, `Help messages${open.length ? ` (${open.length})` : ''}`),
+      open.length ? open.map(card) : h('p', { class: 'muted' }, 'No questions waiting.'),
+      answered.length > 0 && h('details', null, h('summary', { class: 'muted small' }, `Answered (${answered.length})`), h('div', { class: 'stack', style: 'margin-top:.6rem' }, answered.slice(0, 50).map(card))));
+  };
+
   const TABS = [['restaurants', 'Restaurants'], ['people', 'People'], ['invites', 'Invites'], ['community', 'Community']];
   const panels = {
-    restaurants: [restBox,
+    restaurants: [inbox, h('h2', null, 'Restaurants'), restBox,
       h('p', { class: 'muted small', style: 'margin-top:1.4rem' }, 'Until billing is connected, set a restaurant’s plan by hand: Active, or Trial until its end date. Anything else, or a trial that has ended, hides its collection and returns its staff to the free plan. “View their portal” opens the page their team uses on jonesridgekitchen.com; the first time, sign in there with this admin account.')],
     people: [people.el],
     invites: [
@@ -789,7 +842,7 @@ export async function viewAdmin(ctx) {
   let saved = '';
   try { saved = sessionStorage.getItem('admin-tab') || ''; } catch { /* private mode */ }
   let tab = [fromHash, saved].find((t) => panels[t]) || 'restaurants';
-  const counts = { community: pending.length, invites: 0 };
+  const counts = { community: pending.length, invites: 0, restaurants: 0 };
   const tabBtns = TABS.map(([k, label]) => [k, h('button', { type: 'button', role: 'tab', class: 'admintab', id: `admintab-${k}`, 'aria-controls': `adminpanel-${k}`,
     onclick: () => show(k) }, label, h('span', { class: 'count' }))]);
   const panelEls = Object.fromEntries(TABS.map(([k]) => [k, h('div', { role: 'tabpanel', id: `adminpanel-${k}`, 'aria-labelledby': `admintab-${k}`, class: 'adminpanel' }, panels[k])]));
@@ -811,6 +864,7 @@ export async function viewAdmin(ctx) {
   } }, tabBtns.map(([, b]) => b));
   badges();
   show(tab);
+  loadInbox();
   fill(ctx.$app, ctx.pageHead('Admin tools'), tabBar, Object.values(panelEls));
   window.scrollTo(0, 0);
 }

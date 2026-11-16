@@ -881,3 +881,8 @@ details.person[open] > summary { background: var(--stone); }
 details.person > .stack { padding: .3rem .1rem .9rem 2.8rem; }
 details.admincodes > summary { cursor: pointer; }
 details.admincodes > summary h2 { display: inline; }
+
+/* Admin tools: help messages from restaurants */
+.inbox .msg.open { border-left: 4px solid var(--rust); }
+.inbox .msg.done { opacity: .8; }
+.inbox > h2:first-child { margin-top: .4rem; }
