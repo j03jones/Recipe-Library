@@ -46,6 +46,25 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Restaurant kitchens, part 2: costing access, team, prep list, plates, photos, help inbox (v0.30)
+
+- **Costing belongs to the owner.** Owners always see and change food costs, prices and plates; on their **Team**
+  tab they set each staff member to *No costing / Can view costing / Can edit costing* (new staff start with none).
+  Without access there is no Costing tab and no cost on recipes or the prep list. The admin can set it too, on the
+  restaurant's card (*Team and costing access*). Enforced by the database (`supabase/add_restaurant_team.sql`).
+- **Team** (owners): everyone on the team with their email, costing access, and Remove; plus invites.
+- **New**: recipes Joseph adds are marked New for each person until they have seen them (kept per device), with a
+  "1 new recipe since your last visit" note and a New filter.
+- **Prep list**: pick recipes and batches (or *Add to prep list* on a recipe); the ingredients are scaled, added up
+  and sorted by aisle, with tick boxes, Print and Copy as text, and the estimated food cost for those who see costing.
+  Kept on the device.
+- **Plates**: on Costing, a menu item made of several recipes (portions of each): plate cost, food cost %, price at
+  the target.
+- **Photos** on the team's own recipes (Add, Change, Remove), shrunk on the device before upload.
+- **Help inbox**: help messages are kept for Joseph as well as emailed. *Admin tools > Restaurants* opens with
+  **Help messages** (counted on the tab) with *Reply by email* and *Mark answered*; the sender sees theirs under
+  *Your messages* (With Joseph / Answered).
+
 ## Restaurant kitchens: their own recipes, costing and help (v0.29)
 
 A restaurant's page on jonesridgekitchen.com/my-meals/ is now its kitchen, in tabs (`web/portal/kitchen.js`):

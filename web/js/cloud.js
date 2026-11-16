@@ -161,7 +161,7 @@ export async function loadMe() {
   const u = currentUser();
   const [profile] = await authed(`/rest/v1/profiles?id=eq.${enc(u.id)}&select=display_name,role,avatar`);
   const memberships = await authed(
-    `/rest/v1/restaurant_members?user_id=eq.${enc(u.id)}&select=member_role,restaurant:restaurants(*)`);   // * so trial_ends_at comes along once add_restaurant_trials.sql has run
+    `/rest/v1/restaurant_members?user_id=eq.${enc(u.id)}&select=*,restaurant:restaurants(*)`);   // * so trial_ends_at comes along once add_restaurant_trials.sql has run
   return { id: u.id, email: u.email, displayName: profile?.display_name || '', role: profile?.role || 'student', avatar: profile?.avatar || null, memberships };
 }
 
@@ -262,6 +262,19 @@ export async function loadKitchen(restaurantId) {
   const [row] = await authed(`/rest/v1/restaurant_kitchen?restaurant_id=eq.${enc(restaurantId)}&select=prices`);
   return row?.prices || {};
 }
+/** The team as owners and the admin see it: [{ user_id, display_name, email, member_role, costing, joined_at }]. */
+export const restaurantTeam = (restaurantId) => authed('/rest/v1/rpc/restaurant_team', { method: 'POST', body: { p_restaurant: restaurantId } });
+/** An owner (or the admin) sets what a staff member may do with the costing: 'none', 'view' or 'edit'. */
+export const setMemberCosting = (restaurantId, userId, costing) =>
+  authed('/rest/v1/rpc/set_member_costing', { method: 'POST', body: { p_restaurant: restaurantId, p_user: userId, p_costing: costing } });
+/** A help message from a restaurant, kept for the admin (supabase/add_restaurant_team.sql). */
+export const sendHelpMessage = ({ restaurantId, topic, body, name, email }) => authed('/rest/v1/restaurant_messages', {
+  method: 'POST', headers: { Prefer: 'return=minimal' },
+  body: { restaurant_id: restaurantId, topic, body, author_name: name || '', author_email: email || '' } });
+/** Help messages: the admin sees every restaurant's, a team member their own. Newest first. */
+export const listHelpMessages = (restaurantId = null) =>
+  authed(`/rest/v1/restaurant_messages?${restaurantId ? `restaurant_id=eq.${enc(restaurantId)}&` : ''}select=*&order=created_at.desc&limit=200`);
+export const setHelpMessageStatus = (id, status) => authed(`/rest/v1/restaurant_messages?id=eq.${enc(id)}`, { method: 'PATCH', body: { status } });
 export const saveKitchen = (restaurantId, prices) => authed('/rest/v1/restaurant_kitchen', {
   method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: { restaurant_id: restaurantId, prices } });
 export const createInvite = (kind, restaurantId = null, memberRole = 'staff', maxUses = 1, days = 14) =>

@@ -9,6 +9,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -192,6 +193,11 @@ class Fake:
     def member_of(self, user, rid, role=None):
         return any(m["user_id"] == user["id"] and m["restaurant_id"] == rid and (not role or m["member_role"] == role) for m in self.members)
 
+    def costing_of(self, user, rid):
+        """add_restaurant_team.sql: owners always edit; staff as the owner set them."""
+        m = next((m for m in self.members if m["user_id"] == user["id"] and m["restaurant_id"] == rid), None)
+        return "none" if not m else "edit" if m["member_role"] == "owner" else m.get("costing", "none")
+
     def team_can_change(self, user, row):
         """add_restaurant_kitchen.sql: the team changes its own recipes (staff the ones they added), never the chef's."""
         if not row or row["scope"] != "restaurant" or not self.member_of(user, row["restaurant_id"]):
@@ -220,7 +226,7 @@ class Fake:
             return await route.abort()
         u = urlparse(req.url)
         path, q = u.path, parse_qs(u.query)
-        body = json.loads(req.post_data) if req.post_data else None
+        body = json.loads(req.post_data) if req.post_data and "/storage/" not in req.url else None
         self.log.append((req.method, path))
         user = self.by_token(req)
 
@@ -318,17 +324,57 @@ class Fake:
                 if user["role"] != "admin" and not any(m["user_id"] == user["id"] for m in team):
                     return await ok([])
                 return await ok([{"user_id": m["user_id"], "member_role": m["member_role"]} for m in team])
-            return await ok([{"member_role": m["member_role"], "restaurant": self.restaurants[m["restaurant_id"]]}
+            return await ok([{**m, "costing": m.get("costing", "none"), "restaurant": self.restaurants[m["restaurant_id"]]}
                              for m in self.members if m["user_id"] == user["id"]])
+        if path == "/rest/v1/rpc/restaurant_team":
+            rid_ = body["p_restaurant"]
+            if user["role"] != "admin" and not self.member_of(user, rid_, "owner"):
+                return await ok({"message": "Only the restaurant's owners can see the team."}, 400)
+            byid = {x["id"]: x for x in self.users.values()}
+            return await ok([dict(user_id=m["user_id"], display_name=byid[m["user_id"]]["name"] or "", email=byid[m["user_id"]]["email"],
+                                  member_role=m["member_role"], costing="edit" if m["member_role"] == "owner" else m.get("costing", "none"),
+                                  joined_at="2026-11-16T10:00:00Z") for m in self.members if m["restaurant_id"] == rid_])
+        if path == "/rest/v1/rpc/set_member_costing":
+            rid_ = body["p_restaurant"]
+            if user["role"] != "admin" and not self.member_of(user, rid_, "owner"):
+                return await ok({"message": "Only the restaurant's owners can change who sees the costing."}, 400)
+            m = next((m for m in self.members if m["restaurant_id"] == rid_ and m["user_id"] == body["p_user"] and m["member_role"] == "staff"), None)
+            if not m:
+                return await ok({"message": "That person is not on this restaurant's staff."}, 400)
+            m["costing"] = body["p_costing"]
+            return await ok(None)
+        if path == "/rest/v1/rpc/remove_member":
+            rid_ = body["p_restaurant"]
+            if user["role"] != "admin" and not self.member_of(user, rid_, "owner"):
+                return await ok({"message": "You are not allowed to remove members of this restaurant."}, 400)
+            self.members[:] = [m for m in self.members if not (m["restaurant_id"] == rid_ and m["user_id"] == body["p_user"])]
+            return await ok(None)
+        if path == "/rest/v1/restaurant_messages":
+            msgs = self.__dict__.setdefault("messages", {})
+            if req.method == "POST":
+                if not self.member_of(user, body["restaurant_id"]):
+                    return await ok({"message": "new row violates row-level security policy"}, 403)
+                mid = str(uuid.uuid4())
+                msgs[mid] = dict(body, id=mid, author_id=user["id"], status="open", created_at=f"2026-11-16T12:00:{len(msgs):02d}Z")
+                return await ok(None, 201)
+            if req.method == "PATCH":
+                if user["role"] != "admin" or eq("id") not in msgs:
+                    return await ok([])
+                msgs[eq("id")].update(body)
+                return await ok(None, 204)
+            rows = [x for x in msgs.values() if user["role"] == "admin" or x["author_id"] == user["id"]]
+            if eq("restaurant_id"):
+                rows = [x for x in rows if x["restaurant_id"] == eq("restaurant_id")]
+            return await ok(sorted(rows, key=lambda x: x["created_at"], reverse=True))
         if path == "/rest/v1/restaurant_kitchen":   # a restaurant's shared price book (add_restaurant_kitchen.sql)
             kit = self.__dict__.setdefault("kitchens", {})
             if req.method == "GET":
                 rid_ = eq("restaurant_id")
-                if user["role"] != "admin" and not self.member_of(user, rid_):
+                if user["role"] != "admin" and self.costing_of(user, rid_) == "none":
                     return await ok([])
                 return await ok([{"prices": kit[rid_]}] if rid_ in kit else [])
             rid_ = body["restaurant_id"]
-            if user["role"] != "admin" and not (self.member_of(user, rid_) and self.on_plan(self.restaurants[rid_])):
+            if user["role"] != "admin" and not (self.costing_of(user, rid_) == "edit" and self.on_plan(self.restaurants[rid_])):
                 return await ok({"message": "new row violates row-level security policy"}, 403)
             kit[rid_] = body["prices"]
             return await ok(None, 201)
@@ -405,6 +451,18 @@ class Fake:
             return await ok({"ok": True, "code": code})
         if path.startswith("/storage/v1/object/list/photos"):
             return await ok([])
+        files = self.__dict__.setdefault("files", {})
+        if path.startswith("/storage/v1/object/photos/") and req.method == "POST":
+            name = path[len("/storage/v1/object/photos/"):]
+            if user["role"] != "admin" and not name.startswith(f"recipes/{user['id']}/") and not name.startswith(f"avatars/{user['id']}/"):
+                return await ok({"message": "new row violates row-level security policy"}, 403)
+            files[name] = req.post_data_buffer
+            return await ok({"Key": f"photos/{name}"})
+        if path.startswith("/storage/v1/object/authenticated/photos/"):
+            name = path[len("/storage/v1/object/authenticated/photos/"):]
+            if name not in files:
+                return await ok({"message": "Object not found"}, 404)
+            return await route.fulfill(status=200, headers={**CORS, "content-type": "image/jpeg"}, body=files[name])
         if path == "/storage/v1/object/photos" and req.method == "DELETE":
             return await ok([])
         if path.startswith("/rest/v1/rpc/") and "household" in path:
@@ -1356,8 +1414,8 @@ async def run():
         K = PORTAL + f"#kitchen/{rid}"
         await rae.goto(K); await rae.reload()
         await rae.wait_for_selector(".jrk-subnav")
-        check("a restaurant's page has Recipes, Costing and Help tabs, and Team for owners",
-              await rae.locator(".jrk-subnav a").all_inner_texts() == ["Recipes", "Costing", "Help", "Team"])
+        check("a restaurant's page has Recipes, Prep list, Costing and Help tabs, and Team for owners",
+              await rae.locator(".jrk-subnav a").all_inner_texts() == ["Recipes", "Prep list", "Costing", "Help", "Team"])
         await rae.click("a:has-text('+ Add a recipe')")
         await rae.wait_for_selector(".jrk-editor")
         await rae.screenshot(path="/tmp/portal_editor.png", full_page=True)
@@ -1438,9 +1496,30 @@ async def run():
         book = fake.kitchens.get(rid, {})
         check("the prices are kept for the restaurant", any(v["p"] == 2 and v["per"] == "lb" for v in book.get("items", {}).values())
               and book.get("portions", {}).get(salsa["id"]) == 16 and book.get("menu", {}).get(salsa["id"]) == 2, book)
+        # costing is the owner's to share: staff start with none, the owner gives view or edit on the Team tab
+        await joe.goto(K + f"/{salsa['id']}"); await joe.reload()
+        await joe.wait_for_selector(".jrk-recipe")
+        check("staff start with no costing: no tab, no food cost on recipes",
+              await joe.locator(".jrk-subnav a:has-text('Costing')").count() == 0 and "Food cost" not in await joe.inner_text(".jrk-recipe"))
+        await joe.goto(K + "/costing")
+        await joe.wait_for_selector("text=Costing is kept by your restaurant’s owner")
+        check("and the costing pages say so", fake.costing_of(fake.users["joe@maple.test"], rid) == "none")
+        await rae.goto(K + "/team")
+        await rae.wait_for_selector(".jrk-teamlist")
+        tl = await rae.inner_text(".jrk-teamlist")
+        check("the owner's Team tab lists the team with emails", "joe@maple.test" in tl and "rae@maple.test" in tl and "owner" in tl.lower(), tl)
+        await rae.select_option("select[aria-label='Costing for Joe Line']", "view")
+        await rae.wait_for_timeout(600)
+        check("the owner lets a staff member view the costing", fake.costing_of(fake.users["joe@maple.test"], rid) == "view")
         await joe.goto(K + f"/cost/{salsa['id']}"); await joe.reload()
         await joe.wait_for_selector(".jrk-summary")
-        check("and shared with the whole team", "$0.50" in await joe.inner_text(".jrk-summary"))
+        check("they then see the shared costing, read-only", "$0.50" in await joe.inner_text(".jrk-summary")
+              and await joe.locator("input[aria-label='Price of tomatoes']").is_disabled())
+        await rae.select_option("select[aria-label='Costing for Joe Line']", "edit")
+        await rae.wait_for_timeout(600)
+        await joe.reload()
+        await joe.wait_for_selector(".jrk-summary")
+        check("and with edit, can change prices", not await joe.locator("input[aria-label='Price of tomatoes']").is_disabled())
         await rae.goto(K + f"/{salsa['id']}")
         await rae.wait_for_selector(".jrk-facts")
         check("the recipe page shows its food cost", "$8.00 a batch, $0.50 a portion" in await rae.inner_text(".jrk-facts"))
@@ -1463,11 +1542,99 @@ async def run():
               and "Costing and prices" in sent_help[0]["message"] and "case of tomatoes" in sent_help[0]["message"], sent_help)
         await joe.goto(K + "/help")
         await joe.wait_for_selector("textarea[aria-label='Your message']")
-        await joe.fill("textarea[aria-label='Your message']", "Hello")
+        await joe.fill("textarea[aria-label='Your message']", "Is the slaw gluten free?")
+        await joe.click("button:has-text('Send to Joseph')")
+        await joe.wait_for_selector("text=Thanks. Joseph will reply")
+        check("help is kept in Joseph's inbox even where the website's email form isn't there",
+              any(x["body"].startswith("Is the slaw") and x["author_email"] == "joe@maple.test" and x["restaurant_id"] == rid for x in fake.messages.values()))
+        await joe.wait_for_selector(".jrk-help li")
+        check("and the sender sees it under Your messages", "with joseph" in (await joe.inner_text(".jrk-help")).lower())
+        await jctx.route("**/rest/v1/restaurant_messages*", lambda route: route.abort())
+        await joe.goto(K + "/help"); await joe.reload()
+        await joe.wait_for_selector("textarea[aria-label='Your message']")
+        await joe.fill("textarea[aria-label='Your message']", "Hello again")
         await joe.click("button:has-text('Send to Joseph')")
         await joe.wait_for_selector("a:has-text('Send it as an email instead')")
-        check("where the website's form isn't there, help is offered as a ready email",
+        check("when neither way works, help is offered as a ready email",
               (await joe.get_attribute("a:has-text('Send it as an email instead')", "href")).startswith("mailto:hello@jonesridgekitchen.com"))
+        await jctx.unroute("**/rest/v1/restaurant_messages*")
+
+        # ---- New recipes from the chef since the last visit
+        from datetime import datetime, timezone
+        fake.recipes["coll2"] = dict(id="coll2", owner_id=fake.users["chef@example.com"]["id"], scope="restaurant", restaurant_id=rid, status="approved",
+                                     title="Smoked Brisket", categories=["Mains"], author_name=None, review_note=None, source_recipe_id=None,
+                                     created_at=datetime.now(timezone.utc).isoformat(),
+                                     body=dict(tags=[], yq="10", yu="servings", yr="", dir="Smoke low and slow.", ings=[["5", "", "lb", "brisket", ""]]))
+        await rae.goto(K); await rae.reload()
+        await rae.wait_for_selector(".jrk-newnote")
+        check("recipes the chef added since the last visit are marked New",
+              "1 new recipe" in await rae.inner_text(".jrk-newnote") and await rae.locator(".jrk-recipes li:has-text('Smoked Brisket') .jrk-tag.new").count() == 1
+              and await rae.locator(".jrk-recipes li:has-text('Maple House Vinaigrette') .jrk-tag.new").count() == 0)
+        await rae.reload()
+        await rae.wait_for_selector(".jrk-recipes")
+        check("and not once they have been seen", await rae.locator(".jrk-tag.new").count() == 0)
+
+        # ---- prep list: recipes and batches, one list by aisle, with the cost for those who see costing
+        await rae.goto(K + "/prep")
+        await rae.wait_for_selector("select[aria-label='Add a recipe to the prep list']")
+        await rae.select_option("select[aria-label='Add a recipe to the prep list']", label="House Salsa Roja")
+        await rae.fill("input[aria-label='Batches of House Salsa Roja']", "2")
+        await rae.press("input[aria-label='Batches of House Salsa Roja']", "Tab")
+        await rae.select_option("select[aria-label='Add a recipe to the prep list']", label="Smoked Brisket")
+        await rae.wait_for_selector(".jrk-preplines li:has-text('brisket')")
+        prep = await rae.inner_text(".jrk-prepout")
+        check("the prep list adds up the ingredients for every batch", "8 lb" in prep.lower() and "tomato" in prep.lower() and "5 lb" in prep, prep[:300])
+        check("and shows its food cost to people who see costing", "Estimated food cost: $16.00" in prep, prep[-200:])
+        await rae.screenshot(path="/tmp/portal_prep.png", full_page=True)
+
+        # ---- plates: several recipes in one menu item
+        await rae.goto(K + "/plate/new")
+        await rae.wait_for_selector("input[aria-label='Plate name']")
+        await rae.fill("input[aria-label='Plate name']", "Salsa Sampler")
+        await rae.fill("input[aria-label='Plate menu price']", "4")
+        await rae.select_option("select[aria-label='Add a recipe to the plate']", label="House Salsa Roja")
+        await rae.fill("input[aria-label='Portions of House Salsa Roja']", "2")
+        await rae.press("input[aria-label='Portions of House Salsa Roja']", "Tab")
+        await rae.wait_for_selector(".jrk-summary:has-text('$1.00')")
+        check("a plate costs its recipes' portions", "25%" in await rae.inner_text(".jrk-summary"))
+        await rae.click("button:has-text('Save plate')")
+        await rae.wait_for_selector("table.jrk-plates")
+        check("plates are listed on Costing with their food cost", "Salsa Sampler" in await rae.inner_text("table.jrk-plates")
+              and "25%" in await rae.inner_text("table.jrk-plates") and fake.kitchens[rid]["plates"][0]["parts"] == [{"id": salsa["id"], "n": 2}])
+
+        # ---- a photo on one of the team's recipes
+        import base64
+        png = Path(tempfile.mkdtemp()) / "salsa.png"
+        png.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC"))
+        await rae.goto(K + f"/{salsa['id']}")
+        await rae.wait_for_selector(".jrk-photobtns")
+        async with rae.expect_file_chooser() as fc:
+            await rae.click("button:has-text('Add a photo')")
+        await (await fc.value).set_files(str(png))
+        await rae.wait_for_selector(".jrk-photo img", timeout=15000)
+        check("the team can add a photo to their recipe", (salsa.get("photo") or "").startswith(f"recipes/{fake.users['rae@maple.test']['id']}/"), salsa.get("photo"))
+        await rae.goto(K + "/coll1")
+        await rae.wait_for_selector(".jrk-recipe")
+        check("but not to the chef's", await rae.locator(".jrk-photobtns").count() == 0)
+
+        # ---- the admin: help inbox, and each restaurant's team with costing access
+        await admin.goto(URL + "#/admin/restaurants")
+        await admin.wait_for_selector(".inbox .msg")
+        check("restaurant help messages wait in Admin tools, counted on the tab",
+              "Is the slaw gluten free?" in await admin.inner_text(".inbox") and (await admin.inner_text(".admintab:has-text('Restaurants') .count")).strip() == "2")
+        check("with a Reply by email link to the sender", (await admin.get_attribute(".inbox .msg a:has-text('Reply by email') >> nth=0", "href")).startswith("mailto:"))
+        await admin.click(".inbox .msg:has-text('gluten free') button:has-text('Mark answered')")
+        await admin.wait_for_timeout(700)
+        check("and can be marked answered", any(x["status"] == "done" and "gluten" in x["body"] for x in fake.messages.values())
+              and (await admin.inner_text(".admintab:has-text('Restaurants') .count")).strip() == "1")
+        await open_card(admin, "Maple Street Grill")
+        await admin.click(".restcard:has-text('Maple Street Grill') details.team summary")
+        await admin.wait_for_selector(".restcard:has-text('Maple Street Grill') details.team select")
+        check("the admin sees a restaurant's team and can set costing access",
+              await admin.input_value(".restcard:has-text('Maple Street Grill') select[aria-label='Costing for Joe Line']") == "edit")
+        await admin.select_option(".restcard:has-text('Maple Street Grill') select[aria-label='Costing for Joe Line']", "none")
+        await admin.wait_for_timeout(600)
+        check("and take it away", fake.costing_of(fake.users["joe@maple.test"], rid) == "none")
 
         # the admin's "View their portal": the restaurant's page as its team sees it, marked as a preview
         await admin.goto(PORTAL + f"?preview={rid}")

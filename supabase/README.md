@@ -189,3 +189,11 @@ add recipes to its collection while its plan is on. The chef's recipes stay read
 delete the recipes they added, owners any the team added. Adds `restaurant_kitchen`, one shared price book per
 restaurant (members read it, and change it while the plan is on). `test/test.sql` checks it.
 
+## Restaurant teams: costing access and the help inbox
+`add_restaurant_team.sql` (run after `add_restaurant_kitchen.sql`, safe to run again) adds
+`restaurant_members.costing` ('none', 'view', 'edit'; owners always edit) and makes the price book
+(`restaurant_kitchen`) readable and changeable only by those allowed. `restaurant_team()` lists a restaurant's team
+for its owners and the admin; `set_member_costing()` is how they change access. `restaurant_messages` keeps help
+messages: a member sends, the admin reads and closes, the sender sees their own (20 a day each).
+`test/test.sql` checks it.
+
