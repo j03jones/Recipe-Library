@@ -1,5 +1,6 @@
 // Your ingredient prices, for costing recipes.
-// { items: { [food]: { p: dollars, per: 'lb' } }, menu: { [recipeId]: menu price }, target: food cost % }
+// { items: { [food]: { p: dollars, per: 'lb', src?: 'Sysco #1234567', at?: '2026-11-16' } }, menu: { [recipeId]: menu price }, target: food cost % }
+// src and at say where a price came from (a supplier price list) and when.
 // Kept on this device and, signed in, with the account (see app.js). Nobody else sees them.
 import { PRICE_UNITS } from './nutrition.js';
 
@@ -17,7 +18,10 @@ export function clean(v) {
   if (v.items && typeof v.items === 'object' && !Array.isArray(v.items)) {
     for (const [key, e] of Object.entries(v.items).slice(0, MAX_ITEMS)) {
       const p = money(e?.p);
-      if (p != null && key && key.length <= 80 && Object.hasOwn(PRICE_UNITS, e.per)) out.items[key] = { p, per: e.per };
+      if (p == null || !key || key.length > 80 || !Object.hasOwn(PRICE_UNITS, e.per)) continue;
+      out.items[key] = { p, per: e.per };
+      if (typeof e.src === 'string' && e.src.trim()) out.items[key].src = e.src.trim().slice(0, 60);
+      if (typeof e.at === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.at)) out.items[key].at = e.at;
     }
   }
   if (v.menu && typeof v.menu === 'object' && !Array.isArray(v.menu)) {
@@ -50,7 +54,7 @@ function change(fn) {
 export const setPrice = (key, p, per) => change((d) => {
   const v = money(typeof p === 'string' ? parseFloat(p) : p);
   if (v == null || p === '' || p == null) delete d.items[key];
-  else d.items[key] = { p: v, per };
+  else d.items[key] = { p: v, per };          // typed by hand: no longer the supplier's price
 });
 export const removePrice = (key) => change((d) => { delete d.items[key]; });
 export const setMenuPrice = (id, p) => change((d) => {
@@ -58,6 +62,14 @@ export const setMenuPrice = (id, p) => change((d) => {
   if (v == null || !(v > 0)) delete d.menu[id]; else d.menu[id] = v;
 });
 export const setTarget = (pct) => change((d) => { d.target = clean({ target: pct }).target; });
+
+/** Add many prices at once (a supplier price list): { food: { p, per, src, at } }. Returns how many. */
+export function addMany(items) {
+  const d = load();
+  const n = Object.keys(items).length;
+  if (n) save({ ...d, items: { ...d.items, ...items } });
+  return n;
+}
 
 /** Two price books combined (first sign-in on a device that already has one): this device's prices win ties. */
 export function merge(a, b) {
