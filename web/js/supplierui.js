@@ -17,8 +17,10 @@ const label = (key) => identify(key).entry?.name || key;
 
 /**
  * The import panel. `onDone(n, supplier)` is called after prices are added (or with 0 when cancelled).
+ * `book` and `save` default to your own price book; a restaurant's kitchen passes its shared one
+ * (`save(items)` may be async and returns how many were saved).
  */
-export function supplierImport({ h, fill, toast, file, text, onDone }) {
+export function supplierImport({ h, fill, toast, file, text, onDone, book: bookIn, save = prices.addMany }) {
   const root = h('section', { class: 'card supplier', 'aria-label': 'Import a supplier price list' });
   let override = null;
   let read;
@@ -27,7 +29,7 @@ export function supplierImport({ h, fill, toast, file, text, onDone }) {
   let filter = 'all';
   let shown = PAGE;
   const supplierIn = h('input', { type: 'text', maxlength: '40', value: guessSupplier(file?.name, text), placeholder: 'Sysco, SGC, Ben E. Keith…', 'aria-label': 'Supplier' });
-  const book = prices.load().items;
+  const book = bookIn || prices.load().items;
   const known = [...new Set([...FOODS.map((f) => f[0]), ...Object.keys(book)])].sort();
   const listId = `foods-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -72,10 +74,12 @@ export function supplierImport({ h, fill, toast, file, text, onDone }) {
       || (filter === 'food' && r.price && !foods[i]) || (filter === 'noprice' && !r.price);
     const visible = rows.map((r, i) => [r, i]).filter(([r, i]) => pass(r, i));
     const chip = (key, text, n) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(filter === key), onclick: () => { filter = key; shown = PAGE; paint(); } }, `${text} ${n}`);
-    const add = h('button', { class: 'primary', type: 'button', disabled: !tickedRows.length, onclick: () => {
+    const add = h('button', { class: 'primary', type: 'button', disabled: !tickedRows.length, onclick: async (e) => {
       const supplier = supplierIn.value.trim();
       const items = toPrices(rows.map((r, i) => ({ ...r, food: foods[i] })), new Set(tickedRows), supplier, today());
-      const n = prices.addMany(items);
+      e.target.disabled = true;
+      let n;
+      try { n = await save(items); } catch (err) { e.target.disabled = false; toast(err?.message || 'Could not save the prices'); return; }
       toast(`Added ${n} price${n === 1 ? '' : 's'}${supplier ? ` from ${supplier}` : ''}`);
       onDone?.(n, supplier);
     } }, `Add ${tickedRows.length} price${tickedRows.length === 1 ? '' : 's'}`);

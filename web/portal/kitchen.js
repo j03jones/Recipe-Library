@@ -26,6 +26,7 @@ import { clean as cleanPrices, DEFAULT_TARGET } from '../js/prices.js';
 import { byAisle, itemName, shoppingList } from '../js/shopping.js';
 import { fromPlainText } from '../js/transfer.js';
 import { parseIngredientLine } from '../js/webimport.js';
+import { supplierImport } from '../js/supplierui.js';
 import { Frac, adaptedLine, creditLine, formatIngredient, formatYield, scaleRecipe } from '../js/units.js';
 import { busy, confirmBox, field, fill, h, screen, toast } from './ui.js';
 
@@ -685,6 +686,26 @@ async function viewSheet(m) {
   const body = h('tbody');
   const extra = h('div');
 
+  // a purveyor's order guide or price list (Sysco, SGC, Ben E. Keith...): reviewed, then added to the kitchen's prices
+  const supPanel = h('div');
+  const supIn = h('input', { type: 'file', accept: '.csv,.txt,text/csv,text/plain,text/tab-separated-values', hidden: true, 'aria-label': 'Supplier price list file' });
+  supIn.addEventListener('change', async () => {
+    const f = supIn.files[0];
+    supIn.value = '';
+    if (!f) return;
+    let text;
+    try { text = await f.text(); } catch { toast('Could not read that file'); return; }
+    fill(supPanel, supplierImport({ h, fill, toast, file: f, text, book: cache.get(r.id)?.kitchen.items || {},
+      save: async (items) => { await changeKitchen(m, (d) => { Object.assign(d.items, items); }); return Object.keys(items).length; },
+      onDone: () => {
+        fill(supPanel);
+        rows = ingredientSheet(data.recipes, cache.get(r.id).kitchen);
+        paint();
+        summary.scrollIntoView({ block: 'center' });
+      } }));
+    supPanel.scrollIntoView({ block: 'start' });
+  });
+
   async function setPrice(key, value, per) {
     const v = String(value).trim();
     const p = parseFloat(v);
@@ -741,6 +762,10 @@ async function viewSheet(m) {
   paint();
   frame(m, 'costing', costSwitch(m, 'sheet'),
     h('p', null, 'Every ingredient in your recipes and plates, once. Enter what you pay and per what (a case price works: per lb, per each, per gallon…); it is used in every recipe with that ingredient.'),
+    can.costEdit && h('div', { class: 'jrk-row jrk-supimport' },
+      h('button', { class: 'btn line', type: 'button', onclick: () => supIn.click() }, 'Import a supplier price list'), supIn,
+      h('span', { class: 'note' }, 'An order guide or price list exported as CSV from Sysco, SGC, Ben E. Keith, US Foods or any distributor, with prices.')),
+    supPanel,
     h('div', { class: 'jrk-row jrk-find' }, search, which),
     summary,
     h('div', { class: 'jrk-tablewrap' }, h('table', { class: 'jrk-cost jrk-sheet' },
