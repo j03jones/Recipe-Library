@@ -14,6 +14,7 @@ P="$BIN/psql -h $DIR -p $PORT -U postgres -v ON_ERROR_STOP=1 -X -q"
 SCHEMA="$(mktemp)"; sed "s/CHANGE-ME@example.com/admin@x.test/" "$HERE/../schema.sql" > "$SCHEMA"; chmod 644 "$SCHEMA"
 run "$P -f \"$HERE/stubs.sql\" postgres"
 run "$P -f $SCHEMA postgres"
+run "$P -f \"$HERE/../perf_policies_and_indexes.sql\" postgres"
 run "$P -f \"$HERE/test.sql\" postgres" | tee "$DIR/out.txt" || true
 run "$P -f \"$HERE/clients.sql\" postgres" 2>&1 | tee -a "$DIR/out.txt" || echo "FAIL: clients.sql" >> "$DIR/out.txt"
 grep -q "FAIL" "$DIR/out.txt" && { echo "SOME CHECKS FAILED"; exit 1; } || true
