@@ -269,3 +269,6 @@
   #jrk-portal .suprow { grid-template-columns: auto minmax(0, 1fr) 16rem; }
   #jrk-portal .supfood { grid-column: 3; }
 }
+#jrk-portal .jrk-pricetext { white-space: nowrap; font-variant-numeric: tabular-nums; }
+#jrk-portal .jrk-managed { margin: .25rem 0 .75rem; }
+#jrk-portal .jrk-managed a { color: inherit; text-decoration: underline; }

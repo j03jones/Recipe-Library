@@ -46,6 +46,25 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Costing tiers: managed by Jones Ridge Kitchen, or self-service (v0.35)
+
+Costing is a service. Each restaurant has a **costing tier**, set by the admin on its card in Admin tools
+(*Costing: Managed by you / Self-service*):
+
+| | Managed (default) | Self-service (consultation tier) | Admin |
+|---|---|---|---|
+| See recipe costs, cost per portion, food cost % | yes | yes | yes |
+| Set target food cost %, menu prices, portions, plates | yes | yes | yes |
+| Import a supplier price list | hidden | yes | yes |
+| Change ingredient prices | hidden (shown as text) | yes | yes |
+
+On managed costing the price pages say the prices are kept by Jones Ridge Kitchen, with a link to *Ask Joseph*. The
+owner's per-login costing access (none / view / edit) still applies on both tiers. The database enforces it: a save
+from a managed restaurant's login keeps the ingredient prices as they were. The admin can always change them,
+from the restaurant's portal preview.
+
+Database change: `supabase/add_costing_tiers.sql` (`restaurants.costing_tier` and the price book guard).
+
 ## Recipe collection tools: several at once, edit history, meal prep refresh, duplicates, promote, backup (v0.33)
 
 - **Choose several** in the recipe collection and add them all to a restaurant's collection at once. Recipes it

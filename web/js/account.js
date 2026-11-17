@@ -757,6 +757,25 @@ export async function viewAdmin(ctx) {
       };
       status.addEventListener('change', () => save());
       seats.addEventListener('change', () => save());
+      // costing tier (add_costing_tiers.sql): managed by the admin (default) or self-service (consultation tier)
+      const tier = h('select', { 'aria-label': `Costing for ${r.name}` },
+        h('option', { value: 'managed' }, 'Managed by you'), h('option', { value: 'self_service' }, 'Self-service'));
+      tier.value = r.costing_tier === 'self_service' ? 'self_service' : 'managed';
+      tier.addEventListener('change', async () => {
+        const self = tier.value === 'self_service';
+        const ok = await ctx.confirmDialog(self
+          ? `Switch ${r.name} to self-service costing? Their logins with costing access can then change ingredient prices and import supplier price lists.`
+          : `Switch ${r.name} to managed costing? You keep their ingredient prices; their logins see the costs and can still set their target food cost %, menu prices and plates, but can’t change prices or import supplier lists.`,
+          self ? 'Make it self-service' : 'Make it managed');
+        if (!ok) { tier.value = r.costing_tier === 'self_service' ? 'self_service' : 'managed'; return; }
+        try {
+          await cloud.updateRestaurant(r.id, { costing_tier: tier.value }); r.costing_tier = tier.value;
+          toast(self ? 'Self-service costing on' : 'Costing managed by you'); paintRestaurants(openRest);
+        } catch (err) {
+          toast(/costing_tier/.test(err.message) ? 'The database needs supabase/add_costing_tiers.sql first' : err.message, 5000);
+          tier.value = r.costing_tier === 'self_service' ? 'self_service' : 'managed';
+        }
+      });
       const p = restaurantPlan(r);
       const del = async () => {
         let members = [];
@@ -781,6 +800,8 @@ export async function viewAdmin(ctx) {
           h('a', { class: 'linkbtn preview', href: `${PORTAL}?preview=${encodeURIComponent(r.id)}`, target: '_blank', rel: 'noopener' }, 'View their portal ↗'),
           h('a', { class: 'linkbtn sheet', href: `${PORTAL}?preview=${encodeURIComponent(r.id)}#kitchen/${encodeURIComponent(r.id)}/sheet`, target: '_blank', rel: 'noopener' }, 'Costing sheet ↗')),
         h('div', { class: 'row' }, h('label', { class: 'row' }, 'Plan', status), h('label', { class: 'row' }, 'Logins', seats)),
+        h('div', { class: 'row' }, h('label', { class: 'row' }, 'Costing', tier),
+          h('span', { class: 'muted small' }, r.costing_tier === 'self_service' ? 'They keep their own ingredient prices.' : 'You keep their ingredient prices; they see the costs and set their target %.')),
         planLine(r),
         p.trial && h('div', { class: 'row' },
           h('button', { type: 'button', onclick: () => save({ trial_ends_at: trialEnd(14, p.ended || !p.ends ? Date.now() : p.ends.getTime()) }) }, p.ended ? 'Start 14 more days' : 'Add 14 days'),

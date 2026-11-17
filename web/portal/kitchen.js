@@ -140,8 +140,18 @@ function rights(m, plan) {
     edit: (r) => on && r.ours && (owner || r.row.owner_id === deps.me.id),
     costView: seesCosting(m),
     costEdit: (deps.preview || plan.on) && costingLevel(m) === 'edit',
+    // ingredient prices and supplier lists: the admin's on managed costing (the default), theirs on self-service
+    prices: (deps.preview || plan.on) && costingLevel(m) === 'edit' && (deps.preview || selfService(m)),
   };
 }
+/** Costing tiers (add_costing_tiers.sql): 'managed' (Jones Ridge Kitchen keeps the ingredient prices) or 'self_service'. */
+const selfService = (m) => m.restaurant.costing_tier === 'self_service';
+/** A price, read only: "$2.50 / lb", or a dash. */
+const priceText = (price) => h('span', { class: 'jrk-pricetext' }, price ? `${money(price.p)} / ${PRICE_UNITS[price.per]?.label || price.per}` : '—');
+/** Said where ingredient prices are on managed costing (not to the admin previewing). */
+const managedNote = (m) => !deps.preview && !selfService(m) && h('p', { class: 'note jrk-managed' },
+  'Ingredient prices are kept for you by Jones Ridge Kitchen. If one looks wrong or is missing, ',
+  h('a', { href: `#kitchen/${m.restaurant.id}/help` }, 'ask Joseph'), '.');
 
 // ------------------------------------------------------------------ the frame: header, tabs, plan state
 function frame(m, tab, ...body) {
@@ -368,7 +378,7 @@ async function viewRecipe(m, recipeId) {
           h('span', { class: 'note' }, '. Worked out from the ingredient names: check bought sauces, stocks and mixes yourself.')),
         c && h('p', { class: 'jrk-noprint' }, h('strong', null, 'Food cost: '),
           c.total > 0 ? `${money(c.total)} a batch${perPortion != null ? `, ${money(perPortion)} a portion` : ''}${c.missing ? ` (${plural(c.missing, 'ingredient')} not priced yet)` : ''}. ` : 'not worked out yet. ',
-          h('a', { href: `#${key}/cost/${enc(base.id)}` }, c.total > 0 ? 'See the costing' : can.costEdit ? 'Add prices' : 'See the costing'))),
+          h('a', { href: `#${key}/cost/${enc(base.id)}` }, c.total > 0 ? 'See the costing' : can.prices ? 'Add prices' : 'See the costing'))),
       h('p', { class: 'note jrk-printnote' }, `${r.name} · Jones Ridge Kitchen recipe collection`),
       h('div', { class: 'jrk-row jrk-noprint' },
         h('button', { class: 'btn', type: 'button', onclick: () => window.print() }, 'Print'),
@@ -627,9 +637,11 @@ async function viewCosting(m) {
   const sheet = ingredientSheet(data.recipes, k);
   const toPrice = sheet.filter((x) => !x.free && !x.price).length;
   frame(m, 'costing', costSwitch(m, 'costing'),
-    h('p', null, 'What each recipe and plate costs to make, from your ingredient prices. Fill in prices on the ',
-      h('a', { href: `#${key}/sheet` }, 'ingredient price sheet'), ', or open a recipe to price its ingredients; a price is used in every recipe with that ingredient.'),
-    toPrice > 0 && h('p', { class: 'jrk-newnote' }, h('strong', null, `${plural(toPrice, 'ingredient')} still ${toPrice === 1 ? 'needs' : 'need'} a price. `),
+    can.prices || deps.preview
+      ? h('p', null, 'What each recipe and plate costs to make, from your ingredient prices. Fill in prices on the ',
+        h('a', { href: `#${key}/sheet` }, 'ingredient price sheet'), ', or open a recipe to price its ingredients; a price is used in every recipe with that ingredient.')
+      : h('p', null, 'What each recipe and plate costs to make, from the ingredient prices Jones Ridge Kitchen keeps for you. Set your target food cost % and menu prices here; the suggested prices follow your target.'),
+    can.prices && toPrice > 0 && h('p', { class: 'jrk-newnote' }, h('strong', null, `${plural(toPrice, 'ingredient')} still ${toPrice === 1 ? 'needs' : 'need'} a price. `),
       h('a', { href: `#${key}/sheet` }, 'Open the price sheet')),
     h('div', { class: 'jrk-row jrk-find' }, search, h('label', { class: 'jrk-row jrk-target' }, 'Target food cost', target, '%')),
     data.recipes.length
@@ -723,9 +735,9 @@ async function viewSheet(m) {
       && (which.value === 'all' || (which.value === 'missing' ? !x.free && !x.price : !!x.price)));
     const costable = rows.filter((x) => !x.free);
     const priced = costable.filter((x) => x.price).length;
-    summary.textContent = `${plural(costable.length, 'ingredient')} in your recipes · ${priced} priced · ${costable.length - priced} to go`;
+    summary.textContent = `${plural(costable.length, 'ingredient')} in your recipes · ${priced} priced · ${costable.length - priced} ${can.prices ? 'to go' : 'without a price yet'}`;
     fill(body, shown.length ? shown.map((x) => {
-      const disabled = !can.costEdit || x.free;
+      const disabled = !can.prices || x.free;
       const price = h('input', { type: 'number', min: '0', step: '0.01', inputmode: 'decimal', value: x.price ? String(x.price.p) : '', placeholder: x.free ? '' : '$',
         disabled, 'aria-label': `Price of ${x.name}` });
       const unit = h('select', { 'aria-label': `Price unit for ${x.name}`, disabled },
@@ -740,8 +752,8 @@ async function viewSheet(m) {
             + (x.units.size ? ` · used in ${[...x.units].join(', ')}` : '')),
           x.free && h('span', { class: 'note jrk-missing' }, 'not counted (water, salt…)'),
           x.mismatch.size > 0 && h('span', { class: 'note jrk-missing jrk-over' }, `can’t cost “${[...x.mismatch][0]}” at this unit: try another`)),
-        h('td', { 'data-label': 'Price' }, h('span', { class: 'jrk-row jrk-pricein' }, price, unit)),
-        h('td', { 'data-label': '' }, x.price && can.costEdit && h('button', { class: 'jrk-link', type: 'button', 'aria-label': `Remove the price of ${x.name}`,
+        h('td', { 'data-label': 'Price' }, can.prices ? h('span', { class: 'jrk-row jrk-pricein' }, price, unit) : priceText(x.price)),
+        h('td', { 'data-label': '' }, x.price && can.prices && h('button', { class: 'jrk-link', type: 'button', 'aria-label': `Remove the price of ${x.name}`,
           onclick: () => setPrice(x.key, '', unit.value) }, 'Remove')));
     }) : h('tr', null, h('td', { colspan: '3', class: 'note' }, rows.length ? 'Nothing matches.' : 'Add recipes first: their ingredients appear here.')));
     // prices kept for ingredients no recipe uses any more
@@ -750,7 +762,7 @@ async function viewSheet(m) {
     fill(extra, unused.length > 0 && h('details', { class: 'jrk-card jrk-prices' }, h('summary', null, h('strong', null, `Prices not used in any recipe (${unused.length})`)),
       h('ul', { class: 'jrk-list' }, unused.map(([key, p]) => h('li', null, h('span', null, key),
         h('span', { class: 'jrk-row' }, `${money(p.p)} / ${PRICE_UNITS[p.per]?.label || p.per}`,
-          can.costEdit && h('button', { class: 'jrk-link', type: 'button', onclick: () => setPrice(key, '', p.per) }, 'Remove')))))));
+          can.prices && h('button', { class: 'jrk-link', type: 'button', onclick: () => setPrice(key, '', p.per) }, 'Remove')))))));
     if (focusKey) {
       const next = body.querySelector(`tr[data-key="${CSS.escape(focusKey)}"]`)?.nextElementSibling?.querySelector('input:not([disabled])');
       if (next && which.value !== 'missing') next.focus();
@@ -761,8 +773,11 @@ async function viewSheet(m) {
   which.addEventListener('change', () => paint());
   paint();
   frame(m, 'costing', costSwitch(m, 'sheet'),
-    h('p', null, 'Every ingredient in your recipes and plates, once. Enter what you pay and per what (a case price works: per lb, per each, per gallon…); it is used in every recipe with that ingredient.'),
-    can.costEdit && h('div', { class: 'jrk-row jrk-supimport' },
+    can.prices
+      ? h('p', null, 'Every ingredient in your recipes and plates, once. Enter what you pay and per what (a case price works: per lb, per each, per gallon…); it is used in every recipe with that ingredient.')
+      : h('p', null, 'Every ingredient in your recipes and plates, once, with the price used to cost it.'),
+    managedNote(m),
+    can.prices && h('div', { class: 'jrk-row jrk-supimport' },
       h('button', { class: 'btn line', type: 'button', onclick: () => supIn.click() }, 'Import a supplier price list'), supIn,
       h('span', { class: 'note' }, 'An order guide or price list exported as CSV from Sysco, SGC, Ben E. Keith, US Foods or any distributor, with prices.')),
     supPanel,
@@ -789,11 +804,11 @@ async function viewCostDetail(m, recipeId) {
   const save = async (fn, msg) => { try { await changeKitchen(m, fn); if (msg) toast(msg); viewCostDetail(m, recipeId); } catch (err) { toast(err.message); } };
 
   const lines = row.c.lines.map((l) => {
-    const unit = h('select', { 'aria-label': `Price unit for ${l.ing.item}`, disabled: !can.costEdit || l.state === 'free' || l.state === 'noamount' },
+    const unit = h('select', { 'aria-label': `Price unit for ${l.ing.item}`, disabled: !can.prices || l.state === 'free' || l.state === 'noamount' },
       Object.entries(PRICE_UNITS).map(([u, d]) => h('option', { value: u }, `per ${d.label}`)));
     unit.value = l.price?.per || defaultPriceUnit(l.ing, l.entry);
     const price = h('input', { type: 'number', min: '0', step: '0.01', inputmode: 'decimal', value: l.price ? String(l.price.p) : '', placeholder: '$',
-      disabled: !can.costEdit || l.state === 'free' || l.state === 'noamount', 'aria-label': `Price of ${l.ing.item}` });
+      disabled: !can.prices || l.state === 'free' || l.state === 'noamount', 'aria-label': `Price of ${l.ing.item}` });
     const commit = () => {
       const v = price.value.trim();
       if (v === '' && !l.price) return;
@@ -801,10 +816,10 @@ async function viewCostDetail(m, recipeId) {
     };
     price.addEventListener('change', commit);
     unit.addEventListener('change', () => { if (price.value.trim()) commit(); });
-    const status = { free: 'not counted (water, salt…)', noamount: 'no amount to cost', noprice: 'needs a price', noconvert: 'unit doesn’t match: try another price unit' }[l.state];
+    const status = { free: 'not counted (water, salt…)', noamount: 'no amount to cost', noprice: can.prices ? 'needs a price' : 'no price yet', noconvert: can.prices ? 'unit doesn’t match: try another price unit' : 'can’t be costed yet' }[l.state];
     return h('tr', null,
       h('th', { scope: 'row' }, formatIngredient(l.ing), status && h('span', { class: 'note jrk-missing' }, ` ${status}`)),
-      h('td', { 'data-label': 'Price' }, h('span', { class: 'jrk-row jrk-pricein' }, price, unit)),
+      h('td', { 'data-label': 'Price' }, can.prices ? h('span', { class: 'jrk-row jrk-pricein' }, price, unit) : priceText(l.price)),
       h('td', { 'data-label': 'Cost', class: 'jrk-linecost' }, l.cost != null ? money(l.cost) : '—'));
   });
 
@@ -828,6 +843,7 @@ async function viewCostDetail(m, recipeId) {
         row.fc != null && [' · ', h('strong', null, 'Food cost: '), h('span', { class: row.fc > k.target ? 'jrk-over' : '' }, pct(row.fc))]),
       row.suggested != null && h('p', null, h('strong', null, `Menu price for ${k.target}% food cost: `), money(row.suggested)),
       row.c.missing > 0 && h('p', { class: 'note' }, `${plural(row.c.missing, 'ingredient')} still ${row.c.missing === 1 ? 'needs' : 'need'} a price, so the cost is low.`)),
+    managedNote(m),
     viewOnly(can));
 }
 
@@ -870,8 +886,8 @@ async function viewPlate(m, plateId) {
     text.addEventListener('change', () => { const t = text.value.replace(/\s+/g, ' ').trim(); if (t) part.t = t; else plate.parts.splice(i, 1); paint(); });
     const pricing = l && l.state !== 'free' && l.state !== 'noamount';
     const price = pricing && h('input', { type: 'number', min: '0', step: '0.01', inputmode: 'decimal', value: l.price ? String(l.price.p) : '', placeholder: '$',
-      disabled: !can.costEdit, 'aria-label': `Price of ${l.ing.item}` });
-    const unit = pricing && h('select', { 'aria-label': `Price unit for ${l.ing.item}`, disabled: !can.costEdit },
+      disabled: !can.prices, 'aria-label': `Price of ${l.ing.item}` });
+    const unit = pricing && h('select', { 'aria-label': `Price unit for ${l.ing.item}`, disabled: !can.prices },
       Object.entries(PRICE_UNITS).map(([u, d]) => h('option', { value: u }, `per ${d.label}`)));
     if (unit) unit.value = l.price?.per || defaultPriceUnit(l.ing, l.entry);
     const savePrice = async () => {
@@ -883,11 +899,11 @@ async function viewPlate(m, plateId) {
       } catch (err) { toast(err.message); }
     };
     if (price) { price.addEventListener('change', savePrice); unit.addEventListener('change', () => { if (price.value.trim()) savePrice(); }); }
-    const status = !l ? 'can’t read this line' : { free: 'not counted (water, salt…)', noamount: 'add an amount, like “1 oz”', noprice: 'needs a price',
+    const status = !l ? 'can’t read this line' : { free: 'not counted (water, salt…)', noamount: 'add an amount, like “1 oz”', noprice: can.prices ? 'needs a price' : 'no price yet',
       noconvert: 'this price unit can’t cost it: try another (per each for pieces)' }[l.state];
     return h('div', { class: 'jrk-row jrk-platepart jrk-plateing' },
       h('span', { class: 'jrk-ptitle' }, text, status && h('span', { class: 'note jrk-missing' }, status)),
-      pricing && h('span', { class: 'jrk-row jrk-pricein' }, price, unit),
+      pricing && (can.prices ? h('span', { class: 'jrk-row jrk-pricein' }, price, unit) : priceText(l.price)),
       h('span', { class: 'jrk-linecost' }, l?.state === 'ok' ? money(l.cost) : '—'),
       can.costEdit && h('button', { class: 'jrk-link', type: 'button', 'aria-label': `Take ${label} off the plate`, onclick: () => { plate.parts.splice(i, 1); paint(); } }, 'Remove'));
   }
