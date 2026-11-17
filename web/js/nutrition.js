@@ -4,8 +4,11 @@
 // weight, its volume with the food's weight per cup, or a count of pieces), then
 //   nutrition = grams x the food's values per 100 g
 //   cost      = amount x the price you entered, in whatever unit you buy it by
-// Anything that cannot be worked out (no amount, an unknown food, "1 can") is listed as not counted
-// instead of being guessed, and the totals say how much of the recipe they cover.
+// Anything that cannot be worked out (no amount, an unknown food, "1 jar") is listed as not counted
+// instead of being guessed, and the totals say how much of the recipe they cover. Two things are
+// estimated rather than skipped: a whole fruit or vegetable ("2 onions", "1 head cabbage", "12 Each garlic
+// cloves") weighs a typical one, and a plain "can" is a standard 15 oz can (a can with its size written in,
+// "can (15 oz)", uses that size).
 import { FOODS, FREE } from './nutridata.js';
 import { itemKey, itemName } from './shopping.js';
 import { parseRange } from './units.js';
@@ -16,11 +19,22 @@ const CUP_ML = 236.588;
 const SIZES = { small: 0.75, medium: 1, large: 1.25 };
 const TINY = { pinch: 0.4, dash: 0.6, drop: 0.05 };          // grams: they barely count, but they are not "unknown"
 const PIECES = new Set(['', 'piece', 'head', 'small', 'medium', 'large']);
+// how kitchens write "one of them": "Each", "Ea", "whole", "pcs"...
+const PIECE_WORDS = new Set(['each', 'ea', 'whole', 'pc', 'pcs', 'piece', 'pieces', 'ct', 'count', 'item', 'items', 'unit', 'units']);
+const PLURAL_UNITS = { leaves: 'leaf', heads: 'head', bunches: 'bunch', stalks: 'stalk', ribs: 'rib', sprigs: 'sprig', ears: 'ear', cobs: 'cob',
+  slices: 'slice', cloves: 'clove', wedges: 'wedge', inches: 'inch', knobs: 'knob', bulbs: 'bulb', crowns: 'crown', florets: 'floret', sticks: 'stick', cans: 'can' };
+const CAN_G = 425;                                            // a standard 15 oz can, when the line doesn't say
+// "can (15 oz)", "15-oz can", "(28 oz) cans", "can, 400 g": a container with its size written in
+const SIZED = /^(?:\(?\s*(\d+(?:\.\d+)?)\s*-?\s*(oz|ounces?|g|grams?|kg|lb|lbs|ml|l|fl\.? ?oz)\.?\s*\)?\s*)?(can|cans|tin|tins|jar|jars|package|packages|pkg|bag|bags|box|boxes|carton|cartons|bottle|bottles|container|containers)\b[\s,]*(?:\(?\s*(\d+(?:\.\d+)?)\s*-?\s*(oz|ounces?|g|grams?|kg|lb|lbs|ml|l|fl\.? ?oz)\.?\s*\)?)?$/i;
+const SIZE_UNIT = { oz: ['g', 28.3495], ounce: ['g', 28.3495], ounces: ['g', 28.3495], g: ['g', 1], gram: ['g', 1], grams: ['g', 1], kg: ['g', 1000],
+  lb: ['g', 453.592], lbs: ['g', 453.592], ml: ['ml', 1], l: ['ml', 1000], 'fl oz': ['ml', 29.574], 'fl. oz': ['ml', 29.574], floz: ['ml', 29.574] };
 
 // ---- recognising the food in an ingredient line
 const table = new Map();                                      // folded name -> entry
 for (const [name, kcal, protein, carbs, fat, sodium, cup, each, units] of FOODS) {
-  table.set(itemKey(name), { term: itemKey(name), name, kcal, protein, carbs, fat, sodium, cup, each, units });
+  // the first entry for a name wins: the shopping-list tidy folds "diced tomato" into "tomato", and the fresh one
+  // (listed first) must not be replaced by the canned one
+  if (!table.has(itemKey(name))) table.set(itemKey(name), { term: itemKey(name), name, kcal, protein, carbs, fat, sodium, cup, each, units });
 }
 const FREE_KEYS = new Set(FREE.map(itemKey));
 
@@ -54,9 +68,20 @@ export function amountOf(ing) {
 export function measure(ing, entry) {
   const q = amountOf(ing);
   if (q == null || !(q > 0)) return null;
-  const unit = ing.unit || '';
+  const raw = String(ing.unit || '').trim();
+  const lower = raw.toLowerCase().replace(/\.$/, '');
+  // "Each" and friends are pieces; "heads", "bunches" are their singular; the known units keep their spelling (Tbsp)
+  const unit = PIECE_WORDS.has(lower) ? 'piece' : Object.hasOwn(PLURAL_UNITS, lower) ? PLURAL_UNITS[lower]
+    : Object.hasOwn(GRAMS, raw) || Object.hasOwn(ML, raw) ? raw : lower;
+  const sized = SIZED.exec(raw);
   let g = null, ml = null, n = null;
-  if (Object.hasOwn(GRAMS, unit)) g = q * GRAMS[unit];
+  if (sized && (sized[1] || sized[4])) {
+    const [kind, per] = SIZE_UNIT[(sized[2] || sized[5]).toLowerCase().replace(/\s+/g, ' ')] || [];
+    if (!kind) return null;
+    const size = Number(sized[1] || sized[4]) * per;
+    if (kind === 'g') g = q * size; else ml = q * size;
+  } else if (sized && /^(can|cans|tin|tins)$/i.test(sized[3])) g = q * (entry?.units?.can || CAN_G);
+  else if (Object.hasOwn(GRAMS, unit)) g = q * GRAMS[unit];
   else if (Object.hasOwn(ML, unit)) ml = q * ML[unit];
   else if (entry && Object.hasOwn(entry.units, unit)) g = q * entry.units[unit];
   else if (Object.hasOwn(TINY, unit)) g = q * TINY[unit];

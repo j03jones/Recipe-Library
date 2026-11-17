@@ -29,7 +29,23 @@ out.grams = {
 };
 const flourEggs = nutrition(rec([ing('1', 'cup', 'flour'), ing('2', '', 'eggs')], '4'));
 out.nutri = { kcal: flourEggs.total.kcal, per: flourEggs.per.kcal, counted: flourEggs.counted, lines: flourEggs.lines, protein: flourEggs.total.protein };
-const partial = nutrition(rec([ing('1', 'cup', 'flour'), ing(null, '', 'salt'), ing('1', 'cup', 'xanthan gum'), ing('1', 'can', 'beans'), ing('2', 'cup', 'water')], ''));
+const partial = nutrition(rec([ing('1', 'cup', 'flour'), ing(null, '', 'salt'), ing('1', 'cup', 'xanthan gum'), ing('1', 'jar', 'beans'), ing('2', 'cup', 'water')], ''));
+// whole fruit and vegetables, kitchen units and cans (the Pozole Rojo a chef added: 40% counted before)
+const poz = nutrition(rec([ing('3', 'lb', 'pork shoulder'), ing('3', 'can (15 oz)', 'white hominy'), ing('2', 'Tbsp', 'vegetable oil'),
+  ing('2', 'cup', 'Dark Beer'), ing('12', 'Each', 'garlic cloves'), ing('5', 'Each', 'guajillo peppers'), ing('5', 'Each', 'ancho peppers'),
+  ing('2', 'Each', 'white onion'), ing('1/2', 'tsp', 'dry Mexican oregano'), ing('4', 'quart', 'Water'), ing('4', 'Each', 'Pasilla peppers')], '8'));
+out.pozole = { coverage: poz.coverage, kcal: poz.per.kcal, skipped: poz.skipped.map((s) => s.ing.item) };
+const wg = (u, item, q = '1') => measure(ing(q, u, item), identify(item).entry)?.g ?? null;
+out.weighs = {
+  hominyCan: wg('can (15 oz)', 'white hominy'), plainCan: wg('can', 'black beans'), sizedFirst: wg('28-oz can', 'crushed tomatoes'),
+  litreCarton: measure(ing('1', 'carton (1 l)', 'chicken broth'), identify('chicken broth').entry)?.ml ?? null,
+  jar: wg('jar', 'salsa'), each: wg('Each', 'onion', '2'), ea: wg('Ea', 'onion', '2'), whole: wg('whole', 'tomato'),
+  heads: wg('heads', 'garlic', '2'), cabbage: wg('head', 'cabbage'), cilantro: wg('bunch', 'cilantro'), corn: wg('ears', 'corn', '2'),
+  celery: wg('stalks', 'celery', '3'), lettuce: wg('', 'lettuce'), tbsp: wg('Tbsp', 'vegetable oil'),
+};
+out.freshTomato = [identify('tomatoes').entry.kcal, identify('tomatoes').entry.each];
+out.names = Object.fromEntries(['garlic cloves', 'cloves garlic', 'guajillo peppers', 'ancho chiles', 'dried pasilla peppers', 'jalapeno peppers',
+  'black pepper', 'ground cloves', 'white hominy', 'chiles de arbol', 'poblano peppers', 'tomatillos'].map((n) => [n, identify(n).key]));
 out.partial = { counted: partial.counted, lines: partial.lines, why: partial.skipped.map((s) => s.why), perIsNull: partial.per === null };
 const cost = (i, price) => { const l = lineCost(i, identify(i.item).entry, price); return l; };
 out.cost = {
@@ -101,10 +117,35 @@ class NutritionTests(unittest.TestCase):
         self.assertEqual(g["onionMedium"], 110)
         self.assertAlmostEqual(g["pinch"], 0.4)
         self.assertEqual(g["kg"], 1000)
-        self.assertIsNone(g["unknownCan"])          # a can of what size? not guessed
+        self.assertEqual(g["unknownCan"], 425)      # a can with no size: a standard 15 oz can (estimated)
         self.assertIsNone(g["noAmount"])
         self.assertEqual(g["range"], 2.5)           # middle of "2-3"
         self.assertAlmostEqual(g["mlWater"], 236.588, places=2)
+
+    def test_whole_vegetables_kitchen_units_and_cans_are_weighed(self):
+        p = self.js["pozole"]
+        self.assertEqual((p["coverage"], p["skipped"]), (1, []))                 # was 40%: hominy, "Each" and the chiles
+        self.assertTrue(440 < p["kcal"] < 510, p["kcal"])
+        w = self.js["weighs"]
+        self.assertAlmostEqual(w["hominyCan"], 15 * 28.3495, places=2)          # the size written in the unit
+        self.assertEqual(w["plainCan"], 425)                                     # a standard 15 oz can
+        self.assertAlmostEqual(w["sizedFirst"], 28 * 28.3495, places=2)
+        self.assertEqual(w["litreCarton"], 1000)
+        self.assertIsNone(w["jar"])                                              # a jar of unknown size is not guessed
+        self.assertEqual((w["each"], w["ea"], w["whole"]), (220, 220, 123))      # "Each", "Ea", "whole" are pieces
+        self.assertEqual((w["heads"], w["cabbage"], w["cilantro"], w["corn"], w["celery"], w["lettuce"]), (100, 900, 60, 180, 120, 550))
+        self.assertAlmostEqual(w["tbsp"], 14.787 * 218 / 236.588, places=3)     # known units keep working
+
+    def test_chiles_and_cloves_are_not_taken_for_spices(self):
+        n = self.js["names"]
+        self.assertEqual(n["garlic cloves"], "garlic clove")
+        self.assertEqual(n["cloves garlic"], "garlic")
+        self.assertEqual(n["ground cloves"], "clove")                # the spice, still
+        self.assertEqual(n["black pepper"], "black pepper")
+        self.assertEqual((n["guajillo peppers"], n["ancho chiles"], n["jalapeno peppers"], n["poblano peppers"]),
+                         ("guajillo pepper", "ancho chile", "jalapeno pepper", "poblano pepper"))
+        self.assertEqual((n["dried pasilla peppers"], n["chiles de arbol"], n["white hominy"], n["tomatillos"]), ("pasilla pepper", "arbol", "white hominy", "tomatillo"))
+        self.assertEqual(self.js["freshTomato"], [18, 123])                   # fresh, not the canned "diced tomato"
 
     def test_nutrition_totals(self):
         n = self.js["nutri"]
