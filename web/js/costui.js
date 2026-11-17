@@ -38,6 +38,16 @@ export function recipeCosting({ h, fill, scaled, recipeId, toast = () => {} }) {
     supPanel.scrollIntoView({ block: 'start' });
   });
 
+  // a costing sheet for the kitchen office: the recipe name, every line with its price and cost, and the totals
+  function printSheet() {
+    const wasOpen = cost.open;
+    cost.open = true;
+    document.body.classList.add('printcost');
+    const done = () => { document.body.classList.remove('printcost'); cost.open = wasOpen; };
+    window.addEventListener('afterprint', done, { once: true });
+    window.print();
+  }
+
   let macrosOpen = false;
   const macroBox = (n) => macroDetails(h, { per: n.per, total: n.total, servings: n.servings, parts: n.parts, open: macrosOpen, onToggle: (o) => { macrosOpen = o; } });
 
@@ -132,7 +142,8 @@ export function recipeCosting({ h, fill, scaled, recipeId, toast = () => {} }) {
         : h('p', { class: 'muted' }, 'This recipe has no ingredients to cost.'),
       totals,
       h('div', { class: 'row grow costimport' },
-        h('button', { type: 'button', onclick: () => supIn.click() }, 'Import a supplier price list'), supIn),
+        h('button', { type: 'button', onclick: () => supIn.click() }, 'Import a supplier price list'), supIn,
+        h('button', { type: 'button', onclick: printSheet }, 'Print costing sheet')),
       supPanel,
       h('p', { class: 'muted small' }, 'Prices are yours alone and are remembered for every recipe that uses the same food. ',
         h('a', { href: '#/prices' }, `Price book (${Object.keys(book.items).length})`)));
