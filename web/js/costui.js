@@ -4,6 +4,7 @@ import { NUTRIENTS, PRICE_UNITS, costing, defaultPriceUnit, foodCostPct, identif
 import { macroDetails } from './nutritionui.js';
 import { formatIngredient } from './units.js';
 import * as prices from './prices.js';
+import { supplierImport } from './supplierui.js';
 
 const usd = (v) => `$${v.toFixed(2)}`;
 const n0 = (v) => Math.round(v).toLocaleString();
@@ -130,6 +131,8 @@ export function priceBook({ h, fill, toast }) {
   const search = h('input', { class: 'full', type: 'search', placeholder: 'Search your prices', 'aria-label': 'Search your prices', autocomplete: 'off' });
   const list = h('ul', { class: 'costlines' });
   const fileIn = h('input', { type: 'file', accept: '.csv,text/csv,text/plain', hidden: true });
+  const supIn = h('input', { type: 'file', accept: '.csv,.txt,text/csv,text/plain,text/tab-separated-values', hidden: true });
+  const panel = h('div');
   const status = h('p', { class: 'muted small', role: 'status' });
 
   function paint() {
@@ -144,7 +147,8 @@ export function priceBook({ h, fill, toast }) {
       const save = () => { const v = num(price.value); if (v != null) prices.setPrice(key, v, per.value); };
       price.addEventListener('change', save);
       per.addEventListener('change', save);
-      return h('li', { class: 'costline' }, h('span', { class: 'cl-what' }, h('strong', null, key)),
+      return h('li', { class: 'costline' }, h('span', { class: 'cl-what' }, h('strong', null, key),
+        (e.src || e.at) && h('span', { class: 'muted small cl-src' }, [e.src, e.at].filter(Boolean).join(' · '))),
         h('span', { class: 'cl-price' }, h('span', { 'aria-hidden': 'true' }, '$'), price, h('span', { class: 'muted' }, 'per'), per,
           h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Remove ${key}`, onclick: () => { prices.removePrice(key); paint(); } }, '✕')));
     }) : h('li', { class: 'muted' }, Object.keys(book.items).length ? 'No prices match.' : 'No prices yet. Open a recipe and fill in its Food cost card, or import a list.'));
@@ -171,11 +175,30 @@ export function priceBook({ h, fill, toast }) {
     } catch { toast('Could not read that file'); }
   });
 
+  supIn.addEventListener('change', async () => {
+    const f = supIn.files[0];
+    supIn.value = '';
+    if (!f) return;
+    let text;
+    try { text = await f.text(); } catch { toast('Could not read that file'); return; }
+    fill(panel, supplierImport({ h, fill, toast, file: f, text, onDone: (n, supplier) => {
+      fill(panel);
+      if (n) status.textContent = `Added or updated ${n} price${n === 1 ? '' : 's'}${supplier ? ` from ${supplier}` : ''}.`;
+      paint();
+      root.scrollIntoView({ block: 'start' });
+    } }));
+    panel.scrollIntoView({ block: 'start' });
+  });
+
   fill(root,
     h('p', { class: 'muted' }, 'Every price you have entered. A price applies to every recipe that uses the food, so you set “butter” once. Prices are yours alone and follow your account.'),
     h('div', { class: 'row grow' },
       h('button', { type: 'button', onclick: exportCsv }, 'Export CSV'),
       h('button', { type: 'button', onclick: () => fileIn.click() }, 'Import CSV'), fileIn),
+    h('div', { class: 'row grow' },
+      h('button', { class: 'primary', type: 'button', onclick: () => supIn.click() }, 'Import a supplier price list'), supIn),
+    h('p', { class: 'muted small' }, 'An order guide or price list exported as CSV from Sysco, SGC, Ben E. Keith, US Foods or any other distributor. Include prices when you export.'),
+    panel,
     status,
     search,
     list,

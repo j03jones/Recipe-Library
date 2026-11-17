@@ -320,6 +320,22 @@ once. You get the recipe total and the cost per serving at the scale on screen, 
 **Price book.** Settings > Food cost > Open the price book lists every saved price to edit or remove, with
 **Export CSV** and **Import CSV** (`food, price, per`) for a supplier price list or a spreadsheet.
 
+**Supplier price lists (v0.34).** In the price book, **Import a supplier price list** reads an order guide or
+price list exported as CSV from Sysco, SGC, Ben E. Keith, US Foods or any other distributor (`web/js/supplier.js`):
+
+- Columns are found by their names (item number, description, brand, pack, size, case price, price per pound,
+  split price); Sysco's record-type rows (H/F/P) and title lines above the headings are skipped. Any column read
+  wrong can be chosen by hand, and that choice is remembered for files laid out the same way.
+- The pack is read to work out what a case holds: `4/1 GAL`, `1/50 LB`, `2/5#`, `6/#10`, `15 DZ`, `24/12 FL OZ`,
+  `4/5 LB AVG`, `1/40-45#`, or pack, size and unit in separate columns. The case price becomes a price per pound,
+  gallon or piece, so recipes in cups or ounces are costed too. A price-per-pound column (catch-weight meat and
+  cheese) is used as it is.
+- Each description is matched to the food it is, reading distributor shorthand ("CHEESE CHDR SHRD" is cheddar
+  cheese, "OIL CNLA" canola oil). Where several products match one food, the cheapest per unit is ticked. Products
+  with no match are listed under their own name to tick, or you type the food.
+- You review everything before anything is saved. Saved prices remember the supplier, item number and date, shown
+  in the price book.
+
 Prices, menu prices and the target are private to you, kept on the device and, signed in, saved with the account
 alongside the meal plan (no database change needed). Shared recipe links do not carry any of it.
 

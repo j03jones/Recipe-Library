@@ -682,6 +682,34 @@ async def run():
         check("Markdown export has the ingredients", "## Ingredients" in Path(await (await dl.value).path()).read_text())
         await page.goto(URL + "#/")
 
+        # ---- importing a supplier price list into the price book
+        ctx5 = await b.new_context(viewport={"width": 390, "height": 844})
+        p5 = await ctx5.new_page()
+        p5.on("pageerror", lambda e: errors.append(str(e)))
+        await p5.goto(URL + "#/prices")
+        await p5.wait_for_selector("button:has-text('Import a supplier price list')")
+        files = p5.locator(".pricebook input[type=file]")
+        await files.nth(1).set_input_files(str(ROOT / "tests" / "fixtures" / "suppliers" / "sysco_order_guide.csv"))
+        await p5.wait_for_selector(".supplier .suprow")
+        check("a Sysco order guide is read and named", await p5.input_value(".supname input") == "Sysco"
+              and "9 products: 7 matched to a food" in await p5.inner_text(".supplier"), await p5.inner_text(".supplier [role=status]"))
+        check("the case price becomes a price per pound", "$2.64 per lb" in await p5.inner_text(".suprow:has-text('CHEDDAR')"))
+        await p5.fill(".suprow:has-text('DONUT') .supfood input", "donut")
+        await p5.press(".suprow:has-text('DONUT') .supfood input", "Enter")
+        await p5.locator(".suprow:has-text('DONUT') .supfood input").blur()
+        await p5.wait_for_timeout(200)
+        add = p5.locator(".suptools button.primary")
+        # 7 matched, but only the cheaper of the two onions is ticked: 6, and the donut makes 7
+        check("choosing a food for an unknown product ticks it", "Add 7 prices" in await add.inner_text(), await add.inner_text())
+        await add.click()
+        await p5.wait_for_selector(".costline:has-text('cheddar cheese')")
+        book = await p5.evaluate("JSON.parse(localStorage.getItem('recipelib.prices')).items")
+        check("the prices are saved with where they came from",
+              book.get("cheddar cheese") == {"p": 2.64, "per": "lb", "src": "Sysco #4782109", "at": book["cheddar cheese"].get("at")}
+              and book.get("donut", {}).get("per") == "each" and "onion" in book, book.get("cheddar cheese"))
+        check("the price list shows the supplier", "Sysco #4782109" in await p5.inner_text(".costline:has-text('cheddar cheese')"))
+        await ctx5.close()
+
         # dark mode renders
         ctx3 = await b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, color_scheme="dark")
         pg3 = await ctx3.new_page()
