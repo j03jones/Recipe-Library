@@ -377,6 +377,8 @@ class Fake:
             rid_ = body["restaurant_id"]
             if user["role"] != "admin" and not (self.costing_of(user, rid_) == "edit" and self.on_plan(self.restaurants[rid_])):
                 return await ok({"message": "new row violates row-level security policy"}, 403)
+            if user["role"] != "admin" and self.restaurants[rid_].get("costing_tier", "managed") == "managed":
+                body["prices"]["items"] = (kit.get(rid_) or {}).get("items", {})   # add_costing_tiers.sql: the admin keeps the prices
             kit[rid_] = body["prices"]
             return await ok(None, 201)
         if path == "/rest/v1/recipe_versions":
@@ -518,7 +520,7 @@ class Fake:
             if req.method == "GET":
                 return await ok(list(self.restaurants.values()))
             if req.method == "POST":
-                r = {"id": str(uuid.uuid4()), "subscription_status": "inactive", "seat_limit": 3, **body}
+                r = {"id": str(uuid.uuid4()), "subscription_status": "inactive", "seat_limit": 3, "costing_tier": "managed", **body}
                 self.restaurants[r["id"]] = r
                 return await ok([r], 201)
             if req.method == "PATCH":
@@ -1649,8 +1651,32 @@ async def run():
         await joe.wait_for_selector(".jrk-recipes")
         check("and delete the one they added", not any(x["title"] == "Line Slaw" for x in fake.recipes.values()))
 
-        # costing: a shared price book
+        # costing tiers (v0.35): on managed costing (the default) the team sees costs, sets its target, can't change prices
         await rae.goto(K + "/costing")
+        await rae.wait_for_selector("table.jrk-cost")
+        check("managed costing says Jones Ridge Kitchen keeps the prices", "Jones Ridge Kitchen keeps for you" in await rae.inner_text("#jrk-portal"))
+        await rae.fill("input[aria-label='Target food cost %']", "32")
+        await rae.press("input[aria-label='Target food cost %']", "Tab")
+        await rae.wait_for_timeout(700)
+        check("and the target food cost % is theirs to set", fake.kitchens.get(rid, {}).get("target") == 32, fake.__dict__.get("kitchens"))
+        await rae.fill("input[aria-label='Target food cost %']", "30")
+        await rae.press("input[aria-label='Target food cost %']", "Tab")
+        await rae.wait_for_timeout(700)
+        await rae.click("table.jrk-cost a:has-text('House Salsa Roja')")
+        await rae.wait_for_selector("table.jrk-costlines")
+        check("a recipe's costing shows prices without a way to change them", await rae.locator("input[aria-label='Price of tomatoes']").count() == 0
+              and await rae.locator(".jrk-managed").count() == 1 and not await rae.locator("input[aria-label='Menu price']").is_disabled())
+        await rae.goto(K + "/sheet")
+        await rae.wait_for_selector("table.jrk-sheet tbody tr")
+        check("the price sheet hides price editing and the supplier import", await rae.locator("table.jrk-sheet input").count() == 0
+              and await rae.locator("button:has-text('Import a supplier price list')").count() == 0 and await rae.locator(".jrk-managed").count() == 1)
+        await rae.screenshot(path="/tmp/portal_sheet_managed.png", full_page=True)
+        await rae.evaluate("rid => import('/js/cloud.js').then((c) => c.saveKitchen(rid, { items: { tomatoes: { p: 99, per: 'lb' } }, target: 30 }))", rid)
+        check("and the database keeps the prices whatever is sent", "tomatoes" not in fake.kitchens.get(rid, {}).get("items", {}), fake.kitchens.get(rid))
+        fake.restaurants[rid]["costing_tier"] = "self_service"   # the consultation tier (the admin's switch is checked below)
+
+        # costing: a shared price book
+        await rae.goto(K + "/costing"); await rae.reload()
         await rae.wait_for_selector("table.jrk-cost")
         await rae.screenshot(path="/tmp/portal_costing.png", full_page=True)
         check("Costing lists every recipe", await rae.locator("table.jrk-cost tbody tr").count() == 2)
@@ -1690,7 +1716,7 @@ async def run():
         await joe.goto(K + f"/cost/{salsa['id']}"); await joe.reload()
         await joe.wait_for_selector(".jrk-summary")
         check("they then see the shared costing, read-only", "$0.50" in await joe.inner_text(".jrk-summary")
-              and await joe.locator("input[aria-label='Price of tomatoes']").is_disabled())
+              and await joe.locator("input[aria-label='Price of tomatoes']").count() == 0)
         await rae.select_option("select[aria-label='Costing for Joe Line']", "edit")
         await rae.wait_for_timeout(600)
         await joe.reload()
@@ -1879,6 +1905,13 @@ async def run():
         await admin.select_option(".restcard:has-text('Maple Street Grill') select[aria-label='Costing for Joe Line']", "none")
         await admin.wait_for_timeout(600)
         check("and take it away", fake.costing_of(fake.users["joe@maple.test"], rid) == "none")
+        check("the card shows the costing tier", await admin.input_value(".restcard:has-text('Maple Street Grill') select[aria-label='Costing for Maple Street Grill']") == "self_service")
+        await admin.select_option(".restcard:has-text('Maple Street Grill') select[aria-label='Costing for Maple Street Grill']", "managed")
+        await admin.wait_for_selector("dialog[open]")
+        check("switching the tier asks first, saying what changes", "can’t change prices" in await admin.inner_text("dialog[open]"))
+        await admin.click("dialog[open] button:has-text('Make it managed')")
+        await admin.wait_for_timeout(700)
+        check("the admin can switch a restaurant to managed costing", fake.restaurants[rid]["costing_tier"] == "managed")
 
         # the admin's "View their portal": the restaurant's page as its team sees it, marked as a preview
         await admin.goto(PORTAL + f"?preview={rid}")
