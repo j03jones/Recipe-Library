@@ -46,6 +46,20 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Nutrition counts whole vegetables, chiles, hominy and cans (v0.31.2)
+
+- **Whole fruit and vegetables are weighed** at a typical size: a head of cabbage or lettuce, a bunch of cilantro, an
+  ear of corn, a stalk of celery, squashes, pineapple, strawberries... (`web/js/nutridata.js`).
+- **Kitchen units**: "Each", "Ea", "whole", "pcs" count as pieces; "heads", "bunches", "stalks" are understood.
+- **Cans**: a can with its size written in ("can (15 oz)", "28-oz can", "carton (1 l)") uses that size; a plain
+  "can" is a standard 15 oz can. A jar or package of unknown size is still left out rather than guessed.
+- **New foods**: hominy; dried chiles (guajillo, ancho, pasilla, chipotle, árbol, New Mexico, cascabel, mulato) and
+  fresh ones (serrano, poblano, Anaheim, habanero); tomatillo, radish. "Garlic cloves" is garlic (it was read as the
+  spice), and "guajillo peppers" a chile (it was read as black pepper).
+- Fixed: fresh tomato had been replaced by canned diced tomato in the table.
+The chef's Pozole Rojo goes from 40% of its ingredients counted to all of them (about 475 calories a serving). Across
+the built-in library, 81.9% of ingredient lines are counted (was 79.3%) and 28.1% of recipes fully (was 24.4%).
+
 ## Costing sheet, prices kept by the admin, and the Ask Joseph form (v0.31)
 
 - **Ingredient price sheet** (Costing > *Ingredient prices*): every ingredient in the restaurant's recipes, once
