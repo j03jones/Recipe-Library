@@ -7,6 +7,7 @@
 //   #kitchen/<id>/prep            prep list: recipes and batches, one combined ingredient list by aisle
 //   #kitchen/<id>/costing         food cost: recipes and plates, menu prices, food cost % (if the owner allows)
 //   #kitchen/<id>/cost/<id>       one recipe's costing: a price for each ingredient
+//   #kitchen/<id>/sheet           the costing sheet: every ingredient in the recipes, once, with its price
 //   #kitchen/<id>/plate/<id|new>  a plate: several recipes in one menu item
 //   #kitchen/<id>/help            ask Joseph for help (kept in his inbox, and emailed through the website's form)
 //   #kitchen/<id>/team            owners: the team, who sees the costing, invites
@@ -21,7 +22,7 @@ import { toRecord, fromRecord } from '../js/model.js';
 import { PRICE_UNITS, costing, defaultPriceUnit, foodCostPct, suggestedPrice } from '../js/nutrition.js';
 import * as photos from '../js/photos.js';
 import { clean as cleanPrices, DEFAULT_TARGET } from '../js/prices.js';
-import { byAisle, shoppingList } from '../js/shopping.js';
+import { byAisle, itemName, shoppingList } from '../js/shopping.js';
 import { fromPlainText } from '../js/transfer.js';
 import { Frac, adaptedLine, creditLine, formatIngredient, formatYield, scaleRecipe } from '../js/units.js';
 import { busy, confirmBox, field, fill, h, screen, toast } from './ui.js';
@@ -124,7 +125,7 @@ async function changeKitchen(m, fn) {
 
 // ------------------------------------------------------------------ who may do what
 /** Costing is the owner's to share: owners always; staff as the owner set them (none, view, edit). */
-const costingLevel = (m) => (deps.preview ? 'view' : m.member_role === 'owner' ? 'edit' : (m.costing || 'none'));
+const costingLevel = (m) => (deps.preview ? 'edit' : m.member_role === 'owner' ? 'edit' : (m.costing || 'none'));   // the admin keeps their prices
 const seesCosting = (m) => costingLevel(m) !== 'none';
 function rights(m, plan) {
   const owner = m.member_role === 'owner';
@@ -134,7 +135,7 @@ function rights(m, plan) {
     add: on,
     edit: (r) => on && r.ours && (owner || r.row.owner_id === deps.me.id),
     costView: seesCosting(m),
-    costEdit: on && costingLevel(m) === 'edit',
+    costEdit: (deps.preview || plan.on) && costingLevel(m) === 'edit',
   };
 }
 
@@ -186,9 +187,10 @@ const noCosting = (m) => frame(m, '', h('div', { class: 'jrk-card' }, h('h2', nu
 
 /** portal.js's router hands over everything after #kitchen/<id>/. */
 export function show(m, sub = '', arg = '', arg2 = '') {
-  const costPage = ['costing', 'cost', 'plate'].includes(sub);
+  const costPage = ['costing', 'cost', 'plate', 'sheet'].includes(sub);
   if (costPage && !seesCosting(m)) { screen.next(); return noCosting(m); }
   if (sub === 'costing') return viewCosting(m);
+  if (sub === 'sheet') return viewSheet(m);
   if (sub === 'cost' && arg) return viewCostDetail(m, arg);
   if (sub === 'plate' && arg) return viewPlate(m, arg);
   if (sub === 'prep') return viewPrep(m);
@@ -528,8 +530,14 @@ function plateCost(plate, byId, kitchen) {
   return { total, missing, unknown, fc, suggested: total > 0 ? suggestedPrice(total, kitchen.target) : null };
 }
 
-const viewOnly = (can) => !can.costEdit && h('p', { class: 'note' }, deps.preview ? 'Preview: prices can’t be changed here.'
-  : can.costView ? 'You can see the costing. Ask your owner if you need to change it.' : '');
+const viewOnly = (can) => (deps.preview
+  ? h('p', { class: 'note jrk-adminnote' }, 'Preview: as the admin you can change this restaurant’s prices, menu prices and plates here. They see your changes straight away.')
+  : !can.costEdit && h('p', { class: 'note' }, can.costView ? 'You can see the costing. Ask your owner if you need to change it.' : ''));
+
+/** The costing pages' own switch: recipes and plates, or the ingredient price sheet. */
+const costSwitch = (m, here) => h('div', { class: 'jrk-costswitch', role: 'group', 'aria-label': 'Costing' },
+  [['costing', 'Recipes & plates'], ['sheet', 'Ingredient prices']].map(([k, label]) =>
+    h('a', { href: `#kitchen/${m.restaurant.id}/${k}`, 'aria-current': k === here ? 'page' : null }, label)));
 
 async function viewCosting(m) {
   const mine = screen.next();
@@ -577,22 +585,13 @@ async function viewCosting(m) {
       h('td', { 'data-label': `At ${k.target}%` }, pc.suggested != null ? money(pc.suggested) : '—'));
   });
 
-  const items = Object.entries(k.items).sort(([a], [b]) => a.localeCompare(b));
-  const priceSearch = h('input', { type: 'search', placeholder: 'Search prices', 'aria-label': 'Search ingredient prices' });
-  const priceList = h('ul', { class: 'jrk-list' });
-  const paintPrices = () => {
-    const q = priceSearch.value.trim().toLowerCase();
-    fill(priceList, items.filter(([name]) => !q || name.includes(q)).map(([name, p]) => h('li', null,
-      h('span', null, name), h('span', { class: 'jrk-row' }, h('span', null, `${money(p.p)} / ${PRICE_UNITS[p.per]?.label || p.per}`),
-        can.costEdit && h('button', { class: 'jrk-link', type: 'button', 'aria-label': `Remove the price of ${name}`, onclick: async () => {
-          try { await changeKitchen(m, (d) => { delete d.items[name]; }); toast('Price removed'); viewCosting(m); } catch (err) { toast(err.message); }
-        } }, 'Remove')))));
-  };
-  priceSearch.addEventListener('input', paintPrices);
-  paintPrices();
-
-  frame(m, 'costing',
-    h('p', null, 'What each recipe and plate costs to make, from your ingredient prices. Open a recipe to price its ingredients; a price you enter is used in every recipe with that ingredient.'),
+  const sheet = ingredientSheet(data.recipes, k);
+  const toPrice = sheet.filter((x) => !x.free && !x.price).length;
+  frame(m, 'costing', costSwitch(m, 'costing'),
+    h('p', null, 'What each recipe and plate costs to make, from your ingredient prices. Fill in prices on the ',
+      h('a', { href: `#${key}/sheet` }, 'ingredient price sheet'), ', or open a recipe to price its ingredients; a price is used in every recipe with that ingredient.'),
+    toPrice > 0 && h('p', { class: 'jrk-newnote' }, h('strong', null, `${plural(toPrice, 'ingredient')} still ${toPrice === 1 ? 'needs' : 'need'} a price. `),
+      h('a', { href: `#${key}/sheet` }, 'Open the price sheet')),
     h('div', { class: 'jrk-row jrk-find' }, search, h('label', { class: 'jrk-row jrk-target' }, 'Target food cost', target, '%')),
     data.recipes.length
       ? h('div', { class: 'jrk-tablewrap' }, h('table', { class: 'jrk-cost' },
@@ -603,8 +602,108 @@ async function viewCosting(m) {
     plates.length > 0 && h('div', { class: 'jrk-tablewrap' }, h('table', { class: 'jrk-cost jrk-plates' },
       h('thead', null, h('tr', null, ['Plate', 'Plate cost', 'Menu price', 'Food cost', `Price at ${k.target}%`].map((t) => h('th', { scope: 'col' }, t)))), h('tbody', null, plates))),
     can.costEdit && h('div', { class: 'jrk-row jrk-actions' }, h('a', { class: 'btn line', href: `#${key}/plate/new` }, '+ Add a plate')),
-    h('details', { class: 'jrk-card jrk-prices' }, h('summary', null, h('strong', null, `Ingredient prices (${items.length})`)),
-      items.length ? [priceSearch, priceList] : h('p', { class: 'note' }, 'No prices yet. Open a recipe above and add a price for each ingredient.')),
+    viewOnly(can));
+}
+
+/**
+ * Every ingredient the restaurant's recipes use, once each (matched the way costing matches them, so "Roma tomatoes"
+ * and "tomatoes, diced" share a price), with the recipes it is in, the units they use, and its price.
+ */
+function ingredientSheet(recipes, kitchen) {
+  const rows = new Map();
+  for (const recipe of recipes) {
+    for (const l of costing(recipe, kitchen.items).lines) {
+      if (!l.key) continue;
+      let row = rows.get(l.key);
+      if (!row) {
+        const name = itemName(l.ing.item) || l.key;
+        row = { key: l.key, name: name.charAt(0).toUpperCase() + name.slice(1), entry: l.entry, ing: l.ing, free: l.state === 'free', recipes: new Set(), units: new Set(), mismatch: new Set() };
+        rows.set(l.key, row);
+      }
+      row.recipes.add(recipe.title);
+      if (l.ing.unit) row.units.add(l.ing.unit);
+      if (l.state === 'noconvert') row.mismatch.add(formatIngredient(l.ing));
+    }
+  }
+  return [...rows.values()].map((r) => ({ ...r, price: kitchen.items[r.key] || null }))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+}
+
+async function viewSheet(m) {
+  const mine = screen.next();
+  const data = await ready(m, 'costing', mine);
+  if (!data) return;
+  const r = m.restaurant;
+  const can = rights(m, restaurantPlan(r));
+  let rows = ingredientSheet(data.recipes, data.kitchen);
+  const search = h('input', { type: 'search', placeholder: 'Search ingredients', 'aria-label': 'Search ingredients' });
+  const which = h('select', { 'aria-label': 'Show' },
+    h('option', { value: 'all' }, 'All ingredients'), h('option', { value: 'missing' }, 'Needs a price'), h('option', { value: 'priced' }, 'Priced'));
+  const summary = h('p', { class: 'note', role: 'status' });
+  const body = h('tbody');
+  const extra = h('div');
+
+  async function setPrice(key, value, per) {
+    const v = String(value).trim();
+    const p = parseFloat(v);
+    try {
+      await changeKitchen(m, (d) => { if (v === '' || !(p >= 0)) delete d.items[key]; else d.items[key] = { p: Math.round(p * 10000) / 10000, per }; });
+      rows = ingredientSheet(data.recipes, cache.get(r.id).kitchen);
+      toast(v === '' ? 'Price removed' : 'Price saved');
+      paint(key);
+    } catch (err) { toast(err.message); }
+  }
+
+  function paint(focusKey = null) {
+    const q = search.value.trim().toLowerCase();
+    const shown = rows.filter((x) => (!q || x.name.toLowerCase().includes(q) || x.key.includes(q))
+      && (which.value === 'all' || (which.value === 'missing' ? !x.free && !x.price : !!x.price)));
+    const costable = rows.filter((x) => !x.free);
+    const priced = costable.filter((x) => x.price).length;
+    summary.textContent = `${plural(costable.length, 'ingredient')} in your recipes · ${priced} priced · ${costable.length - priced} to go`;
+    fill(body, shown.length ? shown.map((x) => {
+      const disabled = !can.costEdit || x.free;
+      const price = h('input', { type: 'number', min: '0', step: '0.01', inputmode: 'decimal', value: x.price ? String(x.price.p) : '', placeholder: x.free ? '' : '$',
+        disabled, 'aria-label': `Price of ${x.name}` });
+      const unit = h('select', { 'aria-label': `Price unit for ${x.name}`, disabled },
+        Object.entries(PRICE_UNITS).map(([u, d]) => h('option', { value: u }, `per ${d.label}`)));
+      unit.value = x.price?.per || defaultPriceUnit(x.ing, x.entry);
+      price.addEventListener('change', () => setPrice(x.key, price.value, unit.value));
+      unit.addEventListener('change', () => { if (price.value.trim()) setPrice(x.key, price.value, unit.value); });
+      const used = [...x.recipes];
+      return h('tr', { 'data-key': x.key, class: x.price ? 'priced' : x.free ? 'free' : 'missing' },
+        h('th', { scope: 'row' }, x.name,
+          h('span', { class: 'note jrk-missing' }, `${used.length === 1 ? used[0] : `${used.length} recipes: ${used.slice(0, 3).join(', ')}${used.length > 3 ? '…' : ''}`}`
+            + (x.units.size ? ` · used in ${[...x.units].join(', ')}` : '')),
+          x.free && h('span', { class: 'note jrk-missing' }, 'not counted (water, salt…)'),
+          x.mismatch.size > 0 && h('span', { class: 'note jrk-missing jrk-over' }, `can’t cost “${[...x.mismatch][0]}” at this unit: try another`)),
+        h('td', { 'data-label': 'Price' }, h('span', { class: 'jrk-row jrk-pricein' }, price, unit)),
+        h('td', { 'data-label': '' }, x.price && can.costEdit && h('button', { class: 'jrk-link', type: 'button', 'aria-label': `Remove the price of ${x.name}`,
+          onclick: () => setPrice(x.key, '', unit.value) }, 'Remove')));
+    }) : h('tr', null, h('td', { colspan: '3', class: 'note' }, rows.length ? 'Nothing matches.' : 'Add recipes first: their ingredients appear here.')));
+    // prices kept for ingredients no recipe uses any more
+    const used = new Set(rows.map((x) => x.key));
+    const unused = Object.entries(cache.get(r.id)?.kitchen.items || {}).filter(([key]) => !used.has(key));
+    fill(extra, unused.length > 0 && h('details', { class: 'jrk-card jrk-prices' }, h('summary', null, h('strong', null, `Prices not used in any recipe (${unused.length})`)),
+      h('ul', { class: 'jrk-list' }, unused.map(([key, p]) => h('li', null, h('span', null, key),
+        h('span', { class: 'jrk-row' }, `${money(p.p)} / ${PRICE_UNITS[p.per]?.label || p.per}`,
+          can.costEdit && h('button', { class: 'jrk-link', type: 'button', onclick: () => setPrice(key, '', p.per) }, 'Remove')))))));
+    if (focusKey) {
+      const next = body.querySelector(`tr[data-key="${CSS.escape(focusKey)}"]`)?.nextElementSibling?.querySelector('input:not([disabled])');
+      if (next && which.value !== 'missing') next.focus();
+      else body.querySelector('input:not([disabled])')?.focus();
+    }
+  }
+  search.addEventListener('input', () => paint());
+  which.addEventListener('change', () => paint());
+  paint();
+  frame(m, 'costing', costSwitch(m, 'sheet'),
+    h('p', null, 'Every ingredient in your recipes, once. Enter what you pay and per what (a case price works: per lb, per each, per gallon…); it is used in every recipe with that ingredient.'),
+    h('div', { class: 'jrk-row jrk-find' }, search, which),
+    summary,
+    h('div', { class: 'jrk-tablewrap' }, h('table', { class: 'jrk-cost jrk-sheet' },
+      h('thead', null, h('tr', null, ['Ingredient', 'Price', ''].map((t) => h('th', { scope: 'col' }, t)))), body)),
+    extra,
     viewOnly(can));
 }
 
@@ -737,65 +836,109 @@ async function viewPlate(m, plateId) {
     can.costEdit ? h('div', { class: 'jrk-row' }, save, h('a', { class: 'btn line', href: `#${key}/costing` }, 'Cancel'), del) : viewOnly(can));
 }
 
-// ------------------------------------------------------------------ Help (kept in Joseph's inbox, and emailed)
+// ------------------------------------------------------------------ Help: a form that reaches Joseph (his inbox, and email)
+const TOPICS = ['A recipe', 'Costing and prices', 'Adding or changing recipes', 'Logins and staff', 'Our plan or billing', 'Something else'];
+const URGENCY = [['whenever', 'Whenever you can'], ['week', 'This week'], ['soon', 'Today or tomorrow'], ['urgent', 'Urgent: during service']];
+const REACH = [['email', 'Email'], ['phone', 'Phone call'], ['text', 'Text message']];
+
 async function viewHelp(m) {
   const mine = screen.next();
   const r = m.restaurant;
-  const topic = h('select', { 'aria-label': 'What it is about' },
-    ['A recipe', 'Costing and prices', 'Logins and staff', 'Our plan', 'Something else'].map((t) => h('option', null, t)));
-  const msg = h('textarea', { rows: '6', maxlength: '4000', required: true, 'aria-label': 'Your message', placeholder: 'What do you need? Mention the recipe if it is about one.' });
+  const cached = cache.get(r.id);
+  const recipes = cached ? cached.recipes : [];
+  const select = (label, options, value) => {
+    const el = h('select', { 'aria-label': label }, options.map(([v, t]) => h('option', { value: v }, t)));
+    if (value) el.value = value;
+    return el;
+  };
+  const name = h('input', { type: 'text', maxlength: '120', autocomplete: 'name', required: true, value: deps.me.displayName || '', 'aria-label': 'Your name' });
+  const email = h('input', { type: 'email', maxlength: '200', autocomplete: 'email', required: true, value: deps.me.email || '', 'aria-label': 'Your email' });
   const phone = h('input', { type: 'tel', maxlength: '40', autocomplete: 'tel', 'aria-label': 'Phone (optional)' });
+  const reach = select('Best way to reach you', REACH, 'email');
+  const topic = select('What it is about', TOPICS.map((t) => [t, t]));
+  const recipe = select('Which recipe (optional)', [['', 'Not about one recipe'], ...recipes.map((x) => [x.title, x.title])]);
+  const urgency = select('How soon you need an answer', URGENCY, 'whenever');
+  const msg = h('textarea', { rows: '6', maxlength: '3500', required: true, 'aria-label': 'Your message', placeholder: 'What do you need? The more detail, the quicker the answer.' });
   const note = h('p', { class: 'jrk-msg', role: 'status' });
   const send = h('button', { class: 'btn', type: 'submit', disabled: !!deps.preview }, 'Send to Joseph');
   const startedAt = Date.now();
   const mailto = `mailto:${HELP_EMAIL}?subject=${enc(`${r.name}: help`)}`;
   const earlier = h('div');
-  const form = h('form', { class: 'form', onsubmit: async (e) => {
+  const showRecipe = () => { recipe.closest('.field').hidden = !recipes.length || !['A recipe', 'Costing and prices', 'Adding or changing recipes'].includes(topic.value); };
+  topic.addEventListener('change', showRecipe);
+
+  const form = h('form', { class: 'form jrk-helpform', onsubmit: async (e) => {
     e.preventDefault();
+    note.textContent = '';
+    if (!name.value.trim()) { note.textContent = 'Please add your name.'; name.focus(); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value.trim())) { note.textContent = 'Please check your email address: Joseph replies there.'; email.focus(); return; }
+    if ((reach.value === 'phone' || reach.value === 'text') && !phone.value.trim()) { note.textContent = 'Add a phone number, or choose Email.'; phone.focus(); return; }
     const body = msg.value.trim();
     if (!body) { note.textContent = 'Please write your message.'; msg.focus(); return; }
-    busy(send, true); note.textContent = '';
-    const asEmail = `${mailto}&body=${enc(`${topic.value}\n\n${body}`)}`;
-    const text = `${body}${phone.value.trim() ? `\n\nPhone: ${phone.value.trim()}` : ''}`;
-    // two routes, so a message gets through if either does: Joseph's inbox in Admin tools, and an email
-    // through the website's own contact form (only on jonesridgekitchen.com)
-    const saved = cloud.sendHelpMessage({ restaurantId: r.id, topic: topic.value, body: text, name: deps.me.displayName, email: deps.me.email })
-      .then(() => true, () => false);
+    const urgent = URGENCY.find(([v]) => v === urgency.value)[1];
+    const details = [
+      ['Restaurant', r.name], ['From', `${name.value.trim()} <${email.value.trim()}>`], ['Phone', phone.value.trim()],
+      ['Best way to reach them', REACH.find(([v]) => v === reach.value)[1]], ['About', topic.value],
+      ['Recipe', recipe.closest('.field').hidden ? '' : recipe.value], ['Needed', urgent],
+    ].filter(([, v]) => v);
+    const full = `${details.map(([k, v]) => `${k}: ${v}`).join('\n')}\n\n${body}`;
+    busy(send, true);
+    // two routes, so the form reaches Joseph if either works: his inbox in Admin tools, and an email through the
+    // website's own contact form (only on jonesridgekitchen.com)
+    const saved = cloud.sendHelpMessage({ restaurantId: r.id, topic: `${topic.value}${urgency.value === 'urgent' ? ' · URGENT' : urgency.value === 'soon' ? ' · soon' : ''}`.slice(0, 60),
+      body: full.slice(0, 4000), name: name.value.trim(), email: email.value.trim() }).then(() => true, () => false);
     const emailed = fetch('/api/inquiry', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-Request-Id': `help-${startedAt}` },
-      body: JSON.stringify({ name: deps.me.displayName || deps.me.email, email: deps.me.email, phone: phone.value.trim(), service: 'consulting', started: startedAt,
-        message: `Help request from ${r.name} (client portal) · ${topic.value}\n\n${body}` }) })
+      body: JSON.stringify({ name: name.value.trim(), email: email.value.trim(), phone: phone.value.trim(), service: 'consulting', started: startedAt,
+        message: `Help request from ${r.name} (client portal)\n${full}` }) })
       .then(async (res) => res.ok && !(await res.json().catch(() => ({}))).error, () => false);
     const [inInbox, inEmail] = await Promise.all([saved, emailed]);
     busy(send, false);
     if (!inInbox && !inEmail) {
-      note.replaceChildren('The message couldn’t be sent from this page. ', h('a', { class: 'btn line small', href: asEmail }, 'Send it as an email instead'));
+      note.replaceChildren('The form couldn’t be sent from this page. ', h('a', { class: 'btn line small', href: `${mailto}&body=${enc(full)}` }, 'Send it as an email instead'));
       return;
     }
-    fill(form.parentElement, h('h2', null, 'Sent'), h('p', null, `Thanks. Joseph will reply to ${deps.me.email}.`),
+    fill(form.parentElement, h('h2', null, 'Sent'),
+      h('p', null, `Thanks, ${name.value.trim().split(' ')[0]}. Joseph has your message and will get back to you by ${reach.value === 'email' ? `email at ${email.value.trim()}` : `${reach.value === 'phone' ? 'phone' : 'text'} at ${phone.value.trim()}`}.`),
+      urgency.value === 'urgent' && h('p', { class: 'note' }, 'For something that can’t wait during service, a call is quickest.'),
       h('p', null, h('a', { href: `#kitchen/${r.id}` }, '← Back to your recipes')));
     listEarlier();
   } },
-  h('div', { class: 'full' }, field('What it is about', topic)),
+  h('div', { class: 'jrk-row jrk-pair' }, field('Your name', name), field('Your email', email)),
+  h('div', { class: 'jrk-row jrk-pair' }, field('Phone', phone, '(optional)'), field('Best way to reach you', reach)),
+  h('div', { class: 'jrk-row jrk-pair' }, field('What it is about', topic), field('How soon', urgency)),
+  h('div', { class: 'full' }, field('Which recipe', recipe, '(optional)')),
   h('div', { class: 'full' }, field('Your message', msg)),
-  h('div', { class: 'full' }, field('Phone', phone, '(optional, if a call is easier)')),
   h('div', { class: 'full' }, note),
-  h('div', { class: 'full' }, send));
+  h('div', { class: 'full' }, send, deps.preview && h('span', { class: 'note' }, ' Preview: sending is switched off here.')));
+  showRecipe();
+
   async function listEarlier() {
     if (deps.preview) return;
     let rows = [];
     try { rows = await cloud.listHelpMessages(r.id); } catch { return; }
     if (mine !== screen.id || !rows.length) return;
-    fill(earlier, h('h3', null, 'Your messages'), h('ul', { class: 'jrk-list jrk-help' }, rows.slice(0, 20).map((x) => h('li', null,
-      h('span', null, h('strong', null, x.topic || 'Message'), h('span', { class: 'note' }, ` · ${WHEN.format(new Date(x.created_at))}`), h('br'), x.body.length > 140 ? `${x.body.slice(0, 140)}…` : x.body),
-      h('span', { class: `jrk-tag${x.status === 'done' ? '' : ' new'}` }, x.status === 'done' ? 'Answered' : 'With Joseph')))));
+    fill(earlier, h('h3', null, 'Your messages'), h('ul', { class: 'jrk-list jrk-help' }, rows.slice(0, 20).map((x) => {
+      const text = x.body.split('\n\n').slice(1).join('\n\n') || x.body;
+      return h('li', null,
+        h('span', null, h('strong', null, x.topic || 'Message'), h('span', { class: 'note' }, ` · ${WHEN.format(new Date(x.created_at))}`), h('br'), text.length > 140 ? `${text.slice(0, 140)}…` : text),
+        h('span', { class: `jrk-tag${x.status === 'done' ? '' : ' new'}` }, x.status === 'done' ? 'Answered' : 'With Joseph'));
+    })));
   }
   frame(m, 'help',
     h('div', { class: 'jrk-card' }, h('h2', null, 'Ask Joseph'),
-      h('p', null, `Questions about a recipe, costing, logins or ${r.name}’s plan. Joseph replies by email, to ${deps.me.email || 'you'}.`),
-      deps.preview ? h('p', { class: 'note' }, 'Preview: the form is switched off here.') : form),
+      h('p', null, `Questions about a recipe, costing, logins or ${r.name}’s plan. Fill this in and it goes straight to Joseph.`),
+      form),
     earlier,
     h('p', { class: 'note' }, 'Or email ', h('a', { href: mailto }, HELP_EMAIL), ', or use the ', h('a', { href: CONTACT_ANY }, 'contact page'), '.'));
   listEarlier();
+  // the recipe list is there once the kitchen has loaded; load it if this page was opened first
+  if (!cached && restaurantPlan(r).on) {
+    load(m).then((d) => { if (mine === screen.id && d.recipes.length) viewHelpRecipes(recipe, d.recipes, showRecipe); }).catch(() => {});
+  }
+}
+function viewHelpRecipes(select, recipes, after) {
+  fill(select, h('option', { value: '' }, 'Not about one recipe'), recipes.map((x) => h('option', { value: x.title }, x.title)));
+  after();
 }
 
 // ------------------------------------------------------------------ Team (owners)
