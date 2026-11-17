@@ -46,6 +46,20 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## My recipes, the admin's recipe collection, and copies that keep up (v0.32)
+
+- **My recipes, always in the top right corner** of every page (`#/mine`): your own recipes (added, imported, library
+  recipes you changed), newest change first, searchable, with *Add a recipe* and *Import*.
+- **For the admin it is the recipe collection**, with an **Everyone's** tab (`#/mine/everyone`): every account's
+  private recipes, restaurant collections (your copies and what each team added) and Community, with whose each
+  is and where it lives; filter by person or place, open any to read it, the pencil to edit it (saved to their account).
+  Someone's private recipe says so on its page.
+- **Restaurant copies keep up with your recipe.** A recipe you add to a restaurant's collection stays linked to yours
+  (older copies are found by name). Your recipe's page lists the restaurants that have it, *Up to date* or *Older
+  version*, with *Update their copy*; saving your recipe asks whether to update the copies too.
+- **Clearer delete questions**: whose recipe it is, that it can't be undone, and which restaurant copies stay.
+No database change: `recipes.source_recipe_id` links the copies.
+
 ## Macronutrients on the Nutrition card (v0.31.3)
 
 The Nutrition card on a recipe page has a **Macronutrients** expansion (its summary line gives the split, e.g.

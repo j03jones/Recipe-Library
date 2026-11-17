@@ -912,3 +912,25 @@ details.macros h4 { margin: 1rem 0 .3rem; font-family: var(--slab); color: var(-
 .macrotable.sources th[scope=row] { font-weight: 400; }
 details.macros .tablewrap { overflow-x: auto; }
 @media print { details.macros { display: none; } }
+
+/* "My recipes", always in the top right corner (index.html), and room for it in the headers */
+.mybtn { position: fixed; z-index: 40; top: calc(.6rem + env(safe-area-inset-top)); right: calc(.7rem + env(safe-area-inset-right));
+  display: inline-flex; align-items: center; gap: .4rem; min-height: 2.5rem; padding: .3rem .85rem; border-radius: 99px;
+  background: rgb(35 64 47 / .9); color: var(--cream); border: 1px solid rgb(244 241 234 / .35); text-decoration: none;
+  font-weight: 600; font-size: .9rem; box-shadow: 0 4px 14px rgb(0 0 0 / .18); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.mybtn:hover { background: var(--ridge); color: #fff; }
+.mybtn[aria-current=page] { background: var(--cream); color: var(--ridge); border-color: var(--cream); }
+.topbar { padding-right: 8.5rem; }
+@media (max-width: 760px) {
+  .band { padding-top: calc(3.5rem + env(safe-area-inset-top)); }
+  .topbar { padding-right: 8rem; }
+}
+@media print { .mybtn { display: none !important; } }
+/* My recipes / the admin's recipe collection */
+.minetabs { margin-top: 1rem; }
+.minefilters { flex-wrap: wrap; gap: .5rem; margin-top: .5rem; }
+.minefilters select { flex: 1 1 9rem; min-width: 0; }
+.minelist li { display: flex; align-items: center; gap: .3rem; }
+.minelist li > .rc { flex: 1 1 auto; min-width: 0; }
+.copiesbox .asks li { flex-wrap: nowrap; }
+.copiesbox .badge.warn, .badge.warn { background: var(--soft); color: var(--danger); }

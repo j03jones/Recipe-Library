@@ -251,7 +251,12 @@ export const restaurantMembers = (id) => authed(`/rest/v1/restaurant_members?res
 export const updateRestaurant = (id, fields) => authed(`/rest/v1/restaurants?id=eq.${enc(id)}`, { method: 'PATCH', body: fields })
   .catch((err) => { throw trialError(err); });
 /** The admin puts a copy of a recipe into a restaurant's collection (the copy is the restaurant's from then on). */
-export const addToCollection = (record, restaurantId) => createRecipe(record, { scope: 'restaurant', restaurant_id: restaurantId, status: 'approved' });
+/** The admin puts a copy of a recipe into a restaurant's collection; `sourceId` links it to the admin's own recipe it
+ *  came from, so later edits can be passed on to it. */
+export const addToCollection = (record, restaurantId, sourceId = null) => createRecipe(record,
+  { scope: 'restaurant', restaurant_id: restaurantId, status: 'approved', ...(sourceId ? { source_recipe_id: sourceId } : {}) });
+/** Link a restaurant copy to the recipe it was copied from (copies made before linking are found by name). */
+export const linkCopy = (copyId, sourceId) => authed(`/rest/v1/recipes?id=eq.${enc(copyId)}`, { method: 'PATCH', body: { source_recipe_id: sourceId } });
 /** Delete one of a restaurant team's recipes (the database refuses the chef's, and other people's for staff). */
 export async function deleteKitchenRecipe(id) {
   const rows = await authed(`/rest/v1/recipes?id=eq.${enc(id)}`, { method: 'DELETE', headers: { Prefer: 'return=representation' } });
