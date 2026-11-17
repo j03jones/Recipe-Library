@@ -934,3 +934,18 @@ details.macros .tablewrap { overflow-x: auto; }
 .minelist li > .rc { flex: 1 1 auto; min-width: 0; }
 .copiesbox .asks li { flex-wrap: nowrap; }
 .copiesbox .badge.warn, .badge.warn { background: var(--soft); color: var(--danger); }
+
+/* Recipe collection tools: choosing several, duplicates, edit history, meal prep, promote */
+.minetools { gap: .5rem; flex-wrap: wrap; }
+.minelist li .pick { width: 1.25rem; height: 1.25rem; flex: none; margin-right: .25rem; }
+.selectbar { position: sticky; bottom: calc(5rem + env(safe-area-inset-bottom)); z-index: 5; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
+  padding: .6rem .75rem; margin-top: .75rem; border-radius: 12px; background: var(--card, var(--bg)); border: 1px solid var(--line);
+  box-shadow: 0 6px 20px rgb(0 0 0 / .15); }
+.selectbar[hidden] { display: none; }
+.selectbar .n { font-weight: 600; margin-right: auto; }
+.selectbar select { min-width: 0; max-width: 100%; }
+.dupgroup .rows { margin: 0; }
+.historybox summary, .mealprepbox summary { cursor: pointer; }
+.history { padding-left: 1.1rem; display: grid; gap: .75rem; margin: .5rem 0 0; }
+.history > li > ul { padding-left: 1rem; margin: .2rem 0 .4rem; }
+.promotebox .row { flex-wrap: wrap; gap: .5rem; align-items: center; }
