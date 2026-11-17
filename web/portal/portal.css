@@ -191,3 +191,6 @@
 #jrk-portal .jrk-helpform .jrk-pair > .field { flex: 1 1 13rem; }
 #jrk-portal .jrk-helpform .field input, #jrk-portal .jrk-helpform .field select, #jrk-portal .jrk-helpform .field textarea { width: 100%; }
 @media (max-width: 600px) { #jrk-portal table.jrk-sheet tr { grid-template-columns: 1fr auto; } #jrk-portal table.jrk-sheet td[data-label='']::before { display: none; } }
+#jrk-portal .jrk-plateing .jrk-ptitle input { width: 100%; font: inherit; padding: .45rem .6rem; border: 1px solid #aeb7b1; border-radius: 6px; box-sizing: border-box; }
+#jrk-portal .jrk-plateing .jrk-pricein input { width: 5rem; }
+#jrk-portal .jrk-plateadd input[type=text] { flex: 1 1 14rem; min-width: 0; font: inherit; padding: .6rem .7rem; border: 1px solid #aeb7b1; border-radius: 6px; }
