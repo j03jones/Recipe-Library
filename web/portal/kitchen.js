@@ -19,7 +19,8 @@ import * as cloud from '../js/cloud.js';
 import { detect } from '../js/allergens.js';
 import { restaurantPlan } from '../js/clientcore.js';
 import { toRecord, fromRecord } from '../js/model.js';
-import { PRICE_UNITS, costing, defaultPriceUnit, foodCostPct, suggestedPrice } from '../js/nutrition.js';
+import { PRICE_UNITS, costing, defaultPriceUnit, foodCostPct, nutrition, suggestedPrice } from '../js/nutrition.js';
+import { macroDetails, nutrientTiles } from '../js/nutritionui.js';
 import * as photos from '../js/photos.js';
 import { clean as cleanPrices, DEFAULT_TARGET } from '../js/prices.js';
 import { byAisle, itemName, shoppingList } from '../js/shopping.js';
@@ -254,6 +255,27 @@ async function viewList(m) {
       'Cooking from a phone or tablet? The ', h('a', { href: APP }, 'recipe app'), ' has the same collection with cook mode and timers, using this login.'));
 }
 
+/** A recipe's Nutrition: the five figures per serving, the Macronutrients (with where the calories come from),
+ *  and how much of the recipe could be counted. Folded away; remembers whether it was open. */
+let nutritionOpen = false, macrosOpen = false;
+function nutritionBlock(recipe) {
+  const n = nutrition(recipe);
+  if (!n.counted) return h('p', { class: 'note jrk-noprint' }, h('strong', null, 'Nutrition: '), 'not enough of the ingredients could be matched to estimate it.');
+  const shown = n.per || n.total;
+  const enough = n.coverage >= 0.5;
+  const box = h('details', { class: 'jrk-nutri jrk-noprint', open: nutritionOpen || null },
+    h('summary', null, h('strong', null, 'Nutrition'),
+      h('span', { class: 'note' }, ` ${Math.round(shown.kcal).toLocaleString()} calories ${n.per ? 'per serving' : 'in the whole recipe'}${enough ? '' : ' (rough)'}`)),
+    nutrientTiles(h, shown, 'jrk-nstats'),
+    h('p', { class: 'note' }, n.per ? `Per serving. Whole recipe: ${Math.round(n.total.kcal).toLocaleString()} calories.` : 'The recipe doesn’t say how many servings, so this is the whole recipe.'),
+    macroDetails(h, { per: n.per, total: n.total, servings: n.servings, parts: n.parts, quiet: 'note', cls: 'jrk-macrodetails', open: macrosOpen, onToggle: (o) => { macrosOpen = o; } }),
+    h('p', { class: 'note' }, `Estimated from ${n.counted} of ${n.lines} ingredients${enough ? '' : ', so treat it as rough'}. Typical values, not a label: brands and cuts vary.`),
+    n.skipped.length > 0 && h('details', { class: 'jrk-notcounted' }, h('summary', { class: 'note' }, `Not counted (${n.skipped.length})`),
+      h('ul', { class: 'note' }, n.skipped.map((x) => h('li', null, `${formatIngredient(x.ing)}: ${x.why}`)))));
+  box.addEventListener('toggle', () => { nutritionOpen = box.open; });
+  return box;
+}
+
 /** Ingredient names as the allergen checker reads them. */
 const allergensOf = (recipe) => detect(recipe.ings.map((i) => i.item)).map((d) => d.allergen);
 
@@ -340,6 +362,7 @@ async function viewRecipe(m, recipeId) {
       h('h3', null, 'Ingredients'), ingsBox,
       steps.length > 0 && [h('h3', null, 'Method'), h('ol', { class: 'jrk-steps' }, steps.map((x) => h('li', null, x)))],
       h('div', { class: 'jrk-facts' },
+        nutritionBlock(base),
         h('p', null, h('strong', null, 'Allergens: '), allergens.length ? allergens.join(', ') : 'none of the major allergens found in the ingredient names',
           h('span', { class: 'note' }, '. Worked out from the ingredient names: check bought sauces, stocks and mixes yourself.')),
         c && h('p', { class: 'jrk-noprint' }, h('strong', null, 'Food cost: '),

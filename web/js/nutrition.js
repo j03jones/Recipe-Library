@@ -103,21 +103,45 @@ export function nutrition(recipe) {
   const total = { kcal: 0, fat: 0, carbs: 0, protein: 0, sodium: 0 };
   const counted = [];
   const skipped = [];
+  const parts = [];                                           // what each counted line adds, for "where it comes from"
   for (const ing of recipe.ings) {
     const { key, entry } = identify(ing.item);
     if (FREE_KEYS.has(key) && !(entry && entry.kcal)) continue;     // water, ice: nothing to count
     const m = amountOf(ing) == null ? null : measure(ing, entry);
     if (!entry || !m || m.g == null) { skipped.push({ ing, why: !entry ? 'unknown food' : amountOf(ing) == null ? 'no amount' : 'cannot be weighed' }); continue; }
     const k = m.g / 100;
-    for (const f of Object.keys(total)) total[f] += k * entry[f];
+    const part = { ing, name: entry.name, g: m.g };
+    for (const f of Object.keys(total)) { part[f] = k * entry[f]; total[f] += part[f]; }
+    parts.push(part);
     counted.push(ing);
   }
   const yq = recipe.yq ? recipe.yq.toNumber() : 0;
   const servings = yq > 0 ? yq : 0;
   const per = servings ? Object.fromEntries(Object.entries(total).map(([f, v]) => [f, v / servings])) : null;
   const lines = counted.length + skipped.length;
-  return { total, per, servings, counted: counted.length, skipped, lines, coverage: lines ? counted.length / lines : 0 };
+  return { total, per, servings, counted: counted.length, skipped, lines, coverage: lines ? counted.length / lines : 0, parts };
 }
+
+/** Reference daily values for a 2,000-calorie diet (the ones US labels use). */
+export const DAILY = { kcal: 2000, fat: 78, carbs: 275, protein: 50, sodium: 2300 };
+/** Calories in a gram of each macronutrient. */
+export const KCAL_PER_G = { protein: 4, carbs: 4, fat: 9 };
+
+/**
+ * How the calories split between protein, carbs and fat: { protein: { g, kcal, pct }, carbs, fat }, the percentages
+ * of the calories the three account for (adding up to 100), or null when there are none.
+ */
+export function macroSplit(values) {
+  const out = {};
+  let sum = 0;
+  for (const [f, per] of Object.entries(KCAL_PER_G)) { const g = Math.max(0, values?.[f] || 0); out[f] = { g, kcal: g * per }; sum += g * per; }
+  if (!(sum > 0)) return null;
+  for (const f of Object.keys(KCAL_PER_G)) out[f].pct = (out[f].kcal / sum) * 100;
+  return out;
+}
+
+/** % of the daily value, rounded, or null. */
+export const dailyPct = (f, v) => (DAILY[f] && v != null ? Math.round((v / DAILY[f]) * 100) : null);
 
 // ---- cost
 /** The ways a price can be given: what a price per X is measured in. */

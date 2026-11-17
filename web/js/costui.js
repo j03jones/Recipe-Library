@@ -1,6 +1,7 @@
 // The "Nutrition" and "Food cost" cards on a recipe page, and the price book page.
 // All the arithmetic is in nutrition.js; this file only shows it and saves what you type.
 import { NUTRIENTS, PRICE_UNITS, costing, defaultPriceUnit, foodCostPct, identify, nutrition, suggestedPrice } from './nutrition.js';
+import { macroDetails } from './nutritionui.js';
 import { formatIngredient } from './units.js';
 import * as prices from './prices.js';
 
@@ -19,6 +20,9 @@ export function recipeCosting({ h, fill, scaled, recipeId }) {
   const cost = h('details', { class: 'card costcard' });
   let refresh = () => {};
 
+  let macrosOpen = false;
+  const macroBox = (n) => macroDetails(h, { per: n.per, total: n.total, servings: n.servings, parts: n.parts, open: macrosOpen, onToggle: (o) => { macrosOpen = o; } });
+
   function paintNutrition(s) {
     const n = nutrition(s);
     const enough = n.counted > 0 && n.coverage >= 0.5;
@@ -31,6 +35,7 @@ export function recipeCosting({ h, fill, scaled, recipeId }) {
         h('div', null, h('strong', null, nutrientText(f, shown[f]), unit && h('em', null, unit)), h('span', null, label.toLowerCase())))),
       n.counted > 0 && h('p', { class: 'muted small' }, n.per ? 'Per serving. ' : 'No yield is listed, so this is the whole recipe. ',
         n.per && `Whole recipe: ${n0(n.total.kcal)} calories.`),
+      n.counted > 0 && macroBox(n),
       h('p', { class: `small ${enough ? 'muted' : 'note'}` },
         n.counted ? `Estimated from ${n.counted} of ${n.lines} ingredients${enough ? '' : ', so treat it as rough'}.` : 'None of the ingredients could be matched or weighed.',
         ' Typical values, not a label: brands and cuts vary.'),

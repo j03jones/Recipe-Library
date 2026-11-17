@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 SCRIPT = r"""
 import { Frac } from './web/js/units.js';
-import { identify, measure, amountOf, nutrition, costing, lineCost, suggestedPrice, foodCostPct, defaultPriceUnit } from './web/js/nutrition.js';
+import { identify, measure, amountOf, nutrition, costing, lineCost, suggestedPrice, foodCostPct, defaultPriceUnit, macroSplit, dailyPct } from './web/js/nutrition.js';
 import * as prices from './web/js/prices.js';
 import { FOODS } from './web/js/nutridata.js';
 
@@ -43,6 +43,9 @@ out.weighs = {
   heads: wg('heads', 'garlic', '2'), cabbage: wg('head', 'cabbage'), cilantro: wg('bunch', 'cilantro'), corn: wg('ears', 'corn', '2'),
   celery: wg('stalks', 'celery', '3'), lettuce: wg('', 'lettuce'), tbsp: wg('Tbsp', 'vegetable oil'),
 };
+const macros = nutrition(rec([ing('1', 'cup', 'flour'), ing('2', '', 'eggs')], '4'));
+out.macros = { split: macroSplit(macros.per), none: macroSplit({ protein: 0, carbs: 0, fat: 0 }), dv: [dailyPct('fat', 39), dailyPct('sodium', 1150), dailyPct('kcal', 500), dailyPct('fiber', 3)],
+  parts: macros.parts.map((p) => [p.name, Math.round(p.kcal)]), partsAdd: Math.round(macros.parts.reduce((a, p) => a + p.kcal, 0)) === Math.round(macros.total.kcal) };
 out.freshTomato = [identify('tomatoes').entry.kcal, identify('tomatoes').entry.each];
 out.names = Object.fromEntries(['garlic cloves', 'cloves garlic', 'guajillo peppers', 'ancho chiles', 'dried pasilla peppers', 'jalapeno peppers',
   'black pepper', 'ground cloves', 'white hominy', 'chiles de arbol', 'poblano peppers', 'tomatillos'].map((n) => [n, identify(n).key]));
@@ -146,6 +149,18 @@ class NutritionTests(unittest.TestCase):
                          ("guajillo pepper", "ancho chile", "jalapeno pepper", "poblano pepper"))
         self.assertEqual((n["dried pasilla peppers"], n["chiles de arbol"], n["white hominy"], n["tomatillos"]), ("pasilla pepper", "arbol", "white hominy", "tomatillo"))
         self.assertEqual(self.js["freshTomato"], [18, 123])                   # fresh, not the canned "diced tomato"
+
+    def test_macronutrients_split_the_calories(self):
+        m = self.js["macros"]
+        sp = m["split"]
+        self.assertAlmostEqual(sp["protein"]["pct"] + sp["carbs"]["pct"] + sp["fat"]["pct"], 100, places=6)
+        self.assertAlmostEqual(sp["fat"]["kcal"], sp["fat"]["g"] * 9, places=6)                 # 9 calories a gram
+        self.assertAlmostEqual(sp["protein"]["kcal"], sp["protein"]["g"] * 4, places=6)
+        self.assertGreater(sp["carbs"]["pct"], sp["fat"]["pct"])                                 # flour and eggs: mostly carbs
+        self.assertIsNone(m["none"])
+        self.assertEqual(m["dv"], [50, 50, 25, None])                                           # % of 78 g fat, 2,300 mg sodium, 2,000 kcal
+        self.assertEqual([p[0] for p in m["parts"]], ["flour", "egg"])                          # what each counted line adds
+        self.assertTrue(m["partsAdd"])
 
     def test_nutrition_totals(self):
         n = self.js["nutri"]

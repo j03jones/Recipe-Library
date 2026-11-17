@@ -46,6 +46,18 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Macronutrients on the Nutrition card (v0.31.3)
+
+The Nutrition card on a recipe page has a **Macronutrients** expansion (its summary line gives the split, e.g.
+"Protein 35% · Carbs 31% · Fat 34%"): a bar of the calories from protein, carbs and fat with grams and percentages; a
+table of calories, protein, carbohydrates, fat and sodium per serving and for the whole recipe with % Daily Value
+(2,000-calorie label values); and **Where it comes from**, the ingredients that add the most calories with their
+protein, carbs and fat. It follows the scale and stays open while you change it. Clients see it too: **restaurant
+clients** get a Nutrition section on each recipe (the same figures, Macronutrients and where the calories come from),
+and **meal prep clients** get Macronutrients on each dish (the split and a per-serving table with % Daily Value, but
+not what each ingredient adds, which would give away the amounts). The section is drawn by `web/js/nutritionui.js`. `macroSplit()`, `dailyPct()` and
+the per-ingredient `parts` of `nutrition()` are in `web/js/nutrition.js`.
+
 ## Nutrition counts whole vegetables, chiles, hominy and cans (v0.31.2)
 
 - **Whole fruit and vegetables are weighed** at a typical size: a head of cabbage or lettuce, a bunch of cilantro, an

@@ -886,3 +886,29 @@ details.admincodes > summary h2 { display: inline; }
 .inbox .msg.open { border-left: 4px solid var(--rust); }
 .inbox .msg.done { opacity: .8; }
 .inbox > h2:first-child { margin-top: .4rem; }
+
+/* Nutrition > Macronutrients */
+details.macros { border-top: 1px solid var(--line); margin-top: .6rem; padding-top: .2rem; min-width: 0; max-width: 100%; }
+details.macros > * { max-width: 100%; }
+details.macros > summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .7rem; padding: .55rem 0; list-style: none; }
+details.macros > summary::-webkit-details-marker { display: none; }
+details.macros > summary strong { font-family: var(--slab); font-size: 1.05rem; color: var(--head); }
+details.macros > summary::after { content: "▾"; margin-left: auto; color: var(--muted); transition: transform .2s; }
+details.macros[open] > summary::after { transform: rotate(180deg); }
+details.macros h4 { margin: 1rem 0 .3rem; font-family: var(--slab); color: var(--head); }
+.macrobar { display: flex; height: 1rem; border-radius: 99px; overflow: hidden; background: var(--line); margin: .3rem 0 .5rem; }
+.macrobar span { display: block; height: 100%; flex: none; }
+.m-protein { background: var(--herb); }
+.m-carbs { background: var(--clay); }
+.m-fat { background: #6f86a0; }
+.macrolegend { list-style: none; margin: 0 0 .6rem; padding: 0; display: flex; flex-wrap: wrap; gap: .2rem 1.1rem; font-size: .92rem; }
+.macrolegend i { display: inline-block; width: .75rem; height: .75rem; border-radius: 3px; margin-right: .35rem; vertical-align: -.05rem; }
+.macrotable { width: 100%; border-collapse: collapse; font-size: .92rem; }
+.macrotable th, .macrotable td { text-align: right; padding: .35rem .4rem; border-bottom: 1px solid var(--line); }
+.macrotable td { white-space: nowrap; }
+.macrotable th[scope=row], .macrotable thead th:first-child { text-align: left; white-space: normal; }
+.macrotable thead th { font-size: .72rem; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); font-weight: 600; vertical-align: bottom; }
+@media (max-width: 480px) { .macrotable { font-size: .86rem; } .macrotable th, .macrotable td { padding: .3rem .25rem; } }
+.macrotable.sources th[scope=row] { font-weight: 400; }
+details.macros .tablewrap { overflow-x: auto; }
+@media print { details.macros { display: none; } }
