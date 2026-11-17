@@ -15,7 +15,7 @@ alter policy profiles_update_self on public.profiles
 alter policy recipes_read on public.recipes using (
   is_admin() or (owner_id = (select auth.uid()))
   or ((scope = 'community') and (status = 'approved'))
-  or ((scope = 'restaurant') and is_member(restaurant_id) and restaurant_active(restaurant_id)));
+  or ((scope = 'restaurant') and is_member(restaurant_id) and restaurant_readable(restaurant_id)));   -- add_restaurant_access.sql
 alter policy recipes_insert_own on public.recipes
   with check ((owner_id = (select auth.uid())) and (scope = 'private') and (status = 'approved'));
 alter policy recipes_update_own on public.recipes

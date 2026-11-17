@@ -188,6 +188,8 @@ class Fake:
         # as the database decides it (add_restaurant_trials.sql): active, or a trial that has not ended
         from datetime import datetime, timezone
         ends = r.get("trial_ends_at")
+        if r.get("package") == "project":   # add_restaurant_access.sql: read-only, whatever the status
+            return False
         return r["subscription_status"] == "active" or (r["subscription_status"] == "trialing" and (
             not ends or datetime.fromisoformat(ends.replace("Z", "+00:00")) > datetime.now(timezone.utc)))
 
@@ -213,7 +215,8 @@ class Fake:
         out = []
         for r in self.recipes.values():
             mem = any(m["user_id"] == u["id"] for m in self.members if m["restaurant_id"] == r.get("restaurant_id"))
-            active = r.get("restaurant_id") and self.on_plan(self.restaurants[r["restaurant_id"]])
+            rest = self.restaurants.get(r.get("restaurant_id")) if r.get("restaurant_id") else None
+            active = rest and (self.on_plan(rest) or rest.get("package") == "project")
             if (u["role"] == "admin" or r["owner_id"] == u["id"] or (r["scope"] == "community" and r["status"] == "approved")
                     or (r["scope"] == "restaurant" and mem and active)):
                 out.append(r)
@@ -525,13 +528,13 @@ class Fake:
                 return await ok(list(self.restaurants.values()))
             if req.method == "POST":
                 r = {"id": str(uuid.uuid4()), "subscription_status": "inactive", "seat_limit": 3, "package": "self_service", **body}
-                r["costing_tier"] = "managed" if r["package"] == "managed" else "self_service"   # add_restaurant_packages.sql
+                r["costing_tier"] = "managed" if r["package"] in ("managed", "advisory", "project") else "self_service"   # add_restaurant_packages.sql
                 self.restaurants[r["id"]] = r
                 return await ok([r], 201)
             if req.method == "PATCH":
                 self.restaurants[eq("id")].update(body)
                 if "package" in body:
-                    self.restaurants[eq("id")]["costing_tier"] = "managed" if body["package"] == "managed" else "self_service"
+                    self.restaurants[eq("id")]["costing_tier"] = "managed" if body["package"] in ("managed", "advisory", "project") else "self_service"
                 return await route.fulfill(status=204, headers=CORS)
             if req.method == "DELETE":
                 gone = self.restaurants.pop(eq("id"), None)
@@ -1680,6 +1683,21 @@ async def run():
         for fid in filler:
             fake.recipes.pop(fid, None)
         fake.restaurants[rid]["package"] = "self_service"
+
+        # kept after a project (v0.37): no monthly plan, the recipes stay readable, nothing can be changed
+        status_before = fake.restaurants[rid]["subscription_status"]
+        fake.restaurants[rid].update(package="project", costing_tier="managed", subscription_status="canceled")
+        await rae.goto(K + "/costing"); await rae.goto(K); await rae.reload()
+        await rae.wait_for_selector(".jrk-recipes")
+        ptext = await rae.inner_text("#jrk-portal")
+        check("a project client keeps reading its recipes with no monthly plan", "Maple House Vinaigrette" in ptext and "from your project" in ptext
+              and await rae.locator("a:has-text('+ Add a recipe')").count() == 0, ptext[:300])
+        await rae.goto(K + "/costing")
+        await rae.wait_for_selector("table.jrk-cost")
+        check("and its costing as it was left, read-only", await rae.locator("input[aria-label='Target food cost %']").is_disabled()
+              and "aren’t updated" in await rae.inner_text("#jrk-portal"))
+        await rae.screenshot(path="/tmp/portal_project.png", full_page=True)
+        fake.restaurants[rid].update(package="self_service", costing_tier="self_service", subscription_status=status_before)
         await rae.goto(K + "/costing"); await rae.goto(K); await rae.reload()
         await rae.wait_for_selector(".jrk-recipes")
 
@@ -1948,6 +1966,19 @@ async def run():
         await admin.wait_for_timeout(700)
         check("the Managed package switches them to managed costing with its logins", fake.restaurants[rid]["package"] == "managed"
               and fake.restaurants[rid]["costing_tier"] == "managed" and fake.restaurants[rid]["seat_limit"] == 5, fake.restaurants[rid])
+        opts = await admin.locator(".restcard:has-text('Maple Street Grill') select[aria-label='Package for Maple Street Grill'] option").all_inner_texts()
+        check("the package list has advisory (included) and project access (no monthly fee)",
+              any("included with advisory" in o for o in opts) and any("no monthly fee" in o for o in opts), opts)
+        await admin.select_option(".restcard:has-text('Maple Street Grill') select[aria-label='Package for Maple Street Grill']", "project")
+        await admin.wait_for_selector("dialog[open]")
+        dtext = await admin.inner_text("dialog[open]")
+        check("moving to project access says they keep reading but can't change anything", "keeps reading" in dtext and "aren’t updated" in dtext, dtext)
+        await admin.click("dialog[open] button:has-text('Change package')")
+        await admin.wait_for_timeout(700)
+        check("project access keeps their logins", fake.restaurants[rid]["package"] == "project" and fake.restaurants[rid]["seat_limit"] == 5)
+        summ = await admin.inner_text(".restcard:has-text('Maple Street Grill') summary")
+        check("and the card says they keep access", "keeps access" in summ.lower(), summ)
+        fake.restaurants[rid].update(package="managed", costing_tier="managed")
 
         # the admin's "View their portal": the restaurant's page as its team sees it, marked as a preview
         await admin.goto(PORTAL + f"?preview={rid}")

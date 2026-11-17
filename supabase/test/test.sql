@@ -325,6 +325,31 @@ insert into public.recipes(owner_id, restaurant_id, scope, title, body) values (
 reset role;
 select t.expect('moving up to Self-service lifts the cap', t.n($$ select count(*) from public.recipes where title = 'Room to grow' $$) = 1);
 delete from public.recipes where restaurant_id = :'r1' and (title like 'Truck %' or title in ('Chef extra', 'Room to grow'));
+-- access that comes with consulting (add_restaurant_access.sql)
+update public.restaurants set package = 'advisory' where id = :'r1';
+select t.expect('advisory restaurants have managed costing', (select costing_tier from public.restaurants where id = :'r1') = 'managed');
+update public.restaurants set package = 'project', subscription_status = 'canceled' where id = :'r1';
+select t.expect('a project restaurant has managed costing too', (select costing_tier from public.restaurants where id = :'r1') = 'managed');
+select t.login(:'c1'); set role authenticated;
+select t.expect('after a project the team still reads its recipes, with no monthly plan',
+  t.n($$ select count(*) from public.recipes where scope = 'restaurant' $$) > 0);
+select t.expect('and its costing as it was left', t.n($$ select count(*) from public.restaurant_kitchen $$) = 1);
+select t.denied('but cannot add recipes', format($$ insert into public.recipes(owner_id, restaurant_id, scope, title, body) values (%L, %L, 'restaurant', 'Project add', '{}') $$, :'c1', :'r1'));
+update public.restaurant_kitchen set prices = jsonb_set(prices, '{target}', '12') where restaurant_id = :'r1';
+update public.recipes set title = 'Project edit' where scope = 'restaurant' and restaurant_id = :'r1' and owner_id = :'c1';
+reset role;
+select t.expect('or change the costing or its own recipes', (select prices ->> 'target' from public.restaurant_kitchen where restaurant_id = :'r1') is distinct from '12'
+  and t.n($$ select count(*) from public.recipes where title = 'Project edit' $$) = 0);
+select t.expect('and is not a paying member', not public.is_paid(:'c1'));
+update public.restaurants set subscription_status = 'active' where id = :'r1';
+select t.login(:'c1'); set role authenticated;
+select t.denied('an active status does not turn writing back on for a project restaurant', format($$ insert into public.recipes(owner_id, restaurant_id, scope, title, body) values (%L, %L, 'restaurant', 'Project add', '{}') $$, :'c1', :'r1'));
+reset role;
+update public.restaurants set package = 'self_service', subscription_status = 'canceled' where id = :'r1';
+select t.login(:'c1'); set role authenticated;
+select t.expect('a canceled monthly package hides the recipes again', t.n($$ select count(*) from public.recipes where scope = 'restaurant' $$) = 0);
+reset role;
+update public.restaurants set subscription_status = 'active' where id = :'r1';
 update public.restaurants set package = 'managed' where id = :'r2';
 select t.login(:'c2'); set role authenticated;
 insert into public.restaurant_kitchen(restaurant_id, prices) values (:'r2', '{"items": {"salt": {"p": 1, "per": "lb"}}, "target": 30}');

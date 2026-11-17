@@ -115,9 +115,12 @@ export function labelFor(meal, client, madeOn) {
  * recipes the team adds itself (the chef's don't count; null: no cap but the database's 2,000).
  */
 export const PACKAGES = {
-  small: { label: 'Small business', price: 59, seats: 1, recipes: 50, costing: 'self_service', blurb: 'Food trucks and small vendors: one login, up to 50 recipes of their own, costing they keep themselves.' },
-  self_service: { label: 'Self-service', price: 129, seats: 3, recipes: null, costing: 'self_service', blurb: 'Recipes and costing the team keeps itself.' },
-  managed: { label: 'Managed', price: 249, seats: 5, recipes: null, costing: 'managed', blurb: 'You keep their ingredient prices; they see the costs and set their target %.' },
+  small: { label: 'Small business', price: 59, fee: '$59/mo', seats: 1, recipes: 50, costing: 'self_service', blurb: 'Food trucks and small vendors: one login, up to 50 recipes of their own, costing they keep themselves.' },
+  self_service: { label: 'Self-service', price: 129, fee: '$129/mo', seats: 3, recipes: null, costing: 'self_service', blurb: 'Recipes and costing the team keeps itself.' },
+  managed: { label: 'Managed', price: 249, fee: '$249/mo', seats: 5, recipes: null, costing: 'managed', blurb: 'You keep their ingredient prices; they see the costs and set their target %.' },
+  // with consulting (add_restaurant_access.sql): no app fee
+  advisory: { label: 'Monthly advisory', price: 0, fee: 'included with advisory', seats: 5, recipes: null, costing: 'managed', blurb: 'Everything in Managed, included with their monthly advisory plan, while it is active.' },
+  project: { label: 'Project access', price: 0, fee: 'no monthly fee', seats: null, recipes: null, costing: 'managed', readOnly: true, blurb: 'Kept after a costing, menu or standardization project: they read their recipes and costing as you left them; nothing is added, changed or updated.' },
 };
 /** A restaurant's package key (older rows without one: from its costing). */
 export const packageOf = (r) => (PACKAGES[r?.package] ? r.package : r?.costing_tier === 'managed' ? 'managed' : 'self_service');
@@ -126,8 +129,12 @@ export function restaurantPlan(r, now = new Date()) {
   const status = r?.subscription_status || 'inactive';
   const ends = status === 'trialing' && r?.trial_ends_at ? new Date(r.trial_ends_at) : null;
   const ended = !!ends && ends <= now;
+  const project = r?.package === 'project';   // kept after a project: read-only, whatever the status
+  const on = !project && (status === 'active' || (status === 'trialing' && !ended));
   return {
-    on: status === 'active' || (status === 'trialing' && !ended),
+    on,                 // the team can read, add and change (restaurant_active)
+    read: on || project, // the team can read its collection (restaurant_readable)
+    project,
     trial: status === 'trialing',
     ends,
     daysLeft: ends && !ended ? Math.ceil((ends - now) / 86400000) : 0,
