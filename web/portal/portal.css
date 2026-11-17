@@ -194,3 +194,40 @@
 #jrk-portal .jrk-plateing .jrk-ptitle input { width: 100%; font: inherit; padding: .45rem .6rem; border: 1px solid #aeb7b1; border-radius: 6px; box-sizing: border-box; }
 #jrk-portal .jrk-plateing .jrk-pricein input { width: 5rem; }
 #jrk-portal .jrk-plateadd input[type=text] { flex: 1 1 14rem; min-width: 0; font: inherit; padding: .6rem .7rem; border: 1px solid #aeb7b1; border-radius: 6px; }
+
+/* Nutrition and Macronutrients (shared with the recipe app: web/js/nutritionui.js) */
+#jrk-portal details.jrk-nutri { border: 1px solid var(--jrk-line); border-radius: 10px; background: var(--jrk-card); padding: 0 1rem; margin: .2rem 0 .8rem; }
+#jrk-portal details.jrk-nutri > summary { cursor: pointer; padding: .75rem 0; list-style: none; }
+#jrk-portal details.jrk-nutri > summary::-webkit-details-marker { display: none; }
+#jrk-portal details.jrk-nutri > summary strong { font-family: var(--slab, Georgia, serif); color: var(--jrk-ridge); font-size: 1.1rem; }
+#jrk-portal .jrk-nstats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .4rem; margin: .2rem 0 .5rem; }
+#jrk-portal .jrk-nstats > div { background: var(--jrk-soft); border-radius: 8px; padding: .45rem .2rem; text-align: center; }
+#jrk-portal .jrk-nstats strong { display: block; font-family: var(--slab, Georgia, serif); font-size: 1.1rem; color: var(--jrk-ridge); }
+#jrk-portal .jrk-nstats em { font-style: normal; font-size: .75rem; margin-left: .1rem; }
+#jrk-portal .jrk-nstats span { font-size: .78rem; color: var(--jrk-muted); }
+#jrk-portal details.macros { border-top: 1px solid var(--jrk-line); margin-top: .5rem; min-width: 0; max-width: 100%; }
+#jrk-portal details.macros > * { max-width: 100%; }
+#jrk-portal details.macros > summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .7rem; padding: .55rem 0; list-style: none; }
+#jrk-portal details.macros > summary::-webkit-details-marker { display: none; }
+#jrk-portal details.macros > summary strong { font-family: var(--slab, Georgia, serif); color: var(--jrk-ridge); }
+#jrk-portal details.macros > summary::after { content: "▾"; margin-left: auto; color: var(--jrk-muted); }
+#jrk-portal details.macros[open] > summary::after { transform: rotate(180deg); }
+#jrk-portal details.macros h4 { margin: 1rem 0 .3rem; font-family: var(--slab, Georgia, serif); color: var(--jrk-muted); }
+#jrk-portal .macrobar { display: flex; height: 1rem; border-radius: 99px; overflow: hidden; background: var(--jrk-line); margin: .3rem 0 .5rem; }
+#jrk-portal .macrobar span { display: block; height: 100%; flex: none; }
+#jrk-portal .m-protein { background: var(--jrk-herb); }
+#jrk-portal .m-carbs { background: var(--jrk-clay); }
+#jrk-portal .m-fat { background: #6f86a0; }
+#jrk-portal .macrolegend { list-style: none; margin: 0 0 .6rem; padding: 0; display: flex; flex-wrap: wrap; gap: .2rem 1.1rem; font-size: .92rem; }
+#jrk-portal .macrolegend i { display: inline-block; width: .75rem; height: .75rem; border-radius: 3px; margin-right: .35rem; vertical-align: -.05rem; }
+#jrk-portal .tablewrap { overflow-x: auto; }
+#jrk-portal .macrotable { width: 100%; border-collapse: collapse; font-size: .92rem; }
+#jrk-portal .macrotable th, #jrk-portal .macrotable td { text-align: right; padding: .35rem .4rem; border-bottom: 1px solid var(--jrk-line); }
+#jrk-portal .macrotable td { white-space: nowrap; }
+#jrk-portal .macrotable th[scope=row], #jrk-portal .macrotable thead th:first-child { text-align: left; }
+#jrk-portal .macrotable thead th { font-size: .72rem; text-transform: uppercase; letter-spacing: .03em; color: var(--jrk-muted); font-weight: 600; vertical-align: bottom; }
+#jrk-portal .macrotable.sources th[scope=row] { font-weight: 400; }
+#jrk-portal .jrk-dish details.macros { margin-top: .4rem; }
+#jrk-portal details.jrk-notcounted summary { cursor: pointer; }
+@media (max-width: 480px) { #jrk-portal .macrotable { font-size: .86rem; } #jrk-portal .macrotable th, #jrk-portal .macrotable td { padding: .3rem .25rem; } #jrk-portal .jrk-nstats strong { font-size: 1rem; } }
+@media print { #jrk-portal details.macros { display: none !important; } }

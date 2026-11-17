@@ -18,6 +18,7 @@ import { ALLERGENS, clean as cleanAllergens, conflicts } from '../js/allergens.j
 import { MACROS, history as dishHistory, nutritionSummary, planOf, tally } from '../js/clientcore.js';
 import { askText, busy, field, fill, h, screen, star, toast } from './ui.js';
 import * as kitchen from './kitchen.js';
+import { macroDetails } from '../js/nutritionui.js';
 
 const root = document.getElementById('jrk-portal');
 const CONTACT = 'https://jonesridgekitchen.com/contact/?service=meal-prep';
@@ -135,6 +136,16 @@ function macroLine(n) {
     h('span', null, h('b', null, `${n[key] ?? 0}${unit}`), ` ${label.toLowerCase()}`)), h('span', { class: 'note' }, 'per serving'));
 }
 
+// which dishes have their Macronutrients open, so a refresh after approving or rating keeps them open
+const macrosOpen = new Set();
+/** A dish's Macronutrients: the split of its calories, and a per-serving table with % Daily Value. The client sees
+ *  the dish's totals only, never what each ingredient adds (that would give away the amounts). */
+function dishMacros(meal) {
+  if (!meal.nutrition || !meal.nutrition.kcal) return null;
+  return macroDetails(h, { per: meal.nutrition, quiet: 'note', cls: 'jrk-macrodetails', open: macrosOpen.has(meal.id),
+    onToggle: (o) => { if (o) macrosOpen.add(meal.id); else macrosOpen.delete(meal.id); } });
+}
+
 async function viewMeals(client) {
   const mine = screen.next();
   fill(root, h('p', { class: 'note' }, 'Loading your meals…'));
@@ -185,6 +196,7 @@ async function viewMeals(client) {
         bad.length > 0 && h('p', { class: 'jrk-warn' }, h('strong', null, `Contains ${bad.join(', ')}, which is on your allergy list. Ask for a swap.`)),
         h('p', { class: 'jrk-ings' }, h('strong', null, 'Ingredients: '), meal.ingredients.join(', ') || 'Ask Joseph'),
         macroLine(meal.nutrition),
+        dishMacros(meal),
         h('div', { class: 'jrk-tags' }, a.length ? a.map((x) => h('span', { class: bad.includes(x) ? 'danger' : '' }, x)) : h('span', { class: 'plain' }, 'No major allergens listed')),
         (meal.reheat || meal.storage || meal.use_by) && h('p', { class: 'note' }, [meal.reheat && `Reheat: ${meal.reheat}`, meal.storage && `Keep: ${meal.storage}`, meal.use_by && `Use by ${SHORT.format(parseDate(meal.use_by))}`].filter(Boolean).join(' · ')),
         h('p', { class: 'note' }, `${meal.servings} ${meal.servings === 1 ? 'serving' : 'servings'}`),

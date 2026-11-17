@@ -1263,6 +1263,14 @@ async def run():
         check("the client sees the dishes with ingredients, nutrition and allergens",
               "Hello, Anna" in page_text and "Ingredients:" in page_text and "A deep red soup" in page_text and "Stovetop until steaming" in page_text)
         check("the client is warned about their own allergen", "which is on your allergy list" in page_text)
+        # meal prep clients see each dish's macronutrients: the split and a table, never what each ingredient adds
+        await anna.wait_for_selector(".jrk-dish details.macros")
+        await anna.click(".jrk-dish >> nth=0 >> details.macros > summary")
+        dm = await anna.inner_text(".jrk-dish >> nth=0 >> details.macros")
+        check("a meal prep client can open a dish's macronutrients, with % daily value per serving",
+              await anna.locator(".jrk-dish >> nth=0 >> details.macros .macrobar span").count() >= 2 and "% daily value" in dm.lower() and "per serving" in dm.lower(), dm[:200])
+        await anna.locator(".jrk-dish >> nth=0").screenshot(path="/tmp/portal_dish_macros.png")
+        check("but not what each ingredient adds, or the whole recipe", "where it comes from" not in dm.lower() and "whole recipe" not in dm.lower())
         check("the client never sees the method or the recipe link", "Open the recipe" not in page_text and await anna.locator("#jrk-portal a[href*='#/r/']").count() == 0)
         got = await anna.evaluate("""async () => {
           const s = JSON.parse(localStorage.getItem('recipelib.session'));
@@ -1367,6 +1375,14 @@ async def run():
         await rae.click(".jrk-recipes a:has-text('Maple House Vinaigrette')")
         await rae.wait_for_selector(".jrk-recipe")
         rtext = await rae.inner_text(".jrk-recipe")
+        await rae.wait_for_selector(".jrk-recipe details.jrk-nutri")
+        await rae.click(".jrk-recipe details.jrk-nutri > summary")
+        await rae.click(".jrk-recipe details.jrk-nutri details.macros > summary")
+        rn = await rae.inner_text(".jrk-recipe details.jrk-nutri")
+        await rae.locator(".jrk-recipe details.jrk-nutri").screenshot(path="/tmp/portal_recipe_nutrition.png")
+        check("restaurant clients see a recipe's nutrition and macronutrients, with where the calories come from",
+              "calories" in rn.lower() and await rae.locator(".jrk-nstats > div").count() == 5 and "% daily value" in rn.lower()
+              and await rae.locator(".jrk-recipe table.sources tbody tr").count() >= 1, rn[:300])
         check("the full recipe opens: yield, ingredients and method", "Makes 2 cups" in rtext and "1 cup olive oil" in rtext and "Whisk." in rtext)
         await rae.click(".jrk-scale button:has-text('2×')")
         check("a collection recipe scales on the client page", "2 cups olive oil" in await rae.inner_text(".jrk-ings-list"))
