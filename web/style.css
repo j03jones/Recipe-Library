@@ -977,3 +977,17 @@ details.macros .tablewrap { overflow-x: auto; }
   .suprow { grid-template-columns: auto minmax(0, 1fr) 16rem; }
   .supfood { grid-column: 3; }
 }
+
+/* "Print costing sheet" on a recipe's Food cost card: only the title, the costed lines and the totals */
+@media print {
+  body.printcost #app > :not(header.band):not(details.costcard):not(.printfoot) { display: none !important; }
+  body.printcost details.costcard { display: block !important; border: 0; box-shadow: none; background: none; }
+  body.printcost details.costcard > summary::after,
+  body.printcost .costcard .costimport, body.printcost .costcard .cardimport,
+  body.printcost .costcard > p.muted.small:last-child { display: none !important; }
+  body.printcost .costcard input.pin, body.printcost .costcard select {
+    border: 0; outline: 0; background: none; appearance: none; -webkit-appearance: none; padding: 0; color: inherit; box-shadow: none;
+  }
+  body.printcost .costcard input.pin:placeholder-shown { visibility: hidden; }
+  body.printcost .costline { break-inside: avoid; }
+}

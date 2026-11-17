@@ -627,6 +627,16 @@ async def run():
         check("and the imported price fills in the recipe's line", await row.inner_text() == "$1.00"
               and await page.locator("details.costcard .supplier").count() == 0, await row.inner_text())
         await page.fill("input[aria-label='Price of butter']", "4")
+        # the printed costing sheet: title, costed lines and totals, nothing else
+        check("the card offers a costing sheet to print", await page.locator("details.costcard button:has-text('Print costing sheet')").count() == 1)
+        await page.evaluate("document.body.classList.add('printcost')")
+        await page.emulate_media(media="print")
+        check("the costing sheet prints the costs and the title, not the method",
+              await page.locator("details.costcard .costtotals").is_visible() and await page.locator(".rhead h1").is_visible()
+              and not await page.locator("details.nutri").is_visible() and not await page.locator("details.costcard .costimport").is_visible())
+        await page.screenshot(path="/tmp/web_costsheet.png", full_page=True)
+        await page.emulate_media(media="screen")
+        await page.evaluate("document.body.classList.remove('printcost')")
         await page.goto(URL + "#/settings")
         await page.wait_for_selector("a:has-text('Open the price book')")
         check("Settings links to the price book with its count", "1" in await page.inner_text("section:has(a:has-text('Open the price book'))"))
