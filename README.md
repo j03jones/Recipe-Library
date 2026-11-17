@@ -46,6 +46,25 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Restaurant packages: Small business, Self-service, Managed (v0.36)
+
+Restaurants now sign up for a package, sold on jonesridgekitchen.com/restaurant-app/ (prices kept in `PACKAGES`,
+`web/js/clientcore.js`, in step with the website):
+
+| Package | Price | Logins | Costing |
+|---|---|---|---|
+| Small business (food trucks, small vendors) | $59/mo | 2 | self-service |
+| Self-service | $129/mo | 3 | self-service |
+| Managed (premium) | $249/mo | 5 | Jones Ridge Kitchen keeps the ingredient prices |
+
+The model is flipped from v0.35: self-service is the default, and Managed is the premium package because it's the
+admin's time. The admin sets the package on each restaurant card (and when adding one); it sets the costing tier and
+the logins, and asks first. Owners see their package on the portal's Team tab. Payments aren't taken yet: the
+website's sign-up asks for a free trial, which the admin starts from Admin tools.
+
+Database change: `supabase/add_restaurant_packages.sql` (`restaurants.package`, a trigger that keeps
+`costing_tier` in step; existing managed restaurants become Managed, the rest Self-service).
+
 ## Costing tiers: managed by Jones Ridge Kitchen, or self-service (v0.35)
 
 Costing is a service. Each restaurant has a **costing tier**, set by the admin on its card in Admin tools

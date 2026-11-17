@@ -17,7 +17,7 @@
 // they added, owners any the team added. Costing is the owner's: each staff member has none, view or edit.
 import * as cloud from '../js/cloud.js';
 import { detect } from '../js/allergens.js';
-import { restaurantPlan } from '../js/clientcore.js';
+import { PACKAGES, packageOf, restaurantPlan } from '../js/clientcore.js';
 import { toRecord, fromRecord } from '../js/model.js';
 import { PRICE_UNITS, costing, defaultPriceUnit, foodCostPct, nutrition, suggestedPrice } from '../js/nutrition.js';
 import { macroDetails, nutrientTiles } from '../js/nutritionui.js';
@@ -1079,7 +1079,7 @@ async function viewTeam(m) {
     try { team = await cloud.restaurantTeam(r.id); } catch (err) { fill(list, h('p', { class: 'jrk-msg' }, `Could not load the team: ${err.message}`)); return; }
     if (mine !== screen.id) return;
     fill(list,
-      h('p', { class: 'note' }, `${team.length} of ${r.seat_limit} logins in use.`),
+      h('p', { class: 'note' }, `${PACKAGES[packageOf(r)].label} package · ${team.length} of ${r.seat_limit} logins in use. To change your package, `, h('a', { href: `#kitchen/${r.id}/help` }, 'ask Joseph'), '.'),
       h('ul', { class: 'jrk-list jrk-teamlist' }, team.map((p) => {
         const me = p.user_id === deps.me.id;
         const level = p.member_role === 'owner' ? null : h('select', { 'aria-label': `Costing for ${p.display_name || p.email}` },

@@ -109,6 +109,18 @@ export function labelFor(meal, client, madeOn) {
  * Where a restaurant's plan stands, the same way the database decides it (supabase/add_restaurant_trials.sql):
  * { on, trial, ends (Date|null), daysLeft (whole days, rounded up), ended }. A trial with no end date stays on.
  */
+/**
+ * The packages restaurants sign up for (jonesridgekitchen.com/restaurant-app/, supabase/add_restaurant_packages.sql).
+ * Only Managed has Jones Ridge Kitchen keep the ingredient prices; seats are the logins each comes with.
+ */
+export const PACKAGES = {
+  small: { label: 'Small business', price: 59, seats: 2, costing: 'self_service', blurb: 'Food trucks and small vendors: recipes and costing they keep themselves.' },
+  self_service: { label: 'Self-service', price: 129, seats: 3, costing: 'self_service', blurb: 'Recipes and costing the team keeps itself.' },
+  managed: { label: 'Managed', price: 249, seats: 5, costing: 'managed', blurb: 'You keep their ingredient prices; they see the costs and set their target %.' },
+};
+/** A restaurant's package key (older rows without one: from its costing). */
+export const packageOf = (r) => (PACKAGES[r?.package] ? r.package : r?.costing_tier === 'managed' ? 'managed' : 'self_service');
+
 export function restaurantPlan(r, now = new Date()) {
   const status = r?.subscription_status || 'inactive';
   const ends = status === 'trialing' && r?.trial_ends_at ? new Date(r.trial_ends_at) : null;

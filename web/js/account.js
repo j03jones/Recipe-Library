@@ -5,7 +5,7 @@ import { canShare, share } from './native.js';
 import { copyText } from './ui.js';
 import * as photos from './photos.js';
 import { qrSvg } from './qr.js';
-import { restaurantPlan } from './clientcore.js';
+import { PACKAGES, packageOf, restaurantPlan } from './clientcore.js';
 import { toRecord } from './model.js';
 
 /** What the admin needs to check on a submission that credits someone else: the original link. */
@@ -617,7 +617,11 @@ export async function viewAdmin(ctx) {
     const planSel = h('select', { class: 'full', 'aria-label': 'Plan for the new restaurant' },
       h('option', { value: 'trial14' }, 'Free trial: 14 days'), h('option', { value: 'trial30' }, 'Free trial: 30 days'),
       h('option', { value: 'active' }, 'Active'), h('option', { value: 'inactive' }, 'Not subscribed yet'));
-    const seatsIn = h('input', { type: 'number', min: '1', max: '50', value: '3', 'aria-label': 'Logins allowed', style: 'width:5rem' });
+    const pkgSel = h('select', { class: 'full', 'aria-label': 'Package for the new restaurant' },
+      Object.entries(PACKAGES).map(([k, p]) => h('option', { value: k }, `${p.label}: $${p.price}/month, ${p.seats} logins`)));
+    pkgSel.value = 'self_service';
+    const seatsIn = h('input', { type: 'number', min: '1', max: '50', value: String(PACKAGES.self_service.seats), 'aria-label': 'Logins allowed', style: 'width:5rem' });
+    pkgSel.addEventListener('change', () => { seatsIn.value = String(PACKAGES[pkgSel.value].seats); });
     const emailIn = h('input', { type: 'email', class: 'full', autocomplete: 'off', placeholder: 'owner@restaurant.com (optional)', 'aria-label': 'Owner’s email' });
     const ownerIn = h('input', { type: 'text', class: 'full', maxlength: '80', placeholder: 'Owner’s name (optional)', 'aria-label': 'Owner’s name' });
     const out = h('p', { class: 'note', role: 'status', hidden: true });
@@ -632,7 +636,7 @@ export async function viewAdmin(ctx) {
         : { subscription_status: plan };
       btn.disabled = true;
       try {
-        const r = await cloud.createRestaurant(name, Math.max(1, Number(seatsIn.value) || 3), fields);
+        const r = await cloud.createRestaurant(name, Math.max(1, Number(seatsIn.value) || 3), { ...fields, package: pkgSel.value });
         let msg = `${name} added`;
         if (emailIn.value.trim()) {
           try {
@@ -649,6 +653,7 @@ export async function viewAdmin(ctx) {
       finally { btn.disabled = false; }
     } },
     nameIn,
+    h('label', { class: 'row' }, 'Package', pkgSel),
     h('div', { class: 'row' }, h('label', { class: 'row grow' }, 'Plan', planSel), h('label', { class: 'row' }, 'Logins', seatsIn)),
     h('p', { class: 'muted small' }, 'A trial shows the restaurant its collection until the end date, then hides it again (nothing is deleted). You can extend it or mark it Active any time.'),
     ownerIn, emailIn,
@@ -757,23 +762,28 @@ export async function viewAdmin(ctx) {
       };
       status.addEventListener('change', () => save());
       seats.addEventListener('change', () => save());
-      // costing tier (add_costing_tiers.sql): managed by the admin (default) or self-service (consultation tier)
-      const tier = h('select', { 'aria-label': `Costing for ${r.name}` },
-        h('option', { value: 'managed' }, 'Managed by you'), h('option', { value: 'self_service' }, 'Self-service'));
-      tier.value = r.costing_tier === 'self_service' ? 'self_service' : 'managed';
-      tier.addEventListener('change', async () => {
-        const self = tier.value === 'self_service';
-        const ok = await ctx.confirmDialog(self
-          ? `Switch ${r.name} to self-service costing? Their logins with costing access can then change ingredient prices and import supplier price lists.`
-          : `Switch ${r.name} to managed costing? You keep their ingredient prices; their logins see the costs and can still set their target food cost %, menu prices and plates, but can’t change prices or import supplier lists.`,
-          self ? 'Make it self-service' : 'Make it managed');
-        if (!ok) { tier.value = r.costing_tier === 'self_service' ? 'self_service' : 'managed'; return; }
+      // the package they bought (add_restaurant_packages.sql): sets their costing (only Managed is kept by you) and logins
+      const pkgNow = packageOf(r);
+      const pkg = h('select', { 'aria-label': `Package for ${r.name}` },
+        Object.entries(PACKAGES).map(([k, p]) => h('option', { value: k }, `${p.label} ($${p.price}/mo)`)));
+      pkg.value = pkgNow;
+      pkg.addEventListener('change', async () => {
+        const next = PACKAGES[pkg.value];
+        const costingChanges = next.costing !== PACKAGES[pkgNow].costing;
+        const seatsTo = next.seats;
+        const ok = await ctx.confirmDialog(`Move ${r.name} to ${next.label} ($${next.price} a month)? `
+          + (costingChanges ? (next.costing === 'managed'
+            ? 'You keep their ingredient prices: their logins see the costs and set their target food cost %, menu prices and plates, but can’t change prices or import supplier lists. '
+            : 'They keep their own ingredient prices again, and can import supplier price lists. ') : '')
+          + `Logins allowed: ${seatsTo}${seatsTo !== Number(r.seat_limit) ? ` (was ${r.seat_limit}; you can change it after)` : ''}.`, 'Change package');
+        if (!ok) { pkg.value = pkgNow; return; }
         try {
-          await cloud.updateRestaurant(r.id, { costing_tier: tier.value }); r.costing_tier = tier.value;
-          toast(self ? 'Self-service costing on' : 'Costing managed by you'); paintRestaurants(openRest);
+          await cloud.updateRestaurant(r.id, { package: pkg.value, seat_limit: seatsTo });
+          Object.assign(r, { package: pkg.value, costing_tier: next.costing, seat_limit: seatsTo });
+          toast(`${r.name}: ${next.label}`); paintRestaurants(openRest);
         } catch (err) {
-          toast(/costing_tier/.test(err.message) ? 'The database needs supabase/add_costing_tiers.sql first' : err.message, 5000);
-          tier.value = r.costing_tier === 'self_service' ? 'self_service' : 'managed';
+          toast(/package/.test(err.message) ? 'The database needs supabase/add_restaurant_packages.sql first' : err.message, 5000);
+          pkg.value = pkgNow;
         }
       });
       const p = restaurantPlan(r);
@@ -800,8 +810,7 @@ export async function viewAdmin(ctx) {
           h('a', { class: 'linkbtn preview', href: `${PORTAL}?preview=${encodeURIComponent(r.id)}`, target: '_blank', rel: 'noopener' }, 'View their portal ↗'),
           h('a', { class: 'linkbtn sheet', href: `${PORTAL}?preview=${encodeURIComponent(r.id)}#kitchen/${encodeURIComponent(r.id)}/sheet`, target: '_blank', rel: 'noopener' }, 'Costing sheet ↗')),
         h('div', { class: 'row' }, h('label', { class: 'row' }, 'Plan', status), h('label', { class: 'row' }, 'Logins', seats)),
-        h('div', { class: 'row' }, h('label', { class: 'row' }, 'Costing', tier),
-          h('span', { class: 'muted small' }, r.costing_tier === 'self_service' ? 'They keep their own ingredient prices.' : 'You keep their ingredient prices; they see the costs and set their target %.')),
+        h('div', { class: 'row' }, h('label', { class: 'row' }, 'Package', pkg), h('span', { class: 'muted small' }, PACKAGES[pkgNow].blurb)),
         planLine(r),
         p.trial && h('div', { class: 'row' },
           h('button', { type: 'button', onclick: () => save({ trial_ends_at: trialEnd(14, p.ended || !p.ends ? Date.now() : p.ends.getTime()) }) }, p.ended ? 'Start 14 more days' : 'Add 14 days'),

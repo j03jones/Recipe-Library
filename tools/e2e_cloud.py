@@ -520,11 +520,14 @@ class Fake:
             if req.method == "GET":
                 return await ok(list(self.restaurants.values()))
             if req.method == "POST":
-                r = {"id": str(uuid.uuid4()), "subscription_status": "inactive", "seat_limit": 3, "costing_tier": "managed", **body}
+                r = {"id": str(uuid.uuid4()), "subscription_status": "inactive", "seat_limit": 3, "package": "self_service", **body}
+                r["costing_tier"] = "managed" if r["package"] == "managed" else "self_service"   # add_restaurant_packages.sql
                 self.restaurants[r["id"]] = r
                 return await ok([r], 201)
             if req.method == "PATCH":
                 self.restaurants[eq("id")].update(body)
+                if "package" in body:
+                    self.restaurants[eq("id")]["costing_tier"] = "managed" if body["package"] == "managed" else "self_service"
                 return await route.fulfill(status=204, headers=CORS)
             if req.method == "DELETE":
                 gone = self.restaurants.pop(eq("id"), None)
@@ -1651,8 +1654,10 @@ async def run():
         await joe.wait_for_selector(".jrk-recipes")
         check("and delete the one they added", not any(x["title"] == "Line Slaw" for x in fake.recipes.values()))
 
-        # costing tiers (v0.35): on managed costing (the default) the team sees costs, sets its target, can't change prices
-        await rae.goto(K + "/costing")
+        # costing tiers (v0.35): on managed costing the team sees costs, sets its target, can't change prices
+        check("a new restaurant starts on the Self-service package", fake.restaurants[rid]["package"] == "self_service" and fake.restaurants[rid]["costing_tier"] == "self_service")
+        fake.restaurants[rid].update(package="managed", costing_tier="managed")   # the admin's package switch is checked below
+        await rae.goto(K + "/costing"); await rae.reload()
         await rae.wait_for_selector("table.jrk-cost")
         check("managed costing says Jones Ridge Kitchen keeps the prices", "Jones Ridge Kitchen keeps for you" in await rae.inner_text("#jrk-portal"))
         await rae.fill("input[aria-label='Target food cost %']", "32")
@@ -1673,7 +1678,7 @@ async def run():
         await rae.screenshot(path="/tmp/portal_sheet_managed.png", full_page=True)
         await rae.evaluate("rid => import('/js/cloud.js').then((c) => c.saveKitchen(rid, { items: { tomatoes: { p: 99, per: 'lb' } }, target: 30 }))", rid)
         check("and the database keeps the prices whatever is sent", "tomatoes" not in fake.kitchens.get(rid, {}).get("items", {}), fake.kitchens.get(rid))
-        fake.restaurants[rid]["costing_tier"] = "self_service"   # the consultation tier (the admin's switch is checked below)
+        fake.restaurants[rid].update(package="self_service", costing_tier="self_service")
 
         # costing: a shared price book
         await rae.goto(K + "/costing"); await rae.reload()
@@ -1905,13 +1910,15 @@ async def run():
         await admin.select_option(".restcard:has-text('Maple Street Grill') select[aria-label='Costing for Joe Line']", "none")
         await admin.wait_for_timeout(600)
         check("and take it away", fake.costing_of(fake.users["joe@maple.test"], rid) == "none")
-        check("the card shows the costing tier", await admin.input_value(".restcard:has-text('Maple Street Grill') select[aria-label='Costing for Maple Street Grill']") == "self_service")
-        await admin.select_option(".restcard:has-text('Maple Street Grill') select[aria-label='Costing for Maple Street Grill']", "managed")
+        check("the card shows the restaurant's package", await admin.input_value(".restcard:has-text('Maple Street Grill') select[aria-label='Package for Maple Street Grill']") == "self_service")
+        await admin.select_option(".restcard:has-text('Maple Street Grill') select[aria-label='Package for Maple Street Grill']", "managed")
         await admin.wait_for_selector("dialog[open]")
-        check("switching the tier asks first, saying what changes", "can’t change prices" in await admin.inner_text("dialog[open]"))
-        await admin.click("dialog[open] button:has-text('Make it managed')")
+        dtext = await admin.inner_text("dialog[open]")
+        check("changing the package asks first, saying what changes", "can’t change prices" in dtext and "$249" in dtext and "Logins allowed: 5" in dtext, dtext)
+        await admin.click("dialog[open] button:has-text('Change package')")
         await admin.wait_for_timeout(700)
-        check("the admin can switch a restaurant to managed costing", fake.restaurants[rid]["costing_tier"] == "managed")
+        check("the Managed package switches them to managed costing with its logins", fake.restaurants[rid]["package"] == "managed"
+              and fake.restaurants[rid]["costing_tier"] == "managed" and fake.restaurants[rid]["seat_limit"] == 5, fake.restaurants[rid])
 
         # the admin's "View their portal": the restaurant's page as its team sees it, marked as a preview
         await admin.goto(PORTAL + f"?preview={rid}")
