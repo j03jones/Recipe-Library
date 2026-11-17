@@ -123,7 +123,7 @@ function top(current) {
   const preview = areas.find((a) => a.preview);
   return [signOutBar(),
     preview && h('p', { class: 'jrk-preview', role: 'note' }, h('strong', null, 'Preview. '),
-      `This is ${preview.label}’s page as their team sees it. Owners also get a Your team card for inviting staff. `,
+      `This is ${preview.label}’s page as their team sees it. You can change their prices and plates under Costing; everything else is look-only. `,
       h('a', { href: 'https://recipes.jonesridgekitchen.com/#/admin/restaurants' }, 'Back to Admin tools')),
     areas.length > 1 && h('nav', { class: 'jrk-switch', 'aria-label': 'Your client areas' },
     areas.map((a) => h('a', { href: `#${a.key}`, 'aria-current': a.key === current ? 'page' : null }, a.label)))];

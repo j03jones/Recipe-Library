@@ -775,7 +775,9 @@ export async function viewAdmin(ctx) {
           h('span', { class: `badge${p.on ? '' : ' warn'}` }, planText(r)),
           h('span', { class: 'muted small' }, plural(nRecipes, 'recipe'))),
         h('div', { class: 'stack' },
-        h('a', { class: 'linkbtn preview', href: `${PORTAL}?preview=${encodeURIComponent(r.id)}`, target: '_blank', rel: 'noopener' }, 'View their portal ↗'),
+        h('div', { class: 'row' },
+          h('a', { class: 'linkbtn preview', href: `${PORTAL}?preview=${encodeURIComponent(r.id)}`, target: '_blank', rel: 'noopener' }, 'View their portal ↗'),
+          h('a', { class: 'linkbtn sheet', href: `${PORTAL}?preview=${encodeURIComponent(r.id)}#kitchen/${encodeURIComponent(r.id)}/sheet`, target: '_blank', rel: 'noopener' }, 'Costing sheet ↗')),
         h('div', { class: 'row' }, h('label', { class: 'row' }, 'Plan', status), h('label', { class: 'row' }, 'Logins', seats)),
         planLine(r),
         p.trial && h('div', { class: 'row' },
@@ -818,7 +820,7 @@ export async function viewAdmin(ctx) {
   const TABS = [['restaurants', 'Restaurants'], ['people', 'People'], ['invites', 'Invites'], ['community', 'Community']];
   const panels = {
     restaurants: [inbox, h('h2', null, 'Restaurants'), restBox,
-      h('p', { class: 'muted small', style: 'margin-top:1.4rem' }, 'Until billing is connected, set a restaurant’s plan by hand: Active, or Trial until its end date. Anything else, or a trial that has ended, hides its collection and returns its staff to the free plan. “View their portal” opens the page their team uses on jonesridgekitchen.com; the first time, sign in there with this admin account.')],
+      h('p', { class: 'muted small', style: 'margin-top:1.4rem' }, 'Until billing is connected, set a restaurant’s plan by hand: Active, or Trial until its end date. Anything else, or a trial that has ended, hides its collection and returns its staff to the free plan. “View their portal” opens the page their team uses on jonesridgekitchen.com; “Costing sheet” opens their ingredient prices, which you can fill in and change for them. The first time, sign in there with this admin account.')],
     people: [people.el],
     invites: [
       requestsHead, requestsEl,

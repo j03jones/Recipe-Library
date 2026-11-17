@@ -1532,21 +1532,33 @@ async def run():
         await pctx.route("**/api/inquiry", inquiry)
         await rae.goto(K + "/help")
         await rae.wait_for_selector("textarea[aria-label='Your message']")
+        check("Ask Joseph is a form with their name and email filled in",
+              await rae.input_value("input[aria-label='Your email']") == "rae@maple.test" and await rae.input_value("input[aria-label='Your name']") == "Rae"
+              and await rae.locator("select[aria-label='How soon you need an answer']").count() == 1)
+        await rae.select_option("select[aria-label='Best way to reach you']", "phone")
+        await rae.fill("textarea[aria-label='Your message']", "x")
+        await rae.click("button:has-text('Send to Joseph')")
+        check("asking for a call needs a phone number", "Add a phone number" in await rae.inner_text(".jrk-helpform .jrk-msg"))
+        await rae.fill("input[aria-label='Phone (optional)']", "870-555-0100")
+        await rae.select_option("select[aria-label='How soon you need an answer']", "week")
         await rae.select_option("select[aria-label='What it is about']", "Costing and prices")
+        await rae.select_option("select[aria-label='Which recipe (optional)']", "House Salsa Roja")
         await rae.fill("textarea[aria-label='Your message']", "How do I price a case of tomatoes?")
         await rae.wait_for_timeout(3100)          # the contact form ignores anything sent within 3 seconds (a spam check)
         await rae.click("button:has-text('Send to Joseph')")
-        await rae.wait_for_selector("text=Thanks. Joseph will reply")
+        await rae.wait_for_selector("text=Joseph has your message")
         check("help goes to Joseph through the website's contact form, from the signed-in email",
               sent_help and sent_help[0]["email"] == "rae@maple.test" and "Maple Street Grill" in sent_help[0]["message"]
-              and "Costing and prices" in sent_help[0]["message"] and "case of tomatoes" in sent_help[0]["message"], sent_help)
+              and "Costing and prices" in sent_help[0]["message"] and "case of tomatoes" in sent_help[0]["message"]
+              and "Recipe: House Salsa Roja" in sent_help[0]["message"] and "Phone call" in sent_help[0]["message"]
+              and "This week" in sent_help[0]["message"] and sent_help[0]["phone"] == "870-555-0100", sent_help)
         await joe.goto(K + "/help")
         await joe.wait_for_selector("textarea[aria-label='Your message']")
         await joe.fill("textarea[aria-label='Your message']", "Is the slaw gluten free?")
         await joe.click("button:has-text('Send to Joseph')")
-        await joe.wait_for_selector("text=Thanks. Joseph will reply")
+        await joe.wait_for_selector("text=Joseph has your message")
         check("help is kept in Joseph's inbox even where the website's email form isn't there",
-              any(x["body"].startswith("Is the slaw") and x["author_email"] == "joe@maple.test" and x["restaurant_id"] == rid for x in fake.messages.values()))
+              any("Is the slaw gluten free?" in x["body"] and x["author_email"] == "joe@maple.test" and x["restaurant_id"] == rid for x in fake.messages.values()))
         await joe.wait_for_selector(".jrk-help li")
         check("and the sender sees it under Your messages", "with joseph" in (await joe.inner_text(".jrk-help")).lower())
         await jctx.route("**/rest/v1/restaurant_messages*", lambda route: route.abort())
@@ -1602,6 +1614,24 @@ async def run():
         check("plates are listed on Costing with their food cost", "Salsa Sampler" in await rae.inner_text("table.jrk-plates")
               and "25%" in await rae.inner_text("table.jrk-plates") and fake.kitchens[rid]["plates"][0]["parts"] == [{"id": salsa["id"], "n": 2}])
 
+        # ---- the costing sheet: every ingredient in the recipes, once, with its price
+        await rae.goto(K + "/sheet")
+        await rae.wait_for_selector("table.jrk-sheet tbody tr")
+        sheet = await rae.inner_text("table.jrk-sheet")
+        check("the price sheet lists every ingredient in the recipes once", all(x in sheet for x in ("Tomatoes", "Onion", "Cilantro", "Brisket"))
+              and sheet.count("Tomatoes") == 1, sheet[:300])
+        check("with the price already set, and what is still to do", await rae.input_value("input[aria-label='Price of Tomatoes']") == "2"
+              and "priced" in await rae.inner_text(".jrk-sheet ~ p, p[role=status]"))
+        await rae.select_option("select[aria-label='Show']", "missing")
+        check("it can show only what still needs a price", await rae.locator("table.jrk-sheet tbody tr:has-text('Tomatoes')").count() == 0
+              and await rae.locator("table.jrk-sheet tbody tr:has-text('Onion')").count() == 1)
+        await rae.select_option("select[aria-label='Price unit for Onion']", "each")
+        await rae.fill("input[aria-label='Price of Onion']", "0.75")
+        await rae.press("input[aria-label='Price of Onion']", "Tab")
+        await rae.wait_for_timeout(700)
+        check("a price entered on the sheet is saved for every recipe", any(v == {"p": 0.75, "per": "each"} for v in fake.kitchens[rid]["items"].values()), fake.kitchens[rid]["items"])
+        await rae.screenshot(path="/tmp/portal_sheet.png", full_page=True)
+
         # ---- a photo on one of the team's recipes
         import base64
         png = Path(tempfile.mkdtemp()) / "salsa.png"
@@ -1646,6 +1676,24 @@ async def run():
         await admin.click(".jrk-recipes a:has-text('Maple House Vinaigrette')")
         await admin.wait_for_selector(".jrk-recipe")
         check("and open its recipes there", "olive oil" in await admin.inner_text(".jrk-recipe") and "Preview." in await admin.inner_text("#jrk-portal"))
+        # the admin keeps the restaurant's prices: the card's Costing sheet link, editable in the preview
+        await admin.goto(URL + "#/admin/restaurants")
+        await open_card(admin, "Maple Street Grill")
+        sheet_link = await admin.get_attribute(".restcard:has-text('Maple Street Grill') a.sheet", "href")
+        check("each restaurant's card links to its costing sheet", sheet_link == f"https://jonesridgekitchen.com/my-meals/?preview={rid}#kitchen/{rid}/sheet", sheet_link)
+        await admin.goto(PORTAL + f"?preview={rid}#kitchen/{rid}/sheet"); await admin.reload()
+        await admin.wait_for_selector("table.jrk-sheet tbody tr")
+        check("the admin sees the restaurant's price sheet in the preview, editable",
+              await admin.input_value("input[aria-label='Price of Tomatoes']") == "2" and not await admin.locator("input[aria-label='Price of Cilantro']").is_disabled()
+              and "as the admin you can change" in await admin.inner_text("#jrk-portal"))
+        await admin.fill("input[aria-label='Price of Cilantro']", "1.25")
+        await admin.press("input[aria-label='Price of Cilantro']", "Tab")
+        await admin.wait_for_timeout(700)
+        check("and the admin's price is saved for the restaurant", any(v.get("p") == 1.25 for v in fake.kitchens[rid]["items"].values()), fake.kitchens[rid]["items"])
+        check("but nothing else can be changed in the preview", await admin.locator("a:has-text('+ Add a recipe')").count() == 0)
+        await admin.goto(PORTAL + f"?preview={rid}#kitchen/{rid}/help")
+        await admin.wait_for_selector("form.jrk-helpform")
+        check("the preview shows the help form, with sending switched off", await admin.locator("form.jrk-helpform button[type=submit]").is_disabled())
         await rae.goto(PORTAL + f"?preview={rid}")
         await rae.reload()
         await rae.wait_for_selector("#jrk-portal .jrk-recipes", timeout=15000)

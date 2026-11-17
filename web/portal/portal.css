@@ -179,3 +179,15 @@
 #jrk-portal .jrk-help li { align-items: flex-start; }
 #jrk-portal .jrk-photobtns { margin: -.2rem 0 .6rem; }
 @media print { #jrk-portal .jrk-prepout .jrk-noprint, #jrk-portal .jrk-prepitems button, #jrk-portal .jrk-find { display: none !important; } }
+
+/* Costing sheet, the costing switch, the help form (v0.31) */
+#jrk-portal .jrk-costswitch { display: inline-flex; border: 1px solid var(--jrk-line); border-radius: 999px; padding: .2rem; margin: 0 0 1rem; background: #fff; }
+#jrk-portal .jrk-costswitch a { padding: .35rem .9rem; border-radius: 999px; text-decoration: none; font-weight: 600; color: var(--jrk-muted); }
+#jrk-portal .jrk-costswitch a[aria-current=page] { background: var(--jrk-ridge); color: #fff; }
+#jrk-portal table.jrk-sheet tr.missing th { color: #8a2a12; }
+#jrk-portal table.jrk-sheet tr.free { opacity: .65; }
+#jrk-portal .jrk-adminnote { background: #fff4d6; border: 1px solid #e8c766; border-radius: 8px; padding: .5rem .8rem; color: #4a3a0a; }
+#jrk-portal .jrk-helpform .jrk-pair { flex-wrap: wrap; align-items: flex-start; gap: 0 1rem; }
+#jrk-portal .jrk-helpform .jrk-pair > .field { flex: 1 1 13rem; }
+#jrk-portal .jrk-helpform .field input, #jrk-portal .jrk-helpform .field select, #jrk-portal .jrk-helpform .field textarea { width: 100%; }
+@media (max-width: 600px) { #jrk-portal table.jrk-sheet tr { grid-template-columns: 1fr auto; } #jrk-portal table.jrk-sheet td[data-label='']::before { display: none; } }

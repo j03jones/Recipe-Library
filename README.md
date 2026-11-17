@@ -46,6 +46,20 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Costing sheet, prices kept by the admin, and the Ask Joseph form (v0.31)
+
+- **Ingredient price sheet** (Costing > *Ingredient prices*): every ingredient in the restaurant's recipes, once
+  (matched the way costing matches, so "Roma tomatoes" and "tomatoes, diced" share a price), with the recipes it is
+  in, the units they use, and a price and unit to fill in. Search, *Needs a price* / *Priced*, a count of what is
+  left, a warning when a price unit can't cost a line, and prices no recipe uses any more. The Costing page says how
+  many still need a price.
+- **The admin keeps their prices**: each restaurant's card in Admin tools has **Costing sheet ↗**. In the preview
+  the admin can change the restaurant's prices, menu prices and plates (the database already allowed it); everything
+  else in the preview stays look-only.
+- **Ask Joseph** is a full form: name and email (filled in), phone, best way to reach them, topic, which recipe,
+  how soon (up to *Urgent: during service*) and the message. It goes to the Admin tools inbox and by email, with
+  every answer in it; the preview shows the form with sending switched off.
+
 ## Restaurant kitchens, part 2: costing access, team, prep list, plates, photos, help inbox (v0.30)
 
 - **Costing belongs to the owner.** Owners always see and change food costs, prices and plates; on their **Team**
