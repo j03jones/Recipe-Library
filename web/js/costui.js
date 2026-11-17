@@ -1,6 +1,6 @@
 // The "Nutrition" and "Food cost" cards on a recipe page, and the price book page.
 // All the arithmetic is in nutrition.js; this file only shows it and saves what you type.
-import { NUTRIENTS, PRICE_UNITS, costing, defaultPriceUnit, foodCostPct, identify, nutrition, suggestedPrice } from './nutrition.js';
+import { DAILY, NUTRIENTS, PRICE_UNITS, costing, dailyPct, defaultPriceUnit, foodCostPct, identify, macroSplit, nutrition, suggestedPrice } from './nutrition.js';
 import { formatIngredient } from './units.js';
 import * as prices from './prices.js';
 
@@ -19,6 +19,46 @@ export function recipeCosting({ h, fill, scaled, recipeId }) {
   const cost = h('details', { class: 'card costcard' });
   let refresh = () => {};
 
+  /** The Macronutrients expansion: calories by protein, carbs and fat; a table with daily values; where they come from. */
+  const MACRO = [['protein', 'Protein'], ['carbs', 'Carbs'], ['fat', 'Fat']];
+  let macrosOpen = false;
+  function macroBox(n) {
+    const shown = n.per || n.total;
+    const div = n.per ? n.servings : 1;
+    const split = macroSplit(shown);
+    if (!split) return null;
+    const g1 = (v) => (v < 10 ? (Math.round(v * 10) / 10).toString() : n0(v));
+    const pctText = (v) => `${Math.round(v)}%`;
+    const rows = [['kcal', 'Calories', ''], ['protein', 'Protein', 'g'], ['carbs', 'Carbohydrates', 'g'], ['fat', 'Fat', 'g'], ['sodium', 'Sodium', 'mg']];
+    const top = [...n.parts].sort((a, b) => b.kcal - a.kcal).slice(0, 8);
+    const box = h('details', { class: 'macros', open: macrosOpen || null },
+      h('summary', null, h('strong', null, 'Macronutrients'),
+        h('span', { class: 'muted small' }, MACRO.map(([f, label]) => `${label} ${pctText(split[f].pct)}`).join(' · '))),
+      h('p', { class: 'small muted' }, 'Share of calories from each, ', n.per ? 'per serving' : 'for the whole recipe', ':'),
+      h('div', { class: 'macrobar', role: 'img', 'aria-label': MACRO.map(([f, label]) => `${label} ${pctText(split[f].pct)} of calories`).join(', ') },
+        MACRO.map(([f]) => split[f].pct > 0 && h('span', { class: `m-${f}`, style: `width:${split[f].pct.toFixed(2)}%` }))),
+      h('ul', { class: 'macrolegend' }, MACRO.map(([f, label]) => h('li', null, h('i', { class: `m-${f}`, 'aria-hidden': 'true' }),
+        h('strong', null, label), ` ${g1(split[f].g)} g · ${pctText(split[f].pct)} of calories`))),
+      h('div', { class: 'tablewrap' }, h('table', { class: 'macrotable' },
+        h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'Nutrient'), n.per && h('th', { scope: 'col' }, 'Per serving'),
+          h('th', { scope: 'col' }, 'Whole recipe'), h('th', { scope: 'col' }, '% Daily Value'))),
+        h('tbody', null, rows.map(([f, label, unit]) => h('tr', null,
+          h('th', { scope: 'row' }, label),
+          n.per && h('td', null, `${f === 'kcal' || f === 'sodium' ? n0(n.per[f]) : g1(n.per[f])}${unit ? ` ${unit}` : ''}`),
+          h('td', null, `${f === 'kcal' || f === 'sodium' ? n0(n.total[f]) : g1(n.total[f])}${unit ? ` ${unit}` : ''}`),
+          h('td', null, dailyPct(f, shown[f]) != null ? `${dailyPct(f, shown[f])}%` : '')))))),
+      h('p', { class: 'small muted' }, `% Daily Value: how much of a day's ${n.per ? 'intake one serving' : 'intake the whole recipe'} gives, on a 2,000-calorie diet (fat ${DAILY.fat} g, carbohydrates ${DAILY.carbs} g, protein ${DAILY.protein} g, sodium ${n0(DAILY.sodium)} mg).`),
+      top.length > 0 && [h('h4', null, 'Where it comes from'),
+        h('div', { class: 'tablewrap' }, h('table', { class: 'macrotable sources' },
+          h('thead', null, h('tr', null, ['Ingredient', 'Calories', 'Protein', 'Carbs', 'Fat'].map((t) => h('th', { scope: 'col' }, t)))),
+          h('tbody', null, top.map((p) => h('tr', null,
+            h('th', { scope: 'row' }, formatIngredient(p.ing)),
+            h('td', null, n0(p.kcal / div)), h('td', null, `${g1(p.protein / div)} g`), h('td', null, `${g1(p.carbs / div)} g`), h('td', null, `${g1(p.fat / div)} g`)))))),
+        h('p', { class: 'small muted' }, n.per ? 'Per serving. ' : 'Whole recipe. ', n.parts.length > top.length ? `The ${top.length} biggest of ${n.parts.length} counted ingredients.` : '')]);
+    box.addEventListener('toggle', () => { macrosOpen = box.open; });
+    return box;
+  }
+
   function paintNutrition(s) {
     const n = nutrition(s);
     const enough = n.counted > 0 && n.coverage >= 0.5;
@@ -31,6 +71,7 @@ export function recipeCosting({ h, fill, scaled, recipeId }) {
         h('div', null, h('strong', null, nutrientText(f, shown[f]), unit && h('em', null, unit)), h('span', null, label.toLowerCase())))),
       n.counted > 0 && h('p', { class: 'muted small' }, n.per ? 'Per serving. ' : 'No yield is listed, so this is the whole recipe. ',
         n.per && `Whole recipe: ${n0(n.total.kcal)} calories.`),
+      n.counted > 0 && macroBox(n),
       h('p', { class: `small ${enough ? 'muted' : 'note'}` },
         n.counted ? `Estimated from ${n.counted} of ${n.lines} ingredients${enough ? '' : ', so treat it as rough'}.` : 'None of the ingredients could be matched or weighed.',
         ' Typical values, not a label: brands and cuts vary.'),

@@ -7,6 +7,7 @@ Needs Playwright with Chromium. Serves web/ itself on a free port. Expects the r
 """
 import asyncio
 import json
+import re
 import os
 import subprocess
 import sys
@@ -581,6 +582,18 @@ async def run():
         await page.click("details.nutri > summary")
         check("nutrition shows five figures", await page.locator(".nstats > div").count() == 5)
         check("nutrition says how much it could count", "ingredients" in await page.inner_text("details.nutri") and "not a label" in await page.inner_text("details.nutri"))
+        await page.click("details.macros > summary")
+        await page.wait_for_selector("details.macros[open] .macrobar span")
+        legend = await page.inner_text(".macrolegend")
+        pcts = [int(x) for x in re.findall(r"(\d+)% of calories", legend)]
+        check("Macronutrients opens to calories by protein, carbs and fat, adding up to about 100%",
+              await page.locator(".macrobar span").count() == 3 and len(pcts) == 3 and 98 <= sum(pcts) <= 102, legend)
+        mt = await page.inner_text("details.macros table.macrotable >> nth=0")
+        check("with a table of per serving, whole recipe and % daily value",
+              all(x in mt.lower() for x in ("% daily value", "per serving", "whole recipe", "carbohydrates", "sodium")), mt[:200])
+        kc = [int(x.replace(",", "")) for x in await page.locator("table.sources tbody tr td:nth-child(2)").all_inner_texts()]
+        check("and where the calories come from, biggest first", len(kc) >= 3 and kc == sorted(kc, reverse=True), kc)
+        await page.screenshot(path="/tmp/web_macros.png", full_page=False)
         check("food cost starts by asking for prices", "Add prices" in await page.inner_text("details.costcard > summary"))
         await page.click("details.costcard > summary")
         await page.fill("input[aria-label='Price of butter']", "4")
