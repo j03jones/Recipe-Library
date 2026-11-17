@@ -1832,6 +1832,19 @@ async def run():
         await rae.wait_for_timeout(700)
         check("a price entered on the sheet is saved for every recipe", any(v == {"p": 0.75, "per": "each"} for v in fake.kitchens[rid]["items"].values()), fake.kitchens[rid]["items"])
         await rae.screenshot(path="/tmp/portal_sheet.png", full_page=True)
+        # a purveyor's price list imported straight into the restaurant's prices
+        await rae.select_option("select[aria-label='Show']", "all")
+        sup_csv = Path(tempfile.mkdtemp()) / "purveyor.csv"
+        sup_csv.write_text("Item,Description,Pack,Size,Case Price\n5,CILANTRO FRESH,60,CT,$30.00\n")
+        check("the price sheet has a supplier import for the owner", await rae.locator("button:has-text('Import a supplier price list')").count() == 1)
+        await rae.set_input_files(".jrk-supimport input[type=file]", str(sup_csv))
+        await rae.wait_for_selector("#jrk-portal .supplier .suprow")
+        await rae.screenshot(path="/tmp/portal_supplier.png", full_page=True)
+        await rae.click("#jrk-portal .suptools button.primary")
+        await rae.wait_for_selector("#jrk-portal .supplier", state="detached")
+        check("the imported price is saved for the restaurant, with its supplier",
+              fake.kitchens[rid]["items"].get("cilantro", {}).get("p") == 0.5 and fake.kitchens[rid]["items"]["cilantro"].get("src", "").endswith("#5")
+              and await rae.input_value("input[aria-label='Price of Cilantro']") == "0.5", fake.kitchens[rid]["items"].get("cilantro"))
 
         # ---- a photo on one of the team's recipes
         import base64
