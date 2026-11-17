@@ -981,7 +981,7 @@ function viewRecipe(id, preset = null) {
   };
   const ingBox = h('div');
   const dirBox = h('div');
-  const cc = recipeCosting({ h, fill, scaled: () => shown().recipe, recipeId: shared ? null : r.id });
+  const cc = recipeCosting({ h, fill, toast, scaled: () => shown().recipe, recipeId: shared ? null : r.id });
   const yieldLabel = r.yu || (r.yq ? '' : 'servings');
 
   const presets = [['½×', new Frac(1n, 2n)], ['1×', new Frac(1n)], ['2×', new Frac(2n)], ['3×', new Frac(3n)]]

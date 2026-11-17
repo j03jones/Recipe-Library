@@ -613,6 +613,20 @@ async def run():
         await page.click("details.costcard > summary")
         check("prices are remembered", await page.input_value("input[aria-label='Price of butter']") == "4")
         check("and so is the menu price", await page.input_value("input[aria-label='Menu price per serving']") == "5")
+        # a purveyor's price list can be imported right from the Food cost card
+        sup_csv = Path(tempfile.mkdtemp()) / "purveyor.csv"
+        sup_csv.write_text("Item,Description,Pack,Size,Case Price\n100,BUTTER SOLID GRADE AA,36,1 LB,$108.00\n")
+        check("the Food cost card has a supplier import button",
+              await page.locator("details.costcard button:has-text('Import a supplier price list')").count() == 1)
+        await page.set_input_files("details.costcard input[type=file]", str(sup_csv))
+        await page.wait_for_selector("details.costcard .supplier .suprow")
+        check("the review opens inside the card", "1 products: 1 matched" in await page.inner_text("details.costcard .supplier [role=status]"),
+              await page.inner_text("details.costcard .supplier [role=status]"))
+        await page.click("details.costcard .suptools button.primary")
+        await page.wait_for_function("document.querySelector(\"input[aria-label='Price of butter']\").value === '3'")
+        check("and the imported price fills in the recipe's line", await row.inner_text() == "$1.00"
+              and await page.locator("details.costcard .supplier").count() == 0, await row.inner_text())
+        await page.fill("input[aria-label='Price of butter']", "4")
         await page.goto(URL + "#/settings")
         await page.wait_for_selector("a:has-text('Open the price book')")
         check("Settings links to the price book with its count", "1" in await page.inner_text("section:has(a:has-text('Open the price book'))"))

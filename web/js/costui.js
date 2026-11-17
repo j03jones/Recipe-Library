@@ -16,10 +16,27 @@ const unitOptions = (h) => Object.entries(PRICE_UNITS).map(([k, u]) => h('option
  * { nutri, cost, paint }: two <details> cards for a recipe page. Call paint() whenever the scale or units
  * change. `scaled()` returns the recipe as shown (scaled); `recipeId` keys the menu price (null = none kept).
  */
-export function recipeCosting({ h, fill, scaled, recipeId }) {
+export function recipeCosting({ h, fill, scaled, recipeId, toast = () => {} }) {
   const nutri = h('details', { class: 'card nutri' });
   const cost = h('details', { class: 'card costcard' });
   let refresh = () => {};
+
+  // importing a purveyor's price list right from the card; kept outside paintCost so rescaling keeps it open
+  const supPanel = h('div', { class: 'cardimport' });
+  const supIn = h('input', { type: 'file', accept: '.csv,.txt,text/csv,text/plain,text/tab-separated-values', hidden: true, 'aria-label': 'Supplier price list file' });
+  supIn.addEventListener('change', async () => {
+    const f = supIn.files[0];
+    supIn.value = '';
+    if (!f) return;
+    let text;
+    try { text = await f.text(); } catch { toast('Could not read that file'); return; }
+    fill(supPanel, supplierImport({ h, fill, toast, file: f, text, onDone: () => {
+      fill(supPanel);
+      paintCost(scaled());                 // the new prices fill in this recipe's lines
+      cost.scrollIntoView({ block: 'start' });
+    } }));
+    supPanel.scrollIntoView({ block: 'start' });
+  });
 
   let macrosOpen = false;
   const macroBox = (n) => macroDetails(h, { per: n.per, total: n.total, servings: n.servings, parts: n.parts, open: macrosOpen, onToggle: (o) => { macrosOpen = o; } });
@@ -114,6 +131,9 @@ export function recipeCosting({ h, fill, scaled, recipeId }) {
         ? h('ul', { class: 'costlines' }, lineEls)
         : h('p', { class: 'muted' }, 'This recipe has no ingredients to cost.'),
       totals,
+      h('div', { class: 'row grow costimport' },
+        h('button', { type: 'button', onclick: () => supIn.click() }, 'Import a supplier price list'), supIn),
+      supPanel,
       h('p', { class: 'muted small' }, 'Prices are yours alone and are remembered for every recipe that uses the same food. ',
         h('a', { href: '#/prices' }, `Price book (${Object.keys(book.items).length})`)));
     refresh();

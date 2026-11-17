@@ -320,7 +320,8 @@ once. You get the recipe total and the cost per serving at the scale on screen, 
 **Price book.** Settings > Food cost > Open the price book lists every saved price to edit or remove, with
 **Export CSV** and **Import CSV** (`food, price, per`) for a supplier price list or a spreadsheet.
 
-**Supplier price lists (v0.34).** In the price book, **Import a supplier price list** reads an order guide or
+**Supplier price lists (v0.34).** In the price book, or on any recipe's Food cost card (v0.34.1), **Import a supplier
+price list** reads an order guide or
 price list exported as CSV from Sysco, SGC, Ben E. Keith, US Foods or any other distributor (`web/js/supplier.js`):
 
 - Columns are found by their names (item number, description, brand, pack, size, case price, price per pound,

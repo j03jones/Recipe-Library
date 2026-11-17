@@ -654,6 +654,9 @@ details.nutri > summary strong, details.costcard > summary strong { font-family:
 details.nutri > summary::after, details.costcard > summary::after { content: "▾"; margin-left: auto; color: var(--muted); transition: transform .2s; }
 details.nutri[open] > summary::after, details.costcard[open] > summary::after { transform: rotate(180deg); }
 details.nutri > :not(summary), details.costcard > :not(summary) { margin-left: 1rem; margin-right: 1rem; }
+.costcard .costimport { margin-top: .8rem; }
+.costcard .cardimport:empty { display: none; }
+.costcard .cardimport .supplier { margin: .8rem 0 0; }
 details.nutri > :last-child, details.costcard > :last-child { margin-bottom: 1rem; }
 .nstats { display: grid; grid-template-columns: repeat(5, 1fr); gap: .4rem; text-align: center; margin-top: .2rem; }
 .nstats div { background: var(--stone); border-radius: 8px; padding: .55rem .2rem; }
