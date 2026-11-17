@@ -429,6 +429,53 @@ export async function viewMenu(ctx, clientId, menuId) {
   window.scrollTo(0, 0);
 }
 
+// ------------------------------------------------------------------ passing a recipe change on to meal prep menus
+/**
+ * Dishes on unfinished menus (drafts and sent ones) that use a recipe, as [{ meal, menu, client }]. A dish keeps the
+ * recipe as it was when it was added, so the recipe page offers to refresh these after the recipe changes.
+ */
+export async function dishesUsing(recipeId) {
+  const [menus, clients] = await Promise.all([cloud.openMenus(), cloud.listClients()]);
+  const byId = new Map(clients.map((c) => [c.id, c]));
+  const out = [];
+  for (const menu of menus) {
+    for (const meal of menu.meals || []) {
+      if (partsOf(meal).some((p) => p.recipe_id === recipeId)) out.push({ meal, menu, client: byId.get(menu.client_id) });
+    }
+  }
+  return out;
+}
+
+/**
+ * Remake each dish from its recipes as they are now: ingredient names, nutrition, groceries and scale. The chef's own
+ * wording stays (description, reheating, a name they changed), allergens they ticked stay ticked and any new ones
+ * the recipes bring are added. Returns how many were refreshed and which were skipped (a recipe that is gone).
+ */
+export async function refreshDishes(ctx, uses) {
+  const priceBook = prices.load().items;
+  let done = 0;
+  const skipped = [];
+  for (const { meal } of uses) {
+    const parts = partsOf(meal);
+    const ids = parts.map((p) => p.recipe_id);
+    const missing = await ctx.ensureFull(ids);
+    const recipes = ids.map((id) => ctx.lib.byId.get(id));
+    if (recipes.some((r) => !r) || missing?.length) { skipped.push(meal.title); continue; }
+    const fresh = recipes.map((r) => {
+      const factor = factorFor(r, meal.servings);
+      const cost = groceryCost(r, factor, priceBook);
+      return { recipe_id: r.id, title: r.title, factor: String(factor), grocery_cost: cost ? cost.total : null };
+    });
+    const dish = combine(recipes.map((r) => snapshot(r, meal.servings)));
+    const autoBefore = [dishTitle(parts.map((p) => p.title)), parts.length === 1 ? parts[0].title : ''].filter(Boolean);
+    const title = autoBefore.includes(meal.title) ? dish.title : meal.title;
+    await cloud.updateMealPrivate(meal.id, privateFor(fresh));
+    await cloud.updateMeal(meal.id, { title, ingredients: dish.ingredients, nutrition: dish.nutrition, allergens: cleanAllergens([...meal.allergens, ...dish.allergens]) });
+    done++;
+  }
+  return { done, skipped };
+}
+
 /** #/prep/<week>: everything approved for a week, across every client, as one cooking and shopping list. */
 export async function viewPrep(ctx, weekArg) {
   const { h, fill, toast, $app, setView, pageHead, lib } = ctx;

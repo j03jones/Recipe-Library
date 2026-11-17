@@ -255,6 +255,8 @@ export const updateRestaurant = (id, fields) => authed(`/rest/v1/restaurants?id=
  *  came from, so later edits can be passed on to it. */
 export const addToCollection = (record, restaurantId, sourceId = null) => createRecipe(record,
   { scope: 'restaurant', restaurant_id: restaurantId, status: 'approved', ...(sourceId ? { source_recipe_id: sourceId } : {}) });
+/** A recipe's earlier versions, newest first (supabase/add_recipe_versions.sql). */
+export const listVersions = (recipeId) => authed(`/rest/v1/recipe_versions?recipe_id=eq.${enc(recipeId)}&select=*&order=replaced_at.desc,id.desc`);
 /** Link a restaurant copy to the recipe it was copied from (copies made before linking are found by name). */
 export const linkCopy = (copyId, sourceId) => authed(`/rest/v1/recipes?id=eq.${enc(copyId)}`, { method: 'PATCH', body: { source_recipe_id: sourceId } });
 /** Delete one of a restaurant team's recipes (the database refuses the chef's, and other people's for staff). */
@@ -429,6 +431,12 @@ export async function listMenus(clientId) {
   const rows = await authed(`/rest/v1/client_menus?client_id=eq.${enc(clientId)}&${MENU_SELECT}&order=week_start.desc`);
   for (const m of rows) m.meals.sort((a, b) => a.position - b.position);
   return rows;
+}
+/** Menus that aren't finished (drafts and sent ones), with their meals: where a recipe change can still reach. */
+export async function openMenus() {
+  const rows = await authed(`/rest/v1/client_menus?status=in.(draft,sent)&${MENU_SELECT}&order=week_start.desc`);
+  for (const m of rows) m.meals.sort((a, b) => a.position - b.position);
+  return rows.filter((m) => m.status === 'draft' || m.status === 'sent');
 }
 /** Every client's menu for one week (the prep sheet). */
 export async function listMenusForWeek(weekStart) {

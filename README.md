@@ -46,6 +46,24 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Recipe collection tools: several at once, edit history, meal prep refresh, duplicates, promote, backup (v0.33)
+
+- **Choose several** in the recipe collection and add them all to a restaurant's collection at once. Recipes it
+  already has are skipped; your own stay linked, so their copies can be updated later.
+- **Edit history** on every recipe in the account: what changed (renamed, ingredients added or removed, steps
+  reworded, yield, categories), when and by whom, with *Restore the version before this*. The last 30 changes are
+  kept, and restoring is itself kept, so it can be undone.
+- **On meal prep menus** (admin, on a recipe's page): the dishes made from it on draft or sent menus, and *Refresh*
+  to remake them from the recipe as it is now: ingredients, nutrition and groceries. Your wording, a renamed title
+  and the allergens you ticked stay.
+- **Duplicates** tab (`#/mine/duplicates`): recipes that look entered twice across everyone's (same name with mostly
+  the same ingredients, or nearly the same ingredients under another name). Restaurant copies of your recipes don't count.
+- **Promote** someone's recipe: *Copy to my recipes* (credited "adapted from" them) or *Publish to the Community*
+  credited to them (asks first: only with their permission).
+- **Download a backup** of everyone's recipes (Everyone's tab): one JSON file with whose each is and where it lives.
+
+Database change: `supabase/add_recipe_versions.sql` (the `recipe_versions` table and the trigger that fills it).
+
 ## My recipes, the admin's recipe collection, and copies that keep up (v0.32)
 
 - **My recipes, always in the top right corner** of every page (`#/mine`): your own recipes (added, imported, library

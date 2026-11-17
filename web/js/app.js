@@ -28,7 +28,8 @@ import { firstLink, fromShared, fromText, readPhoto } from './getin.js';
 import { correct, forgetSearches, recentSearches, rememberSearch, vocabulary } from './search.js';
 import { fromPlainText } from './transfer.js';
 import { accountCard, viewAdmin, viewJoin } from './account.js';
-import { viewClient, viewClients, viewLabels, viewMenu, viewMyMeals, viewPrep } from './clientsui.js';
+import { dishesUsing, refreshDishes, viewClient, viewClients, viewLabels, viewMenu, viewMyMeals, viewPrep } from './clientsui.js';
+import { backupFile, diffRecipe, findDuplicates } from './adminrecipes.js';
 import * as photos from './photos.js';
 import { linkFor, packRecipe, unpackRecipe } from './sharelink.js';
 import { qrSvg } from './qr.js';
@@ -1290,6 +1291,9 @@ function viewRecipe(id, preset = null) {
         h('button', { onclick: () => window.print() }, 'Print card')),
       !shared && sharing(r),
       !shared && copiesBox(r),
+      !shared && promoteBox(r),
+      !shared && mealPrepBox(r),
+      !shared && historyBox(r),
       r.tags && r.tags.length > 0 && h('p', { class: 'muted small' }, 'Original labels: ', r.tags.join(', '))),
     h('p', { class: 'printfoot' }, 'Jones Ridge Recipes'));
   paint();
@@ -1310,22 +1314,58 @@ function whereOf(row) {
   return 'Private';
 }
 
+/** Put copies of these recipes into a restaurant's collection (the admin's own stay linked). Skips ones it has. */
+async function addManyToRestaurant(recipes, restaurantId) {
+  const has = lib.cloud.filter((x) => x.scope === 'restaurant' && x.restaurant_id === restaurantId);
+  let added = 0, skipped = 0;
+  for (const r of recipes) {
+    if (has.some((x) => x.source_recipe_id === r.id || x.id === r.id || x.title.trim().toLowerCase() === r.title.trim().toLowerCase())) { skipped++; continue; }
+    const missing = await ensureFull([r.id]);
+    const full = lib.byId.get(r.id);
+    if (!full || missing.length) { skipped++; continue; }
+    const { id, updated, ...record } = toRecord(full);
+    const source = full.cloud && full.row?.scope === 'private' && full.row.owner_id === lib.me.id ? full.id : null;
+    await cloud.addToCollection(record, restaurantId, source);
+    added++;
+  }
+  return { added, skipped };
+}
+
+function download(blob, name) {
+  const a = h('a', { href: URL.createObjectURL(blob), download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
 /**
  * #/mine: the person's own recipes (added, imported, edited library recipes), newest change first, searchable.
- * For the admin it is the recipe collection, with a tab for everyone's: every account's private recipes, restaurant
- * collections (the admin's copies and what each team added) and Community, filterable by person and place; each one
- * opens to view or edit (#/mine/everyone).
+ * For the admin it is the recipe collection: tabs for their own, everyone's (every account's private recipes,
+ * restaurant collections and Community, filterable by person and place) and possible duplicates; choose several to
+ * add to a restaurant at once; download a backup of everyone's recipes.
  */
 async function viewMine(tab = '') {
   setView('mine', '');
   const admin = isAdmin();
   const everyone = admin && tab === 'everyone';
-  if (admin) await loadPeople();
+  const dupes = admin && tab === 'duplicates';
+  if (admin) {
+    await loadPeople();
+    if (!lib.restaurants.length) { try { lib.restaurants = await cloud.listRestaurants(); } catch { /* names fall back */ } }
+  }
+  const MINE = ['mine', 'account', 'shared', 'edited'];
+  const mineCount = lib.all.filter((r) => MINE.includes(r.source)).length;
+  const tabs = admin && h('div', { class: 'chips src minetabs', role: 'tablist' },
+    [['', `Mine (${mineCount})`], ['everyone', `Everyone’s (${lib.cloud.length})`], ['duplicates', 'Duplicates']].map(([k, label]) =>
+      h('a', { class: 'chip', role: 'tab', href: `#/mine${k ? `/${k}` : ''}`, 'aria-selected': String(tab === k), 'aria-pressed': String(tab === k) }, label)));
+  const head = pageHead(admin ? 'Recipe collection' : 'My recipes', admin
+    ? 'Your recipes, and everyone’s: private recipes, restaurant collections and Community.'
+    : 'Recipes you added, imported or changed.');
+  if (dupes) return viewDuplicates(head, tabs);
+
   const search = h('input', { type: 'search', class: 'full', placeholder: everyone ? 'Search everyone’s recipes' : 'Search my recipes', 'aria-label': 'Search recipes' });
   const sort = h('select', { 'aria-label': 'Sort' }, h('option', { value: 'recent' }, 'Recently changed'), h('option', { value: 'az' }, 'A to Z'));
   const out = h('ul', { class: 'rows minelist' });
   const count = h('p', { class: 'muted small', role: 'status' });
-  const MINE = ['mine', 'account', 'shared', 'edited'];
   let list, person = null, where = null;
   if (everyone) {
     list = lib.cloud.map((row) => lib.byId.get(row.id)).filter(Boolean);
@@ -1336,6 +1376,29 @@ async function viewMine(tab = '') {
   } else {
     list = lib.all.filter((r) => MINE.includes(r.source));
   }
+  // choosing several (the admin): add them to a restaurant's collection in one go
+  const chosen = new Set();
+  let selecting = false;
+  const bar = h('div', { class: 'selectbar', hidden: true });
+  const restSel = !admin ? null : h('select', { 'aria-label': 'Restaurant to add them to' }, h('option', { value: '' }, 'Add to a restaurant…'),
+    lib.restaurants.map((x) => h('option', { value: x.id }, x.name)));
+  const paintBar = () => {
+    bar.hidden = !selecting;
+    fill(bar, h('span', { class: 'n' }, `${chosen.size} chosen`), restSel,
+      h('button', { type: 'button', class: 'primary', disabled: !chosen.size || !restSel?.value, onclick: async (e) => {
+        const rest = lib.restaurants.find((x) => x.id === restSel.value);
+        if (!rest || !await confirmDialog(`Add ${chosen.size} ${chosen.size === 1 ? 'recipe' : 'recipes'} to ${rest.name}’s collection? Their team sees them straight away. Your own recipes stay linked, so you can update their copies later.`, 'Add them')) return;
+        e.target.disabled = true;
+        try {
+          const res = await addManyToRestaurant(list.filter((r) => chosen.has(r.id)), rest.id);
+          await refreshCloud();
+          toast(`Added ${res.added} to ${rest.name}${res.skipped ? `; ${res.skipped} ${res.skipped === 1 ? 'was' : 'were'} already there or couldn’t be read` : ''}`, 5000);
+          chosen.clear(); selecting = false; viewMine(tab);
+        } catch (err) { toast(err.message, 5000); e.target.disabled = false; }
+      } }, 'Add'),
+      h('button', { type: 'button', onclick: () => { chosen.clear(); selecting = false; paint(); } }, 'Cancel'));
+  };
+  if (restSel) restSel.addEventListener('change', paintBar);
   const meta = (r) => {
     const bits = [];
     if (everyone) bits.push(ownerName(r.row.owner_id), whereOf(r.row));
@@ -1352,28 +1415,144 @@ async function viewMine(tab = '') {
       && (!person?.value || r.row.owner_id === person.value) && (!where?.value || whereOf(r.row) === where.value));
     hits = sort.value === 'az' ? hits.sort((a, b) => collator.compare(a.title, b.title)) : hits.sort((a, b) => changedAt(b) - changedAt(a));
     count.textContent = hits.length === list.length ? `${list.length} ${list.length === 1 ? 'recipe' : 'recipes'}` : `${hits.length} of ${list.length} recipes`;
-    fill(out, hits.length ? hits.slice(0, 300).map((r) => h('li', null,
-      h('a', { class: 'rc', href: `#/r/${r.id}` }, thumb(r), h('span', { class: 'txt' }, h('span', { class: 't' }, r.title), h('span', { class: 's' }, meta(r)))),
-      canEdit(r) && r.kind !== 'link' && h('a', { class: 'icon-btn', href: `#/edit/${r.id}`, 'aria-label': `Edit ${r.title}`, title: 'Edit' }, icon('edit', { size: 18 }))))
-      : h('li', { class: 'muted pad' }, words.length || person?.value || where?.value ? 'Nothing matches.' : 'No recipes here yet.'));
+    fill(out, hits.length ? hits.slice(0, 300).map((r) => {
+      const box = !selecting ? null : h('input', { type: 'checkbox', class: 'pick', checked: chosen.has(r.id), 'aria-label': `Choose ${r.title}` });
+      if (box) box.addEventListener('change', () => { if (box.checked) chosen.add(r.id); else chosen.delete(r.id); paintBar(); });
+      return h('li', null, box,
+        h('a', { class: 'rc', href: `#/r/${r.id}` }, thumb(r), h('span', { class: 'txt' }, h('span', { class: 't' }, r.title), h('span', { class: 's' }, meta(r)))),
+        !selecting && canEdit(r) && r.kind !== 'link' && h('a', { class: 'icon-btn', href: `#/edit/${r.id}`, 'aria-label': `Edit ${r.title}`, title: 'Edit' }, icon('edit', { size: 18 })));
+    }) : h('li', { class: 'muted pad' }, words.length || person?.value || where?.value ? 'Nothing matches.' : 'No recipes here yet.'));
+    paintBar();
   };
   for (const el of [search, sort, person, where]) if (el) el.addEventListener(el === search ? 'input' : 'change', paint);
   paint();
-  const mineCount = lib.all.filter((r) => MINE.includes(r.source)).length;
-  fill($app,
-    pageHead(admin ? 'Recipe collection' : 'My recipes', admin
-      ? 'Your recipes, and everyone’s: private recipes, restaurant collections and Community.'
-      : 'Recipes you added, imported or changed.'),
-    admin && h('div', { class: 'chips src minetabs', role: 'tablist' },
-      h('a', { class: 'chip', role: 'tab', href: '#/mine', 'aria-selected': String(!everyone), 'aria-pressed': String(!everyone) }, `Mine (${mineCount})`),
-      h('a', { class: 'chip', role: 'tab', href: '#/mine/everyone', 'aria-selected': String(everyone), 'aria-pressed': String(everyone) }, `Everyone’s (${lib.cloud.length})`)),
+  const tools = h('div', { class: 'row minetools' },
+    admin && lib.restaurants.length > 0 && h('button', { type: 'button', onclick: () => { selecting = !selecting; if (!selecting) chosen.clear(); paint(); } }, 'Choose several'),
+    everyone && h('button', { type: 'button', onclick: () => {
+      const file = backupFile(lib.cloud, lib.people, lib.restaurants);
+      download(new Blob([JSON.stringify(file, null, 1)], { type: 'application/json' }), `recipes-backup-${new Date().toISOString().slice(0, 10)}.json`);
+      toast(`Backup of ${file.count} recipes downloaded`);
+    } }, 'Download a backup'));
+  fill($app, head, tabs,
     h('div', { class: 'searchbar stack' }, search, h('div', { class: 'row minefilters' }, person, where, sort)),
-    count, out,
+    tools.children.length > 0 && tools,
+    count, out, bar,
     !everyone && h('section', { class: 'tools stack' }, h('div', { class: 'row grow' },
       h('a', { class: 'linkbtn primary', href: '#/new' }, '+ Add a recipe'),
       h('a', { class: 'linkbtn', href: '#/transfer' }, 'Import recipes'))),
-    everyone && h('p', { class: 'muted small' }, 'Open any recipe to read it; the pencil edits it. Changes to someone’s recipe are saved to their account. Restaurant copies of your own recipes are listed under the restaurant; open your recipe to update them.'));
+    everyone && h('p', { class: 'muted small' }, 'Open any recipe to read it; the pencil edits it. Changes to someone’s recipe are saved to their account. Restaurant copies of your own recipes are listed under the restaurant; open your recipe to update them. The backup has every recipe with whose it is and where it lives (a JSON file).'));
   window.scrollTo(0, 0);
+}
+
+/** #/mine/duplicates: recipes that look entered more than once, across everyone's (adminrecipes.js decides). */
+function viewDuplicates(head, tabs) {
+  const items = lib.cloud.map((row) => ({ id: row.id, title: row.title, ings: row.body?.ings || [], source: row.source_recipe_id || null, row }));
+  const groups = findDuplicates(items);
+  fill($app, head, tabs,
+    h('p', { class: 'muted' }, groups.length
+      ? `${groups.length} ${groups.length === 1 ? 'group' : 'groups'} of recipes that look the same: the same name with mostly the same ingredients, or nearly the same ingredients under another name. Restaurant copies of your recipes aren’t counted. Open them to compare, and delete the ones you don’t need (deleting asks first).`
+      : 'No duplicates found among everyone’s recipes. Restaurant copies of your own recipes don’t count.'),
+    groups.map((g) => h('section', { class: 'card stack dupgroup' },
+      h('strong', null, `${g[0].title}`, h('span', { class: 'muted small' }, ` · ${g.length} versions`)),
+      h('ul', { class: 'rows' }, g.map((x) => {
+        const r = lib.byId.get(x.id);
+        return h('li', null, h('a', { class: 'rc', href: `#/r/${x.id}` }, r ? thumb(r) : null,
+          h('span', { class: 'txt' }, h('span', { class: 't' }, x.title),
+            h('span', { class: 's' }, [ownerName(x.row.owner_id), whereOf(x.row), `${x.ings.length} ingredients`, x.row.updated_at && `changed ${WHEN_SHORT.format(Date.parse(x.row.updated_at))}`].filter(Boolean).join(' · ')))));
+      })))));
+  window.scrollTo(0, 0);
+}
+
+/** A recipe's edit history (any recipe in the account the person can read): what changed, when, and by whom, with
+ *  a way back to the version before each change. Loaded when opened. */
+function historyBox(r) {
+  if (!r.cloud || !lib.me) return null;
+  const body = h('div', { class: 'stack' }, h('p', { class: 'muted small' }, 'Loading…'));
+  const box = h('details', { class: 'card historybox' }, h('summary', null, h('strong', null, 'Edit history')), body);
+  box.addEventListener('toggle', async () => {
+    if (!box.open || box.dataset.loaded) return;
+    box.dataset.loaded = '1';
+    let versions;
+    try { versions = await cloud.listVersions(r.id); } catch (err) {
+      fill(body, h('p', { class: 'muted small' }, /recipe_versions/.test(err.message) ? 'Edit history starts once the database update (add_recipe_versions.sql) is in.' : `Could not load the history: ${err.message}`));
+      return;
+    }
+    if (!versions.length) { fill(body, h('p', { class: 'muted small' }, 'No changes since it was saved, or since edit history began.')); return; }
+    const current = { title: r.row.title, categories: r.row.categories || [], body: r.row.body || {} };
+    const WHEN_LONG = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+    fill(body, h('ol', { class: 'history' }, versions.map((v, i) => {
+      const after = i === 0 ? current : { title: versions[i - 1].title, categories: versions[i - 1].categories, body: versions[i - 1].body };
+      const who = v.replaced_by === lib.me.id ? 'you' : isAdmin() ? ownerName(v.replaced_by) : 'someone';
+      return h('li', null,
+        h('p', { class: 'small' }, h('strong', null, WHEN_LONG.format(Date.parse(v.replaced_at))), ` · changed by ${who}`),
+        h('ul', { class: 'small muted' }, diffRecipe(v, after).map((t) => h('li', null, t))),
+        canEdit(r) && h('button', { type: 'button', onclick: async () => {
+          if (!await confirmDialog(`Go back to the version from before this change${v.saved_at ? ` (saved ${WHEN_LONG.format(Date.parse(v.saved_at))})` : ''}? The current one is kept in the history, so you can come back to it.`, 'Restore it')) return;
+          try {
+            await cloud.updateRecipe(r.id, { ...v.body, title: v.title, categories: v.categories || [] });
+            await refreshCloud();
+            toast(copiesOf(r).length ? 'Restored. Restaurant copies can be updated from the box below.' : 'Restored', 4500);
+            route();
+          } catch (err) { toast(err.message, 4500); }
+        } }, 'Restore the version before this'));
+    })), h('p', { class: 'muted small' }, 'The last 30 changes are kept.'));
+  });
+  return box;
+}
+
+/** The admin: meal prep dishes on unfinished menus made from this recipe, and a way to refresh them to this version. */
+function mealPrepBox(r) {
+  if (!isAdmin() || r.kind === 'link') return null;
+  const body = h('div', { class: 'stack' }, h('p', { class: 'muted small' }, 'Looking…'));
+  const box = h('details', { class: 'card mealprepbox' }, h('summary', null, h('strong', null, 'On meal prep menus')), body);
+  const WEEK = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+  const load = async () => {
+    let uses;
+    try { uses = await dishesUsing(r.id); } catch (err) { fill(body, h('p', { class: 'muted small' }, `Could not look: ${err.message}`)); return; }
+    if (!uses.length) { fill(body, h('p', { class: 'muted small' }, 'Not on any unfinished menu. Dishes on finished menus keep the version clients had.')); return; }
+    fill(body,
+      h('ul', { class: 'asks' }, uses.map(({ meal, menu, client }) => h('li', null,
+        h('a', { href: `#/clients/${menu.client_id}/${menu.id}` }, `${client?.name || 'A client'} · week of ${WEEK.format(planner.parseDate(menu.week_start))}`),
+        h('span', { class: 'muted small' }, `${meal.title} · ${menu.status === 'draft' ? 'draft' : meal.status === 'approved' ? 'approved' : meal.status === 'swap' ? 'swap asked' : 'waiting'}`)))),
+      h('p', { class: 'muted small' }, 'A dish keeps the recipe as it was when it was added. Refreshing remakes it from this recipe: ingredients, nutrition and groceries. Your wording, its name if you changed it, and the allergens you ticked stay; any new allergens are added.'),
+      h('button', { type: 'button', class: 'primary', onclick: async (e) => {
+        if (!await confirmDialog(`Refresh ${uses.length} ${uses.length === 1 ? 'dish' : 'dishes'} from this recipe? Clients see the new version; dishes they approved stay approved.`, 'Refresh')) return;
+        e.target.disabled = true;
+        try {
+          const res = await refreshDishes(ctx, uses);
+          toast(`Refreshed ${res.done} ${res.done === 1 ? 'dish' : 'dishes'}${res.skipped.length ? `; skipped ${res.skipped.join(', ')}` : ''}`, 4500);
+          box.dataset.loaded = ''; fill(body, h('p', { class: 'muted small' }, 'Looking…')); load();
+        } catch (err) { toast(err.message, 4500); e.target.disabled = false; }
+      } }, `Refresh ${uses.length === 1 ? 'the dish' : `${uses.length} dishes`} from this recipe`));
+  };
+  box.addEventListener('toggle', () => { if (box.open && !box.dataset.loaded) { box.dataset.loaded = '1'; load(); } });
+  return box;
+}
+
+/** The admin, on someone else's recipe: take a copy into their own recipes, or publish it to the Community. */
+function promoteBox(r) {
+  if (!isAdmin() || !r.cloud || r.row.owner_id === lib.me.id || r.kind === 'link') return null;
+  const who = ownerName(r.row.owner_id);
+  const record = () => { const { id, updated, ...rec } = toRecord(r); return rec; };
+  const inCommunity = lib.cloud.some((x) => x.scope === 'community' && x.source_recipe_id === r.id && x.status !== 'declined');
+  return h('div', { class: 'card stack promotebox' },
+    h('strong', null, `${who}’s recipe`),
+    h('div', { class: 'row' },
+      h('button', { type: 'button', onclick: async () => {
+        const rec = record();
+        if (!hasSource(r) && !isAdapted(r)) rec.adapted = { author: who === 'Someone' ? '' : who, name: '', url: '' };
+        try { const row = await cloud.createRecipe(rec); await refreshCloud(); toast('Copied to your recipes, with credit to them'); location.hash = `#/r/${row.id}`; }
+        catch (err) { toast(err.message, 4500); }
+      } }, 'Copy to my recipes'),
+      r.row.scope !== 'community' && !inCommunity && h('button', { type: 'button', onclick: async () => {
+        if (!await confirmDialog(`Publish “${r.title}” to the Community, credited to ${who}? Everyone signed in will see it. Only do this with their permission.`, 'Publish')) return;
+        try {
+          await cloud.createRecipe(record(), { scope: 'community', status: 'approved', author_name: who === 'Someone' ? null : who, source_recipe_id: r.id });
+          await refreshCloud(); toast('Published to the Community'); route();
+        } catch (err) { toast(err.message, 4500); }
+      } }, 'Publish to the Community'),
+      inCommunity && h('span', { class: 'muted small' }, 'Already in the Community.')),
+    h('p', { class: 'muted small' }, 'A copy is yours to change: their recipe stays as it is.'));
 }
 
 /** The admin's own recipe: which restaurants have a copy, whether each is up to date, and a button to update them. */

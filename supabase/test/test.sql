@@ -539,6 +539,30 @@ reset role;
 select t.login(:'s1'); set role authenticated;
 update public.app_settings set open_signup = true;
 reset role;
+-- ---- edit history (add_recipe_versions.sql)
+select t.login(:'c1'); set role authenticated;
+insert into public.recipes(owner_id, scope, title, body) values (:'c1', 'private', 'History Soup', '{"dir": "v1"}');
+update public.recipes set body = '{"dir": "v2"}' where title = 'History Soup';
+update public.recipes set title = 'History Soup!' where title = 'History Soup';
+update public.recipes set title = 'History Soup!' where title = 'History Soup!';
+select t.expect('each change keeps the version before it (and only real changes do)',
+  t.n($$ select count(*) from public.recipe_versions v join public.recipes r on r.id = v.recipe_id where r.title = 'History Soup!' $$) = 2);
+select t.expect('the owner reads their recipe''s history, oldest content kept', (select v.body ->> 'dir' from public.recipe_versions v join public.recipes r on r.id = v.recipe_id
+  where r.title = 'History Soup!' order by v.id limit 1) = 'v1');
+select t.denied('nobody writes history by hand', format($$ insert into public.recipe_versions(recipe_id, title, body) values ((select id from public.recipes where title = 'History Soup!'), 'x', '{}') $$));
+reset role;
+select t.expect('who replaced it is recorded', (select replaced_by from public.recipe_versions order by id desc limit 1) = :'c1');
+select t.login(:'s2'); set role authenticated;
+select t.expect('others cannot read someone''s recipe history', t.n($$ select count(*) from public.recipe_versions $$) = 0);
+reset role;
+select t.login(:'admin_id'); set role authenticated;
+select t.expect('the admin can', t.n($$ select count(*) from public.recipe_versions v join public.recipes r on r.id = v.recipe_id where r.title = 'History Soup!' $$) = 2);
+reset role;
+do $$ declare i int; begin for i in 1..35 loop update public.recipes set body = jsonb_build_object('dir', 'v' || (i + 2)) where title = 'History Soup!'; end loop; end $$;
+select t.expect('only the last 30 versions are kept', t.n($$ select count(*) from public.recipe_versions v join public.recipes r on r.id = v.recipe_id where r.title = 'History Soup!' $$) = 30);
+select id as hist from public.recipes where title = 'History Soup!' \gset
+delete from public.recipes where title = 'History Soup!';
+select t.expect('deleting a recipe deletes its history', t.n(format($$ select count(*) from public.recipe_versions where recipe_id = %L $$, :'hist')) = 0);
 select t.expect('students cannot open sign-up', public.signup_open() = false);
 select t.login(:'admin_id'); set role authenticated;
 update public.app_settings set open_signup = true;

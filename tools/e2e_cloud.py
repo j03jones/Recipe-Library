@@ -47,6 +47,7 @@ class Fake:
         self.open_signup = False
         self.sent = []       # emailed invites
         self.households = {}  # id -> dict(name, code, list, list_at, members=[user ids])
+        self.versions = []   # recipe_versions: the version a change replaced (add_recipe_versions.sql)
 
     def add_user(self, email, pw, name, role):
         uid = str(uuid.uuid4())
@@ -378,6 +379,10 @@ class Fake:
                 return await ok({"message": "new row violates row-level security policy"}, 403)
             kit[rid_] = body["prices"]
             return await ok(None, 201)
+        if path == "/rest/v1/recipe_versions":
+            rid_ = eq("recipe_id")
+            seen = {r["id"] for r in self.visible(user)}
+            return await ok(sorted([v for v in self.versions if v["recipe_id"] == rid_ and rid_ in seen], key=lambda v: -v["id"]))
         if path == "/rest/v1/recipes":
             if req.method == "GET":
                 return await ok(self.visible(user))
@@ -404,6 +409,11 @@ class Fake:
             if req.method == "PATCH":
                 if not row or not (user["role"] == "admin" or (row["owner_id"] == user["id"] and row["scope"] == "private") or self.team_can_change(user, row)):
                     return await ok([])
+                if any(k in body and body[k] != row.get(k) for k in ("title", "categories", "body")):
+                    self.tick += 1
+                    self.versions.append(dict(id=len(self.versions) + 1, recipe_id=rid, title=row["title"], categories=row.get("categories", []),
+                                              body=json.loads(json.dumps(row.get("body"))), saved_at=row.get("updated_at"), replaced_by=user["id"],
+                                              replaced_at=f"2026-11-{10 + min(self.tick, 18):02d}T12:00:00Z"))
                 row.update(body)
                 return await ok([row])
         if path == "/functions/v1/import-recipe":   # made-up page; the real function reads the page's schema.org block
@@ -581,6 +591,8 @@ async def main():
     time.sleep(1)
     try:
         return await run()
+    except Exception:
+        print("ERRORS:", errors[-8:]); raise
     finally:
         server.terminate()
 
@@ -1197,6 +1209,74 @@ async def run():
         await admin.wait_for_timeout(300)
         check("and Cancel keeps it", sam2["id"] in fake.recipes)
         check("the admin's My recipes button opens the collection", await admin.get_attribute("#mybtn", "href") == "#/mine")
+        # ---- collection tools (v0.33): edit history, promote, duplicates, backup, choosing several
+        await admin.goto(URL + "#/")
+        await admin.goto(URL + f"#/r/{sam2['id']}")
+        await admin.wait_for_selector(".historybox")
+        await admin.click(".historybox summary")
+        await admin.wait_for_selector(".historybox .history li")
+        hist = await admin.inner_text(".historybox")
+        await admin.locator(".historybox").screenshot(path="/tmp/cloud_history.png")
+        check("edit history says what changed, when and who", "Method" in hist and "changed by you" in hist, hist[:300])
+        await admin.click(".historybox button:has-text('Restore')")
+        await admin.wait_for_selector("dialog[open]")
+        await admin.click("dialog[open] button:has-text('Restore it')")
+        await admin.wait_for_timeout(900)
+        check("restoring puts the earlier version back", sam2["body"]["dir"] != "Mix gently, then rest 10 minutes.", sam2["body"]["dir"])
+        check("and the change it undid stays in the history", len([v for v in fake.versions if v["recipe_id"] == sam2["id"]]) == 2)
+        await admin.goto(URL + "#/")
+        await admin.goto(URL + f"#/r/{sam2['id']}")
+        await admin.wait_for_selector(".promotebox")
+        check("someone else's recipe can be promoted", "Sam’s recipe" in await admin.inner_text(".promotebox"))
+        before = set(fake.recipes)
+        await admin.click(".promotebox button:has-text('Copy to my recipes')")
+        await admin.wait_for_timeout(900)
+        mine_copy = [fake.recipes[k] for k in set(fake.recipes) - before]
+        check("Copy to my recipes makes the admin's own copy, crediting them", len(mine_copy) == 1 and mine_copy[0]["owner_id"] == fake.users["chef@example.com"]["id"]
+              and mine_copy[0]["scope"] == "private" and (mine_copy[0]["body"].get("adapted") or {}).get("author") == "Sam", mine_copy and mine_copy[0]["body"].get("adapted"))
+        await admin.goto(URL + "#/")
+        await admin.goto(URL + f"#/r/{sam2['id']}")
+        await admin.wait_for_selector(".promotebox")
+        await admin.click(".promotebox button:has-text('Publish to the Community')")
+        await admin.wait_for_selector("dialog[open]")
+        check("publishing asks about permission", "permission" in await admin.inner_text("dialog[open]"))
+        await admin.click("dialog[open] button:has-text('Publish')")
+        await admin.wait_for_timeout(900)
+        pub = [r for r in fake.recipes.values() if r["scope"] == "community" and r.get("source_recipe_id") == sam2["id"]]
+        check("Publish to the Community lists it, credited", len(pub) == 1 and pub[0]["status"] == "approved" and pub[0]["author_name"] == "Sam", pub)
+        await admin.goto(URL + "#/mine/duplicates")
+        await admin.wait_for_selector(".dupgroup, #app p.muted")
+        dup = await admin.inner_text("#app")
+        await admin.screenshot(path="/tmp/cloud_dupes.png", full_page=True)
+        check("Duplicates finds the same recipe entered twice", await admin.locator(".dupgroup").count() >= 1 and "Sam Second" in dup, dup[:400])
+        await admin.goto(URL + "#/mine/everyone")
+        await admin.wait_for_selector(".minelist li")
+        async with admin.expect_download() as dl:
+            await admin.click("button:has-text('Download a backup')")
+        d = await dl.value
+        data = json.loads(Path(await d.path()).read_text())
+        check("the backup has everyone's recipes, whose and where", d.suggested_filename.startswith("recipes-backup-") and data["count"] == len(data["recipes"]) >= 3
+              and any(x["owner"]["name"] == "Sam" for x in data["recipes"]) and any((x["restaurant"] or {}).get("name") == "Maple Street Grill" for x in data["recipes"]),
+              d.suggested_filename)
+        await admin.goto(URL + "#/mine")
+        await admin.wait_for_selector(".minelist li")
+        await admin.click("button:has-text('Choose several')")
+        await admin.wait_for_selector(".minelist .pick")
+        n_pick = min(2, await admin.locator(".minelist .pick").count())
+        picked = [await admin.locator(".minelist li .t").nth(i).inner_text() for i in range(n_pick)]
+        for i in range(n_pick):
+            await admin.locator(".minelist .pick").nth(i).check()
+        mrid = next(k for k, v in fake.restaurants.items() if v["name"] == "Maple Street Grill")
+        await admin.select_option("select[aria-label='Restaurant to add them to']", mrid)
+        await admin.screenshot(path="/tmp/cloud_choose.png")
+        await admin.click(".selectbar button:has-text('Add')")
+        await admin.wait_for_selector("dialog[open]")
+        await admin.click("dialog[open] button:has-text('Add them')")
+        await admin.wait_for_timeout(1500)
+        inrest = [r["title"] for r in fake.recipes.values() if r["scope"] == "restaurant" and r["restaurant_id"] == mrid]
+        check("choosing several adds them all to a restaurant (skipping ones it has)", all(inrest.count(t) == 1 for t in picked) and all(t in inrest for t in picked), (picked, inrest))
+        for k in [k for k, v in fake.recipes.items() if v["scope"] == "restaurant" and v["restaurant_id"] == mrid and v["title"] in picked and k not in before]:
+            del fake.recipes[k]   # keep the restaurant's collection as the later checks expect
         await admin.goto(URL + "#/admin/people")
         await admin.wait_for_selector("details.person")
         await admin_tab(admin, "Invites")
@@ -1299,6 +1379,23 @@ async def run():
         await admin.click("dialog[open] button:has-text('Send anyway')")
         await admin.wait_for_selector("button:has-text('Finish this menu')")
         check("the menu is sent", next(iter(fake.cdb["client_menus"].values()))["status"] == "sent")
+        # a recipe's page lists the dishes made from it on unfinished menus, and refreshes them (v0.33)
+        soup_rid = fake.cdb["client_meal_private"][soup["id"]]["recipe_id"]
+        menu_id_ = next(iter(fake.cdb["client_menus"]))
+        await admin.goto(URL + f"#/r/{soup_rid}")
+        await admin.wait_for_selector(".mealprepbox")
+        await admin.click(".mealprepbox summary")
+        await admin.wait_for_selector(".mealprepbox .asks li")
+        check("the recipe page shows the meal prep dishes made from it", "Anna Lee" in await admin.inner_text(".mealprepbox"))
+        soup["ingredients"] = soup["ingredients"][:1]
+        await admin.click(".mealprepbox button:has-text('Refresh')")
+        await admin.wait_for_selector("dialog[open]")
+        await admin.click("dialog[open] button:has-text('Refresh')")
+        await admin.wait_for_timeout(1200)
+        check("refreshing remakes the dish from the recipe, keeping the chef's words", len(soup["ingredients"]) > 1
+              and soup.get("description") == "A deep red soup, lighter than it looks.", (len(soup["ingredients"]), soup.get("description")))
+        await admin.goto(URL + f"#/clients/{next(iter(fake.cdb['client_menus'].values()))['client_id']}/{menu_id_}")
+        await admin.wait_for_selector("button:has-text('Finish this menu')")
         await admin.screenshot(path="/tmp/cloud_client_menu_chef.png", full_page=True)
 
         # ---- the client's own page (jonesridgekitchen.com/my-meals/; web/portal/ here)
