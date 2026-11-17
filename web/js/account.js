@@ -707,7 +707,9 @@ export async function viewAdmin(ctx) {
         if (recipes.some((x) => x.title.toLowerCase() === recipe.title.toLowerCase())
           && !await ctx.confirmDialog(`${r.name} already has a recipe called “${recipe.title}”. Add another copy?`, 'Add it')) return;
         const { id, updated, ...record } = toRecord(recipe);
-        await cloud.addToCollection(record, r.id);
+        // one of the admin's own account recipes: keep the copy linked, so edits can be passed on to it
+        const source = recipe.cloud && recipe.row?.scope === 'private' && recipe.row.owner_id === lib.me?.id ? recipe.id : null;
+        await cloud.addToCollection(record, r.id, source);
         await ctx.refreshCloud();
         toast(`Added to ${r.name}`);
         paintRestaurants(r.id);

@@ -116,7 +116,7 @@ const num = (f, places) => trim0(f.toNumber().toFixed(places));
 
 // ------------------------------------------------------------------- library
 
-const lib = { more: [], moreState: 'idle', base: [], mine: new Map(), all: [], byId: new Map(), cats: [], cloud: [], me: null, restaurants: [], syncError: '', planSyncError: '', libPhotos: {}, avatars: {} };
+const lib = { more: [], moreState: 'idle', base: [], mine: new Map(), all: [], byId: new Map(), cats: [], cloud: [], me: null, restaurants: [], syncError: '', planSyncError: '', libPhotos: {}, avatars: {}, people: {} };
 
 // ---- the rest of the library: on-demand files next to the built-in recipes (tools/export_more.py).
 // data/more.json names the current set; its index gives every extra recipe's title, categories and
@@ -230,6 +230,7 @@ async function refreshCloud() {
   try {
     const [me, rows] = await Promise.all([cloud.loadMe(), cloud.listRecipes()]);
     lib.me = me; lib.cloud = rows;
+    if (me?.role === 'admin') await loadPeople();       // whose recipe is whose, in the admin's collection
     try { lib.avatars = Object.fromEntries((await cloud.communityAvatars()).map((a) => [a.id, a.avatar])); } catch { /* keep the old ones */ }
     saveCloudCache();
   } catch (err) {
@@ -387,9 +388,48 @@ function cloudSource(row) {
   const mineRow = row.owner_id === lib.me?.id;
   if (row.scope === 'restaurant') return 'collection';
   if (row.scope === 'community') return mineRow && row.status !== 'approved' ? 'shared' : 'community';
-  return 'account';
+  return mineRow ? 'account' : 'others';                // someone else's private recipe: only the admin can read those
 }
-const SOURCE_GROUP = { base: 'library', edited: 'library', mine: 'mine', account: 'mine', shared: 'mine', community: 'community', collection: 'collection' };
+const SOURCE_GROUP = { base: 'library', edited: 'library', mine: 'mine', account: 'mine', shared: 'mine', community: 'community', collection: 'collection', others: 'others' };
+const isAdmin = () => lib.me?.role === 'admin';
+
+// ---- the admin's view of everyone's recipes: whose they are, and the restaurant copies of the admin's own
+/** Names of everyone with an account, for the admin ({ id: { name, email } }); loaded on first use. */
+let peopleLoad = null;
+function loadPeople() {
+  if (!isAdmin()) return Promise.resolve({});
+  if (!peopleLoad) {
+    peopleLoad = cloud.listPeople().then((rows) => {
+      lib.people = Object.fromEntries(rows.map((p) => [p.id, { name: p.display_name || p.email, email: p.email, role: p.role }]));
+      return lib.people;
+    }).catch(() => { peopleLoad = null; return {}; });
+  }
+  return peopleLoad;
+}
+const ownerName = (id) => (id === lib.me?.id ? 'You' : lib.people?.[id]?.name || 'Someone');
+
+/** A recipe body as stored, with its keys in a fixed order, so two copies can be compared. */
+const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object'
+  ? Object.fromEntries(Object.keys(v).sort().filter((k) => k !== 'updated').map((k) => [k, canon(v[k])])) : v);
+const sameRecipe = (a, b) => a.title === b.title && JSON.stringify(canon(a.categories || [])) === JSON.stringify(canon(b.categories || []))
+  && JSON.stringify(canon(a.body || {})) === JSON.stringify(canon(b.body || {}));
+
+/** The restaurant copies of one of the admin's own recipes: linked to it, or (copies made before linking) with its name. */
+function copiesOf(r) {
+  if (!isAdmin() || !r?.cloud || r.row?.scope !== 'private' || r.row.owner_id !== lib.me.id) return [];
+  const t = r.title.trim().toLowerCase();
+  return lib.cloud.filter((x) => x.scope === 'restaurant' && (x.source_recipe_id === r.id
+    || (!x.source_recipe_id && x.owner_id === lib.me.id && x.title.trim().toLowerCase() === t)));
+}
+const copyPlaces = (copies) => copies.map((x) => restaurantName(x.restaurant_id)).join(', ');
+
+/** Pass the admin's recipe on to its restaurant copies (and link any found by name). */
+async function updateCopies(sourceId, record, copies) {
+  for (const copy of copies) {
+    await cloud.updateRecipe(copy.id, record);
+    if (copy.source_recipe_id !== sourceId) await cloud.linkCopy(copy.id, sourceId);
+  }
+}
 const canEdit = (r) => !['community', 'collection', 'shared'].includes(r.source) || lib.me?.role === 'admin';
 
 // ---- photos: cloud recipes keep theirs in recipes.photo; built-in library recipes in the person's own list
@@ -462,12 +502,13 @@ function rebuild() {
     if (r) map.set(rec.id, r);
   }
   for (const row of lib.cloud) {
-    if (row.scope === 'private' && row.owner_id !== lib.me?.id) continue;          // admins can read these; the app never lists them
     const src = cloudSource(row);
     const r = read({ ...(row.body && typeof row.body === 'object' ? row.body : {}), id: row.id, title: row.title, categories: row.categories || [] }, src);
     if (!r) continue;
     r.cloud = true; r.row = row;
-    r.hidden = row.scope === 'community' && row.status !== 'approved' && row.owner_id !== lib.me?.id;   // pending items from others live in Admin tools
+    // pending Community items from others live in Admin tools; other people's private recipes (which only the admin
+    // can read) are in the admin's recipe collection, not the library
+    r.hidden = (row.scope === 'community' && row.status !== 'approved' && row.owner_id !== lib.me?.id) || src === 'others';
     map.set(row.id, r);
   }
   lib.byId = map;
@@ -533,6 +574,8 @@ function clearView() {
 
 function setView(view, tab) {
   document.body.dataset.view = view;
+  const mybtn = document.getElementById('mybtn');
+  if (mybtn) { if (view === 'mine') mybtn.setAttribute('aria-current', 'page'); else mybtn.removeAttribute('aria-current'); }
   for (const a of document.querySelectorAll('#tabs a')) {
     if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   }
@@ -566,6 +609,7 @@ function badgeText(r) {
     case 'community': return r.row.owner_id === lib.me?.id ? 'Shared' : 'Community';
     case 'shared': return r.row.status === 'declined' ? 'Declined' : 'Awaiting approval';
     case 'collection': return restaurantName(r.row.restaurant_id);
+    case 'others': return `${ownerName(r.row.owner_id)}’s`;
     default: return 'Edited';
   }
 }
@@ -780,7 +824,11 @@ function credit(r) {
     return h('p', { class: 'credit' }, av && photos.photoImg(av, { class: 'avatar sm', alt: '' }),
       r.row.owner_id === lib.me?.id ? 'Shared by you' : `Shared by ${r.row.author_name || 'a chef'}`);
   }
-  if (r.source === 'collection') return h('p', { class: 'credit' }, `From the ${restaurantName(r.row.restaurant_id)} collection`);
+  if (r.source === 'collection') {
+    const team = isAdmin() && r.row.owner_id !== lib.me.id;
+    return h('p', { class: 'credit' }, `From the ${restaurantName(r.row.restaurant_id)} collection${team ? `: added by ${ownerName(r.row.owner_id)}, on their team` : ''}`);
+  }
+  if (r.source === 'others') return h('p', { class: 'credit' }, `${ownerName(r.row.owner_id)}’s private recipe. As the admin you can see and change it; nobody else can.`);
   if (r.source === 'shared') return h('p', { class: 'credit' }, r.row.status === 'declined'
     ? `Not approved${r.row.review_note ? `: ${r.row.review_note}` : '.'}` : 'Waiting for approval. Only you can see it until then.');
   return null;
@@ -1241,10 +1289,112 @@ function viewRecipe(id, preset = null) {
         !shared && h('button', { onclick: saveCopy }, 'Save scaled copy'),
         h('button', { onclick: () => window.print() }, 'Print card')),
       !shared && sharing(r),
+      !shared && copiesBox(r),
       r.tags && r.tags.length > 0 && h('p', { class: 'muted small' }, 'Original labels: ', r.tags.join(', '))),
     h('p', { class: 'printfoot' }, 'Jones Ridge Recipes'));
   paint();
   window.scrollTo(0, 0);
+}
+
+// -------------------------------------------------------------------- My recipes (#/mine), and the admin's collection
+const WHEN_SHORT = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+/** When a recipe last changed: the account's record, or the copy kept on this device. */
+const changedAt = (r) => {
+  const t = r.row?.updated_at ? Date.parse(r.row.updated_at) : lib.mine.get(r.id)?.updated;
+  return Number.isFinite(t) ? t : 0;
+};
+/** Where one of everyone's recipes lives, for the admin's list. */
+function whereOf(row) {
+  if (row.scope === 'restaurant') return `${restaurantName(row.restaurant_id)} collection`;
+  if (row.scope === 'community') return row.status === 'approved' ? 'Community' : row.status === 'declined' ? 'Community (declined)' : 'Community (waiting)';
+  return 'Private';
+}
+
+/**
+ * #/mine: the person's own recipes (added, imported, edited library recipes), newest change first, searchable.
+ * For the admin it is the recipe collection, with a tab for everyone's: every account's private recipes, restaurant
+ * collections (the admin's copies and what each team added) and Community, filterable by person and place; each one
+ * opens to view or edit (#/mine/everyone).
+ */
+async function viewMine(tab = '') {
+  setView('mine', '');
+  const admin = isAdmin();
+  const everyone = admin && tab === 'everyone';
+  if (admin) await loadPeople();
+  const search = h('input', { type: 'search', class: 'full', placeholder: everyone ? 'Search everyone’s recipes' : 'Search my recipes', 'aria-label': 'Search recipes' });
+  const sort = h('select', { 'aria-label': 'Sort' }, h('option', { value: 'recent' }, 'Recently changed'), h('option', { value: 'az' }, 'A to Z'));
+  const out = h('ul', { class: 'rows minelist' });
+  const count = h('p', { class: 'muted small', role: 'status' });
+  const MINE = ['mine', 'account', 'shared', 'edited'];
+  let list, person = null, where = null;
+  if (everyone) {
+    list = lib.cloud.map((row) => lib.byId.get(row.id)).filter(Boolean);
+    const owners = [...new Set(list.map((r) => r.row.owner_id))].sort((a, b) => ownerName(a).localeCompare(ownerName(b)));
+    person = h('select', { 'aria-label': 'Whose' }, h('option', { value: '' }, 'Everyone'), owners.map((id) => h('option', { value: id }, `${ownerName(id)} (${list.filter((r) => r.row.owner_id === id).length})`)));
+    const places = [...new Set(list.map((r) => whereOf(r.row)))].sort();
+    where = h('select', { 'aria-label': 'Where' }, h('option', { value: '' }, 'Anywhere'), places.map((w) => h('option', { value: w }, w)));
+  } else {
+    list = lib.all.filter((r) => MINE.includes(r.source));
+  }
+  const meta = (r) => {
+    const bits = [];
+    if (everyone) bits.push(ownerName(r.row.owner_id), whereOf(r.row));
+    else bits.push(r.source === 'edited' ? 'Edited library recipe' : r.cloud ? (r.source === 'shared' ? badgeText(r) : 'In your account') : 'On this device');
+    const copies = copiesOf(r);
+    if (copies.length) bits.push(`also in ${copyPlaces(copies)}`);
+    const t = changedAt(r);
+    if (t) bits.push(`changed ${WHEN_SHORT.format(t)}`);
+    return bits.join(' · ');
+  };
+  const paint = () => {
+    const words = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    let hits = list.filter((r) => words.every((w) => (r._hay || r.title.toLowerCase()).includes(w))
+      && (!person?.value || r.row.owner_id === person.value) && (!where?.value || whereOf(r.row) === where.value));
+    hits = sort.value === 'az' ? hits.sort((a, b) => collator.compare(a.title, b.title)) : hits.sort((a, b) => changedAt(b) - changedAt(a));
+    count.textContent = hits.length === list.length ? `${list.length} ${list.length === 1 ? 'recipe' : 'recipes'}` : `${hits.length} of ${list.length} recipes`;
+    fill(out, hits.length ? hits.slice(0, 300).map((r) => h('li', null,
+      h('a', { class: 'rc', href: `#/r/${r.id}` }, thumb(r), h('span', { class: 'txt' }, h('span', { class: 't' }, r.title), h('span', { class: 's' }, meta(r)))),
+      canEdit(r) && r.kind !== 'link' && h('a', { class: 'icon-btn', href: `#/edit/${r.id}`, 'aria-label': `Edit ${r.title}`, title: 'Edit' }, icon('edit', { size: 18 }))))
+      : h('li', { class: 'muted pad' }, words.length || person?.value || where?.value ? 'Nothing matches.' : 'No recipes here yet.'));
+  };
+  for (const el of [search, sort, person, where]) if (el) el.addEventListener(el === search ? 'input' : 'change', paint);
+  paint();
+  const mineCount = lib.all.filter((r) => MINE.includes(r.source)).length;
+  fill($app,
+    pageHead(admin ? 'Recipe collection' : 'My recipes', admin
+      ? 'Your recipes, and everyone’s: private recipes, restaurant collections and Community.'
+      : 'Recipes you added, imported or changed.'),
+    admin && h('div', { class: 'chips src minetabs', role: 'tablist' },
+      h('a', { class: 'chip', role: 'tab', href: '#/mine', 'aria-selected': String(!everyone), 'aria-pressed': String(!everyone) }, `Mine (${mineCount})`),
+      h('a', { class: 'chip', role: 'tab', href: '#/mine/everyone', 'aria-selected': String(everyone), 'aria-pressed': String(everyone) }, `Everyone’s (${lib.cloud.length})`)),
+    h('div', { class: 'searchbar stack' }, search, h('div', { class: 'row minefilters' }, person, where, sort)),
+    count, out,
+    !everyone && h('section', { class: 'tools stack' }, h('div', { class: 'row grow' },
+      h('a', { class: 'linkbtn primary', href: '#/new' }, '+ Add a recipe'),
+      h('a', { class: 'linkbtn', href: '#/transfer' }, 'Import recipes'))),
+    everyone && h('p', { class: 'muted small' }, 'Open any recipe to read it; the pencil edits it. Changes to someone’s recipe are saved to their account. Restaurant copies of your own recipes are listed under the restaurant; open your recipe to update them.'));
+  window.scrollTo(0, 0);
+}
+
+/** The admin's own recipe: which restaurants have a copy, whether each is up to date, and a button to update them. */
+function copiesBox(r) {
+  const copies = copiesOf(r);
+  if (!copies.length) return null;
+  const old = copies.filter((x) => !sameRecipe(x, r.row));
+  const box = h('div', { class: 'card stack copiesbox' },
+    h('strong', null, 'In restaurant collections'),
+    h('ul', { class: 'asks' }, copies.map((x) => h('li', null, h('a', { href: `#/r/${x.id}` }, restaurantName(x.restaurant_id)),
+      h('span', { class: `badge${sameRecipe(x, r.row) ? '' : ' warn'}` }, sameRecipe(x, r.row) ? 'Up to date' : 'Older version')))),
+    old.length > 0
+      ? h('button', { type: 'button', class: 'primary', onclick: async (e) => {
+        e.target.disabled = true;
+        try {
+          await updateCopies(r.id, { ...r.row.body, title: r.row.title, categories: r.row.categories || [] }, old);
+          await refreshCloud(); toast(`Updated in ${copyPlaces(old)}`); route();
+        } catch (err) { toast(err.message, 4500); e.target.disabled = false; }
+      } }, `Update ${old.length === 1 ? 'their copy' : `${old.length} copies`} to this version`)
+      : h('p', { class: 'muted small' }, 'Every copy matches this recipe. When you change it, you are asked whether to update them too.'));
+  return box;
 }
 
 /** "Shared with you" strip on a recipe opened from a link. */
@@ -1365,9 +1515,14 @@ function viewEdit(id, template) {
     const rec = toRecord(recipe);
     let target = recipe.id;
     if ((existing && existing.cloud) || (!existing && lib.me && cloud.isSignedIn())) {
+      const copies = existing ? copiesOf(existing) : [];      // found before saving, while it still has its old name
       try {
         if (existing) await cloud.updateRecipe(existing.id, rec);
         else target = (await cloud.createRecipe(rec)).id;
+        if (copies.length && await confirmDialog(`Also update the copy in ${copyPlaces(copies)}’s collection? They see your changes straight away.`,
+          copies.length === 1 ? 'Update their copy' : `Update ${copies.length} copies`)) {
+          try { await updateCopies(existing.id, rec, copies); toast(`Saved, and updated in ${copyPlaces(copies)}`); } catch (err) { toast(`Saved, but the copies were not updated: ${err.message}`, 5000); }
+        }
         await refreshCloud();
       } catch (err) {
         if (err.status !== 0 || existing) { toast(err.message, 4500); return; }
@@ -1381,16 +1536,20 @@ function viewEdit(id, template) {
 
   async function del() {
     const mine = existing.source === 'mine' || existing.cloud;
+    const copies = copiesOf(existing);
+    const whose = existing.cloud && existing.row.owner_id !== lib.me?.id ? ` This is ${ownerName(existing.row.owner_id)}’s recipe${existing.source === 'collection' ? ` in the ${restaurantName(existing.row.restaurant_id)} collection` : ''}.` : '';
     const ok = await confirmDialog(
-      mine ? `Delete "${existing.title}"?` : `Remove "${existing.title}" from your library? You can restore it later in Settings.`,
-      mine ? 'Delete' : 'Remove', true);
+      mine
+        ? `Delete “${existing.title}”?${whose} This can’t be undone.${copies.length ? ` The ${copyPlaces(copies)} copy stays in their collection; delete it there too if it should go.` : ''}`
+        : `Remove “${existing.title}” from your library? You can restore it later in Settings.`,
+      mine ? 'Delete recipe' : 'Remove', true);
     if (!ok) return;
     if (existing.cloud) {
       try { await cloud.deleteRecipe(existing.id); await refreshCloud(); await tidyPhoto(existing.row.photo); } catch (err) { toast(err.message, 4500); return; }
     } else if (mine) await dropRecord(existing.id);
     else await saveRecord({ id: existing.id, deleted: true });
     toast('Removed');
-    location.replace(`${location.pathname}${location.search}#/`);
+    location.replace(`${location.pathname}${location.search}${whose && isAdmin() ? '#/mine/everyone' : '#/'}`);
   }
   async function revert() {
     if (!await confirmDialog(`Discard your edits to "${existing.title}" and go back to the original?`, 'Revert')) return;
@@ -2212,6 +2371,7 @@ function route() {
   if (kind === 'edit' && id) return viewEdit(id);
   if (kind === 'new') return viewEdit(null);
   if (kind === 'settings') return viewSettings();
+  if (kind === 'mine') return viewMine(id || '');
   if (kind === 'links') return viewLinks(id || COLLECTIONS[0].id);
   if (kind === 'import') return viewImport(id || '');
   if (kind === 'admin') return viewAdmin(ctx);
