@@ -1543,5 +1543,6 @@ drop policy if exists recipe_versions_read on public.recipe_versions;
 create policy recipe_versions_read on public.recipe_versions for select to authenticated
   using (exists (select 1 from public.recipes r where r.id = recipe_id));
 revoke all on public.recipe_versions from anon;
+revoke insert, update, delete, truncate, references, trigger on public.recipe_versions from authenticated;
 grant select on public.recipe_versions to authenticated;
 
