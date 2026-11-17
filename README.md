@@ -56,6 +56,9 @@ phone app. Regrouping replaces categories you assigned by hand.
 - **The admin keeps their prices**: each restaurant's card in Admin tools has **Costing sheet ↗**. In the preview
   the admin can change the restaurant's prices, menu prices and plates (the database already allowed it); everything
   else in the preview stays look-only.
+- **Plates hold single ingredients too** (v0.31.1): besides recipes, add lines like "1 oz tomato slices" or "1 slice
+  Monterey Jack cheese". Each is costed from the price book (tomato slices use the tomato price), can be priced right
+  on the plate (saved to the price book), and appears on the price sheet as "Plate name (plate)".
 - **Ask Joseph** is a full form: name and email (filled in), phone, best way to reach them, topic, which recipe,
   how soon (up to *Urgent: during service*) and the message. It goes to the Admin tools inbox and by email, with
   every answer in it; the preview shows the form with sending switched off.

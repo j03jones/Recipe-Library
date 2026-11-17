@@ -8,7 +8,7 @@
 //   #kitchen/<id>/costing         food cost: recipes and plates, menu prices, food cost % (if the owner allows)
 //   #kitchen/<id>/cost/<id>       one recipe's costing: a price for each ingredient
 //   #kitchen/<id>/sheet           the costing sheet: every ingredient in the recipes, once, with its price
-//   #kitchen/<id>/plate/<id|new>  a plate: several recipes in one menu item
+//   #kitchen/<id>/plate/<id|new>  a plate: recipes and single ingredients ("1 oz tomato slices") in one menu item
 //   #kitchen/<id>/help            ask Joseph for help (kept in his inbox, and emailed through the website's form)
 //   #kitchen/<id>/team            owners: the team, who sees the costing, invites
 //
@@ -24,6 +24,7 @@ import * as photos from '../js/photos.js';
 import { clean as cleanPrices, DEFAULT_TARGET } from '../js/prices.js';
 import { byAisle, itemName, shoppingList } from '../js/shopping.js';
 import { fromPlainText } from '../js/transfer.js';
+import { parseIngredientLine } from '../js/webimport.js';
 import { Frac, adaptedLine, creditLine, formatIngredient, formatYield, scaleRecipe } from '../js/units.js';
 import { busy, confirmBox, field, fill, h, screen, toast } from './ui.js';
 
@@ -82,9 +83,10 @@ function cleanKitchen(v) {
       id: String(p.id || '').slice(0, 40) || Math.random().toString(36).slice(2, 10),
       name: p.name.trim().slice(0, 100),
       menu: Number.isFinite(menu) && menu > 0 && menu < 100000 ? Math.round(menu * 100) / 100 : null,
-      parts: (Array.isArray(p.parts) ? p.parts : []).slice(0, 20)
-        .map((x) => ({ id: String(x?.id || ''), n: Number(x?.n) }))
-        .filter((x) => x.id && Number.isFinite(x.n) && x.n > 0 && x.n < 1000),
+      // a part is a recipe ({ id, n portions }) or a single ingredient line ({ t: '1 oz tomato slices' })
+      parts: (Array.isArray(p.parts) ? p.parts : []).slice(0, 40)
+        .map((x) => (x && typeof x.t === 'string' ? { t: x.t.replace(/\s+/g, ' ').trim().slice(0, 120) } : { id: String(x?.id || ''), n: Number(x?.n) }))
+        .filter((x) => ('t' in x ? !!x.t : x.id && Number.isFinite(x.n) && x.n > 0 && x.n < 1000)),
     });
   }
   return out;
@@ -515,10 +517,23 @@ function costRow(recipe, kitchen) {
   return { c, portions, per, menu, fc: per != null && menu ? foodCostPct(per, menu) : null, suggested: per != null ? suggestedPrice(per, kitchen.target) : null };
 }
 
-/** A plate's cost: its recipes' portion costs times how many portions of each. */
+/** One ingredient on a plate ("1 oz tomato slices") as a costing line: { ing, key, entry, price, cost, state }, or null. */
+function plateLine(text, kitchen) {
+  const ing = parseIngredientLine(text);
+  if (!ing) return null;
+  return costing({ ings: [{ ...ing, group: '' }], yq: null }, kitchen.items).lines[0] || null;
+}
+
+/** A plate's cost: its recipes' portion costs times how many portions of each, plus its single ingredients. */
 function plateCost(plate, byId, kitchen) {
   let total = 0, missing = 0, unknown = 0;
   for (const part of plate.parts) {
+    if ('t' in part) {
+      const l = plateLine(part.t, kitchen);
+      if (l?.state === 'ok') total += l.cost;
+      else if (l?.state !== 'free') missing++;
+      continue;
+    }
     const recipe = byId.get(part.id);
     if (!recipe) { unknown++; continue; }
     const row = costRow(recipe, kitchen);
@@ -578,7 +593,7 @@ async function viewCosting(m) {
     const over = pc.fc != null && pc.fc > k.target;
     return h('tr', null,
       h('th', { scope: 'row' }, h('a', { href: `#${key}/plate/${enc(p.id)}` }, p.name),
-        h('span', { class: 'note jrk-missing' }, p.parts.map((x) => byId.get(x.id)?.title).filter(Boolean).join(' + ') || 'no recipes yet')),
+        h('span', { class: 'note jrk-missing' }, p.parts.map((x) => ('t' in x ? x.t : byId.get(x.id)?.title)).filter(Boolean).join(' + ') || 'nothing on it yet')),
       h('td', { 'data-label': 'Plate cost' }, pc.total > 0 ? money(pc.total) : '—'),
       h('td', { 'data-label': 'Menu price' }, p.menu ? money(p.menu) : '—'),
       h('td', { 'data-label': 'Food cost', class: over ? 'jrk-over' : '' }, pct(pc.fc)),
@@ -598,7 +613,7 @@ async function viewCosting(m) {
         h('thead', null, h('tr', null, ['Recipe', 'Batch', 'Portion', 'Menu price', 'Food cost', `Price at ${k.target}%`].map((t) => h('th', { scope: 'col' }, t)))), table))
       : h('p', { class: 'note' }, 'No recipes to cost yet.'),
     h('h3', null, 'Plates'),
-    h('p', { class: 'note' }, 'A menu item made of several recipes: a burger with its patty, bun, fries and sauce.'),
+    h('p', { class: 'note' }, 'A menu item made of recipes and single ingredients: a burger with its patty recipe, a bun, a slice of cheese, 1 oz of tomato and the fries.'),
     plates.length > 0 && h('div', { class: 'jrk-tablewrap' }, h('table', { class: 'jrk-cost jrk-plates' },
       h('thead', null, h('tr', null, ['Plate', 'Plate cost', 'Menu price', 'Food cost', `Price at ${k.target}%`].map((t) => h('th', { scope: 'col' }, t)))), h('tbody', null, plates))),
     can.costEdit && h('div', { class: 'jrk-row jrk-actions' }, h('a', { class: 'btn line', href: `#${key}/plate/new` }, '+ Add a plate')),
@@ -611,8 +626,12 @@ async function viewCosting(m) {
  */
 function ingredientSheet(recipes, kitchen) {
   const rows = new Map();
-  for (const recipe of recipes) {
-    for (const l of costing(recipe, kitchen.items).lines) {
+  const sources = [
+    ...recipes.map((recipe) => [recipe.title, costing(recipe, kitchen.items).lines]),
+    ...(kitchen.plates || []).map((p) => [`${p.name} (plate)`, p.parts.filter((x) => 't' in x).map((x) => plateLine(x.t, kitchen)).filter(Boolean)]),
+  ];
+  for (const [title, lines] of sources) {
+    for (const l of lines) {
       if (!l.key) continue;
       let row = rows.get(l.key);
       if (!row) {
@@ -620,7 +639,7 @@ function ingredientSheet(recipes, kitchen) {
         row = { key: l.key, name: name.charAt(0).toUpperCase() + name.slice(1), entry: l.entry, ing: l.ing, free: l.state === 'free', recipes: new Set(), units: new Set(), mismatch: new Set() };
         rows.set(l.key, row);
       }
-      row.recipes.add(recipe.title);
+      row.recipes.add(title);
       if (l.ing.unit) row.units.add(l.ing.unit);
       if (l.state === 'noconvert') row.mismatch.add(formatIngredient(l.ing));
     }
@@ -698,7 +717,7 @@ async function viewSheet(m) {
   which.addEventListener('change', () => paint());
   paint();
   frame(m, 'costing', costSwitch(m, 'sheet'),
-    h('p', null, 'Every ingredient in your recipes, once. Enter what you pay and per what (a case price works: per lb, per each, per gallon…); it is used in every recipe with that ingredient.'),
+    h('p', null, 'Every ingredient in your recipes and plates, once. Enter what you pay and per what (a case price works: per lb, per each, per gallon…); it is used in every recipe with that ingredient.'),
     h('div', { class: 'jrk-row jrk-find' }, search, which),
     summary,
     h('div', { class: 'jrk-tablewrap' }, h('table', { class: 'jrk-cost jrk-sheet' },
@@ -786,9 +805,49 @@ async function viewPlate(m, plateId) {
   const pick = h('select', { 'aria-label': 'Add a recipe to the plate', disabled: !can.costEdit }, h('option', { value: '' }, 'Add a recipe…'),
     data.recipes.map((x) => h('option', { value: x.id }, x.title)));
   pick.addEventListener('change', () => { if (pick.value) { plate.parts.push({ id: pick.value, n: 1 }); pick.value = ''; paint(); } });
+  const addIng = h('input', { type: 'text', maxlength: '120', placeholder: '1 oz tomato slices, 1 slice Monterey Jack', disabled: !can.costEdit, 'aria-label': 'Add an ingredient to the plate' });
+  const addIngNow = () => {
+    const t = addIng.value.replace(/\s+/g, ' ').trim();
+    if (!t) { addIng.focus(); return; }
+    if (!parseIngredientLine(t)) { toast('Write it like “1 oz tomato slices”'); return; }
+    plate.parts.push({ t }); addIng.value = ''; paint(); addIng.focus();
+  };
+  addIng.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addIngNow(); } });
+
+  /** A single ingredient on the plate: its line (editable), its price (saved to the price book straight away), its cost. */
+  function ingredientRow(part, i) {
+    const l = plateLine(part.t, data.kitchen);
+    const label = l ? formatIngredient(l.ing) : part.t;
+    const text = h('input', { type: 'text', maxlength: '120', value: part.t, disabled: !can.costEdit, 'aria-label': `Ingredient on the plate: ${label}` });
+    text.addEventListener('change', () => { const t = text.value.replace(/\s+/g, ' ').trim(); if (t) part.t = t; else plate.parts.splice(i, 1); paint(); });
+    const pricing = l && l.state !== 'free' && l.state !== 'noamount';
+    const price = pricing && h('input', { type: 'number', min: '0', step: '0.01', inputmode: 'decimal', value: l.price ? String(l.price.p) : '', placeholder: '$',
+      disabled: !can.costEdit, 'aria-label': `Price of ${l.ing.item}` });
+    const unit = pricing && h('select', { 'aria-label': `Price unit for ${l.ing.item}`, disabled: !can.costEdit },
+      Object.entries(PRICE_UNITS).map(([u, d]) => h('option', { value: u }, `per ${d.label}`)));
+    if (unit) unit.value = l.price?.per || defaultPriceUnit(l.ing, l.entry);
+    const savePrice = async () => {
+      const v = price.value.trim(); const p = parseFloat(v);
+      if (v === '' && !l.price) return;
+      try {
+        await changeKitchen(m, (d) => { if (v === '' || !(p >= 0)) delete d.items[l.key]; else d.items[l.key] = { p: Math.round(p * 10000) / 10000, per: unit.value }; });
+        toast('Price saved'); paint();
+      } catch (err) { toast(err.message); }
+    };
+    if (price) { price.addEventListener('change', savePrice); unit.addEventListener('change', () => { if (price.value.trim()) savePrice(); }); }
+    const status = !l ? 'can’t read this line' : { free: 'not counted (water, salt…)', noamount: 'add an amount, like “1 oz”', noprice: 'needs a price',
+      noconvert: 'this price unit can’t cost it: try another (per each for pieces)' }[l.state];
+    return h('div', { class: 'jrk-row jrk-platepart jrk-plateing' },
+      h('span', { class: 'jrk-ptitle' }, text, status && h('span', { class: 'note jrk-missing' }, status)),
+      pricing && h('span', { class: 'jrk-row jrk-pricein' }, price, unit),
+      h('span', { class: 'jrk-linecost' }, l?.state === 'ok' ? money(l.cost) : '—'),
+      can.costEdit && h('button', { class: 'jrk-link', type: 'button', 'aria-label': `Take ${label} off the plate`, onclick: () => { plate.parts.splice(i, 1); paint(); } }, 'Remove'));
+  }
 
   function paint() {
+    const k = data.kitchen;
     fill(partsBox, plate.parts.map((part, i) => {
+      if ('t' in part) return ingredientRow(part, i);
       const recipe = byId.get(part.id);
       const row = recipe ? costRow(recipe, k) : null;
       const n = h('input', { type: 'number', min: '0.1', step: '0.25', value: String(part.n), disabled: !can.costEdit, 'aria-label': `Portions of ${recipe?.title || 'a recipe'}` });
@@ -799,13 +858,13 @@ async function viewPlate(m, plateId) {
         h('label', { class: 'jrk-row' }, n, 'portions'),
         h('span', { class: 'jrk-linecost' }, row?.per != null ? money(row.per * part.n) : '—'),
         can.costEdit && h('button', { class: 'jrk-link', type: 'button', 'aria-label': `Take ${recipe?.title || 'it'} off the plate`, onclick: () => { plate.parts.splice(i, 1); paint(); } }, 'Remove'));
-    }), !plate.parts.length && h('p', { class: 'note' }, 'Add the recipes that go on the plate, and how many portions of each.'));
+    }), !plate.parts.length && h('p', { class: 'note' }, 'Add the recipes that go on the plate (and how many portions of each), and single ingredients like a slice of cheese or 1 oz of tomato.'));
     const pc = plateCost({ ...plate, menu: Number(menu.value) || null }, byId, k);
     fill(summary,
       h('p', null, h('strong', null, 'Plate cost: '), pc.total > 0 ? money(pc.total) : '—',
         pc.fc != null && [' · ', h('strong', null, 'Food cost: '), h('span', { class: pc.fc > k.target ? 'jrk-over' : '' }, pct(pc.fc))]),
       pc.suggested != null && h('p', null, h('strong', null, `Menu price for ${k.target}% food cost: `), money(pc.suggested)),
-      pc.missing > 0 && h('p', { class: 'note' }, `${plural(pc.missing, 'recipe')} on the plate still ${pc.missing === 1 ? 'needs' : 'need'} prices or portions, so the cost is low.`));
+      pc.missing > 0 && h('p', { class: 'note' }, `${plural(pc.missing, 'item')} on the plate still ${pc.missing === 1 ? 'needs' : 'need'} a price or portions, so the cost is low.`));
   }
   menu.addEventListener('input', paint);
   paint();
@@ -823,7 +882,7 @@ async function viewPlate(m, plateId) {
     } catch (err) { toast(err.message); } finally { busy(save, false); }
   } }, 'Save plate');
   const del = existing && can.costEdit && h('button', { class: 'btn line danger', type: 'button', onclick: async () => {
-    if (!await confirmBox(`Delete the plate “${existing.name}”? The recipes stay.`, 'Delete', true)) return;
+    if (!await confirmBox(`Delete the plate “${existing.name}”? The recipes and prices stay.`, 'Delete', true)) return;
     try { await changeKitchen(m, (d) => { d.plates = d.plates.filter((p) => p.id !== existing.id); }); location.hash = `#${key}/costing`; } catch (err) { toast(err.message); }
   } }, 'Delete plate');
 
@@ -831,7 +890,8 @@ async function viewPlate(m, plateId) {
     h('div', { class: 'jrk-card' }, h('h2', null, existing ? existing.name : 'A new plate'),
       h('div', { class: 'jrk-row' }, field('Plate name', name), field('Menu price', menu)),
       h('h3', null, 'On the plate'), partsBox,
-      can.costEdit && h('div', { class: 'jrk-row jrk-find' }, pick)),
+      can.costEdit && h('div', { class: 'jrk-row jrk-find jrk-plateadd' }, pick),
+      can.costEdit && h('div', { class: 'jrk-row jrk-find jrk-plateadd' }, addIng, h('button', { class: 'btn line', type: 'button', onclick: addIngNow }, 'Add ingredient'))),
     summary,
     can.costEdit ? h('div', { class: 'jrk-row' }, save, h('a', { class: 'btn line', href: `#${key}/costing` }, 'Cancel'), del) : viewOnly(can));
 }

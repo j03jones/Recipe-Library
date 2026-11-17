@@ -1613,6 +1613,31 @@ async def run():
         await rae.wait_for_selector("table.jrk-plates")
         check("plates are listed on Costing with their food cost", "Salsa Sampler" in await rae.inner_text("table.jrk-plates")
               and "25%" in await rae.inner_text("table.jrk-plates") and fake.kitchens[rid]["plates"][0]["parts"] == [{"id": salsa["id"], "n": 2}])
+        # single ingredients on a plate: "1 oz tomato slices" uses the tomato price, a new one is priced right there
+        await rae.click("table.jrk-plates a:has-text('Salsa Sampler')")
+        add_ing = "input[aria-label='Add an ingredient to the plate']"
+        await rae.wait_for_selector(add_ing)
+        await rae.fill(add_ing, "1 oz tomato slices"); await rae.press(add_ing, "Enter")
+        await rae.wait_for_selector(".jrk-plateing")
+        check("a plate can hold a single ingredient, costed from the price book", "$0.13" in await rae.inner_text(".jrk-plateing >> nth=0"))
+        await rae.fill(add_ing, "1 piece Monterey Jack cheese"); await rae.press(add_ing, "Enter")
+        await rae.wait_for_selector(".jrk-plateing >> nth=1")
+        check("one without a price says so", "needs a price" in await rae.inner_text(".jrk-plateing >> nth=1"))
+        await rae.select_option("select[aria-label='Price unit for Monterey Jack cheese']", "each")
+        await rae.fill("input[aria-label='Price of Monterey Jack cheese']", "0.30")
+        await rae.press("input[aria-label='Price of Monterey Jack cheese']", "Tab")
+        await rae.wait_for_selector(".jrk-plateing >> nth=1 >> text=$0.30")
+        check("and can be priced on the plate, into the price book", fake.kitchens[rid]["items"].get("monterey jack cheese") == {"p": 0.3, "per": "each"},
+              fake.kitchens[rid]["items"])
+        await rae.screenshot(path="/tmp/portal_plate.png", full_page=True)
+        check("the plate cost adds the ingredients to the recipes", "$1.4" in await rae.inner_text(".jrk-summary"), await rae.inner_text(".jrk-summary"))
+        await rae.click("button:has-text('Save plate')")
+        await rae.wait_for_selector("table.jrk-plates")
+        check("and the plate keeps them", fake.kitchens[rid]["plates"][0]["parts"] == [{"id": salsa["id"], "n": 2}, {"t": "1 oz tomato slices"}, {"t": "1 piece Monterey Jack cheese"}]
+              and "Monterey Jack" in await rae.inner_text("table.jrk-plates"), fake.kitchens[rid]["plates"][0]["parts"])
+        await rae.goto(K + "/sheet")
+        await rae.wait_for_selector("table.jrk-sheet tbody tr")
+        check("plate ingredients appear on the price sheet too", "Salsa Sampler (plate)" in await rae.inner_text("table.jrk-sheet tr:has-text('Monterey')"))
 
         # ---- the costing sheet: every ingredient in the recipes, once, with its price
         await rae.goto(K + "/sheet")
