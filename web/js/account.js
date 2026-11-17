@@ -36,6 +36,7 @@ const STATUS_LABEL = { inactive: 'Not subscribed', trialing: 'Trial', active: 'A
 /** "Active", "Trial until Nov 30", "Trial ended"... for a restaurant (add_restaurant_trials.sql). */
 const planText = (r) => {
   const p = restaurantPlan(r);
+  if (p.project) return 'Keeps access';
   if (p.trial && p.ended) return 'Trial ended';
   if (p.trial && p.ends) return `Trial until ${p.ends.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
   return STATUS_LABEL[r.subscription_status] || r.subscription_status;
@@ -618,10 +619,10 @@ export async function viewAdmin(ctx) {
       h('option', { value: 'trial14' }, 'Free trial: 14 days'), h('option', { value: 'trial30' }, 'Free trial: 30 days'),
       h('option', { value: 'active' }, 'Active'), h('option', { value: 'inactive' }, 'Not subscribed yet'));
     const pkgSel = h('select', { class: 'full', 'aria-label': 'Package for the new restaurant' },
-      Object.entries(PACKAGES).map(([k, p]) => h('option', { value: k }, `${p.label}: $${p.price}/month, ${p.seats} logins`)));
+      Object.entries(PACKAGES).map(([k, p]) => h('option', { value: k }, `${p.label}: ${p.fee}${p.seats ? `, ${p.seats} logins` : ''}`)));
     pkgSel.value = 'self_service';
     const seatsIn = h('input', { type: 'number', min: '1', max: '50', value: String(PACKAGES.self_service.seats), 'aria-label': 'Logins allowed', style: 'width:5rem' });
-    pkgSel.addEventListener('change', () => { seatsIn.value = String(PACKAGES[pkgSel.value].seats); });
+    pkgSel.addEventListener('change', () => { if (PACKAGES[pkgSel.value].seats) seatsIn.value = String(PACKAGES[pkgSel.value].seats); });
     const emailIn = h('input', { type: 'email', class: 'full', autocomplete: 'off', placeholder: 'owner@restaurant.com (optional)', 'aria-label': 'Owner’s email' });
     const ownerIn = h('input', { type: 'text', class: 'full', maxlength: '80', placeholder: 'Owner’s name (optional)', 'aria-label': 'Owner’s name' });
     const out = h('p', { class: 'note', role: 'status', hidden: true });
@@ -666,6 +667,7 @@ export async function viewAdmin(ctx) {
     if (p.trial && p.ended) return h('p', { class: 'note danger' }, `Trial ended ${LONG.format(p.ends)}: the collection is hidden from its staff.`);
     if (p.trial && p.ends) return h('p', { class: 'muted small' }, `Free trial: ${plural(p.daysLeft, 'day')} left (until ${LONG.format(p.ends)}).`);
     if (p.trial) return h('p', { class: 'muted small' }, 'Free trial with no end date.');
+    if (p.project) return h('p', { class: 'muted small' }, 'Project client: the team reads its recipes and costing as they are, with no monthly plan. Nothing can be added or changed until they choose a monthly package.');
     return null;
   }
 
@@ -765,14 +767,18 @@ export async function viewAdmin(ctx) {
       // the package they bought (add_restaurant_packages.sql): sets their costing (only Managed is kept by you) and logins
       const pkgNow = packageOf(r);
       const pkg = h('select', { 'aria-label': `Package for ${r.name}` },
-        Object.entries(PACKAGES).map(([k, p]) => h('option', { value: k }, `${p.label} ($${p.price}/mo)`)));
+        Object.entries(PACKAGES).map(([k, p]) => h('option', { value: k }, `${p.label} (${p.fee})`)));
       pkg.value = pkgNow;
       pkg.addEventListener('change', async () => {
         const next = PACKAGES[pkg.value];
         const costingChanges = next.costing !== PACKAGES[pkgNow].costing;
-        const seatsTo = next.seats;
-        const ok = await ctx.confirmDialog(`Move ${r.name} to ${next.label} ($${next.price} a month)? `
-          + (costingChanges ? (next.costing === 'managed'
+        const seatsTo = next.seats || Number(r.seat_limit);
+        const ok = await ctx.confirmDialog(`Move ${r.name} to ${next.label} (${next.fee})? `
+          + (next.readOnly ? 'Their team keeps reading its recipes and any costing exactly as it is now, with no monthly plan, but can’t add or change anything, and prices aren’t updated. Their plan status no longer hides the recipes. '
+            : PACKAGES[pkgNow].readOnly ? 'Their team can add and change recipes again while the plan is active. '
+            : '')
+          + (pkg.value === 'advisory' ? 'No app fee while their monthly advisory is active: mark their plan Active, and choose another package if the advisory ends. ' : '')
+          + (!next.readOnly && costingChanges ? (next.costing === 'managed'
             ? 'You keep their ingredient prices: their logins see the costs and set their target food cost %, menu prices and plates, but can’t change prices or import supplier lists. '
             : 'They keep their own ingredient prices again, and can import supplier price lists. ') : '')
           + `Logins allowed: ${seatsTo}${seatsTo !== Number(r.seat_limit) ? ` (was ${r.seat_limit}; you can change it after)` : ''}.`, 'Change package');
@@ -803,7 +809,7 @@ export async function viewAdmin(ctx) {
       const nRecipes = lib.cloud.filter((x) => x.scope === 'restaurant' && x.restaurant_id === r.id).length;
       const card = h('details', { class: 'card restcard', open: openCards.has(r.id) || restaurants.length === 1 || null },
         h('summary', null, h('strong', null, r.name),
-          h('span', { class: `badge${p.on ? '' : ' warn'}` }, planText(r)),
+          h('span', { class: `badge${p.read ? '' : ' warn'}` }, planText(r)),
           h('span', { class: 'muted small' }, plural(nRecipes, 'recipe'))),
         h('div', { class: 'stack' },
         h('div', { class: 'row' },

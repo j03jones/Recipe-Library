@@ -138,6 +138,7 @@ function rights(m, plan) {
     owner,
     add: on,
     edit: (r) => on && r.ours && (owner || r.row.owner_id === deps.me.id),
+    project: plan.project,   // kept after a project: read-only
     costView: seesCosting(m),
     costEdit: (deps.preview || plan.on) && costingLevel(m) === 'edit',
     // ingredient prices and supplier lists: the admin's on managed costing (the default), theirs on self-service
@@ -159,9 +160,11 @@ const selfService = (m) => m.restaurant.costing_tier === 'self_service';
 /** A price, read only: "$2.50 / lb", or a dash. */
 const priceText = (price) => h('span', { class: 'jrk-pricetext' }, price ? `${money(price.p)} / ${PRICE_UNITS[price.per]?.label || price.per}` : '—');
 /** Said where ingredient prices are on managed costing (not to the admin previewing). */
-const managedNote = (m) => !deps.preview && !selfService(m) && h('p', { class: 'note jrk-managed' },
-  'Ingredient prices are kept for you by Jones Ridge Kitchen. If one looks wrong or is missing, ',
-  h('a', { href: `#kitchen/${m.restaurant.id}/help` }, 'ask Joseph'), '.');
+const managedNote = (m) => !deps.preview && !selfService(m) && (restaurantPlan(m.restaurant).project
+  ? h('p', { class: 'note jrk-managed' }, 'These costs are from your project and aren’t updated. To keep them current, choose a monthly package: ',
+    h('a', { href: `#kitchen/${m.restaurant.id}/help` }, 'ask Joseph'), '.')
+  : h('p', { class: 'note jrk-managed' }, 'Ingredient prices are kept for you by Jones Ridge Kitchen. If one looks wrong or is missing, ',
+    h('a', { href: `#kitchen/${m.restaurant.id}/help` }, 'ask Joseph'), '.'));
 
 // ------------------------------------------------------------------ the frame: header, tabs, plan state
 function frame(m, tab, ...body) {
@@ -175,6 +178,8 @@ function frame(m, tab, ...body) {
   fill(deps.root, ...deps.top(key),
     h('h2', { class: 'jrk-kitchen' }, r.name),
     plan.trial && plan.ends && !plan.ended && h('p', { class: 'note' }, `Free trial: ${plural(plan.daysLeft, 'day')} left (until ${DAYDATE.format(plan.ends)}).`),
+    plan.project && !deps.preview && h('p', { class: 'note jrk-project' }, 'Your recipes from your project with Jones Ridge Kitchen, kept for you to read, scale and print. To add recipes or keep your costing up to date, choose a monthly package: ',
+      h('a', { href: `#${key}/help` }, 'ask Joseph'), '.'),
     h('nav', { class: 'jrk-subnav jrk-noprint', 'aria-label': `${r.name}` }, tabs.map(([k, label]) =>
       h('a', { href: `#${key}${k ? `/${k}` : ''}`, 'aria-current': k === tab ? 'page' : null }, label))),
     body);
@@ -193,7 +198,7 @@ function paused(m) {
 /** Loads the kitchen, or paints why not. Returns the data, or null when the screen is already painted. */
 async function ready(m, tab, mine) {
   const plan = restaurantPlan(m.restaurant);
-  if (!plan.on) { if (tab !== 'help') { frame(m, tab, paused(m)); return null; } return { recipes: [], team: new Set(), kitchen: cleanKitchen({}) }; }
+  if (!plan.read) { if (tab !== 'help') { frame(m, tab, paused(m)); return null; } return { recipes: [], team: new Set(), kitchen: cleanKitchen({}) }; }
   frame(m, tab, h('p', { class: 'note' }, 'Loading…'));
   try {
     const data = await load(m);
@@ -598,7 +603,7 @@ function plateCost(plate, byId, kitchen) {
 
 const viewOnly = (can) => (deps.preview
   ? h('p', { class: 'note jrk-adminnote' }, 'Preview: as the admin you can change this restaurant’s prices, menu prices and plates here. They see your changes straight away.')
-  : !can.costEdit && h('p', { class: 'note' }, can.costView ? 'You can see the costing. Ask your owner if you need to change it.' : ''));
+  : !can.costEdit && !can.project && h('p', { class: 'note' }, can.costView ? 'You can see the costing. Ask your owner if you need to change it.' : ''));
 
 /** The costing pages' own switch: recipes and plates, or the ingredient price sheet. */
 const costSwitch = (m, here) => h('div', { class: 'jrk-costswitch', role: 'group', 'aria-label': 'Costing' },
@@ -654,7 +659,9 @@ async function viewCosting(m) {
   const sheet = ingredientSheet(data.recipes, k);
   const toPrice = sheet.filter((x) => !x.free && !x.price).length;
   frame(m, 'costing', costSwitch(m, 'costing'),
-    can.prices || deps.preview
+    can.project && !deps.preview
+      ? [h('p', null, 'What each recipe and plate cost to make when your project with Jones Ridge Kitchen was finished.'), managedNote(m)]
+      : can.prices || deps.preview
       ? h('p', null, 'What each recipe and plate costs to make, from your ingredient prices. Fill in prices on the ',
         h('a', { href: `#${key}/sheet` }, 'ingredient price sheet'), ', or open a recipe to price its ingredients; a price is used in every recipe with that ingredient.')
       : h('p', null, 'What each recipe and plate costs to make, from the ingredient prices Jones Ridge Kitchen keeps for you. Set your target food cost % and menu prices here; the suggested prices follow your target.'),

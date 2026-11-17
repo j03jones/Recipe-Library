@@ -46,6 +46,22 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## App access that comes with consulting (v0.37)
+
+Two more packages on each restaurant card, with no app fee:
+
+- **Monthly advisory**: everything in Managed (you keep their ingredient prices), included with the $750/month
+  advisory plan. It's on while their plan is marked Active, like any package; choose another package if the
+  advisory ends.
+- **Project access**: kept after a one-time project (menu costing and pricing, menu development, kitchen
+  standardization), with no monthly payment. Their team keeps reading, scaling and printing its recipes, and sees
+  any costing as it was left, whatever the plan's status. Nothing can be added or changed and prices aren't
+  updated until they choose a monthly package. The portal says so, with a link to ask Joseph.
+
+The database enforces it (`supabase/add_restaurant_access.sql`): reading a collection needs an active plan or
+project access (`restaurant_readable`); writing needs an active plan and never applies to project access
+(`restaurant_active`). Project access doesn't count as a paid membership.
+
 ## Restaurant packages: Small business, Self-service, Managed (v0.36)
 
 Restaurants now sign up for a package, sold on jonesridgekitchen.com/restaurant-app/ (prices kept in `PACKAGES`,
