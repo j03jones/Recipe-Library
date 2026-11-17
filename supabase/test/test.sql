@@ -217,8 +217,8 @@ select t.expect('staff can delete a recipe they added', t.n($$ select count(*) f
 -- costing is the owner's to share (add_restaurant_team.sql): staff start with no access
 select t.denied('staff without costing access cannot start the price book', format($$ insert into public.restaurant_kitchen(restaurant_id, prices) values (%L, '{}') $$, :'r1'));
 reset role;
-select t.expect('restaurants start on managed costing', (select costing_tier from public.restaurants where id = :'r1') = 'managed');
-update public.restaurants set costing_tier = 'self_service' where id = :'r1';   -- the consultation tier: they keep their own prices
+select t.expect('restaurants start on the Self-service package, keeping their own prices',
+  (select package = 'self_service' and costing_tier = 'self_service' from public.restaurants where id = :'r1'));
 select t.login(:'c1'); set role authenticated;
 insert into public.restaurant_kitchen(restaurant_id, prices) values (:'r1', '{"items": {"flour": {"p": 0.5, "per": "lb"}}}');
 select t.expect('the owner keeps one price book', t.n($$ select count(*) from public.restaurant_kitchen $$) = 1);
@@ -288,14 +288,17 @@ delete from public.recipes where title = 'Owner Slaw';
 select t.expect('the chef can delete anything in a collection', t.n($$ select count(*) from public.recipes where title='Owner Slaw' $$) = 0);
 reset role;
 -- costing tiers (add_costing_tiers.sql): on managed costing the ingredient prices are the admin's
-update public.restaurants set costing_tier = 'managed' where id = :'r1';
+update public.restaurants set package = 'managed' where id = :'r1';
+select t.expect('the Managed package sets managed costing', (select costing_tier from public.restaurants where id = :'r1') = 'managed');
+update public.restaurants set costing_tier = 'self_service' where id = :'r1';
+select t.expect('and the costing follows the package, not a stray change', (select costing_tier from public.restaurants where id = :'r1') = 'managed');
 select t.login(:'c1'); set role authenticated;
 update public.restaurant_kitchen set prices = jsonb_set(jsonb_set(prices, '{items,flour}', '{"p": 9, "per": "lb"}'), '{target}', '25') where restaurant_id = :'r1';
-update public.restaurants set costing_tier = 'self_service' where id = :'r1';
+update public.restaurants set package = 'self_service' where id = :'r1';
 reset role;
 select t.expect('on managed costing the owner cannot change ingredient prices', (select prices #>> '{items,flour,p}' from public.restaurant_kitchen where restaurant_id = :'r1') = '0.5');
 select t.expect('but can change their target food cost %', (select prices ->> 'target' from public.restaurant_kitchen where restaurant_id = :'r1') = '25');
-select t.expect('and cannot change the tier themselves', (select costing_tier from public.restaurants where id = :'r1') = 'managed');
+select t.expect('and cannot change the package themselves', (select package = 'managed' and costing_tier = 'managed' from public.restaurants where id = :'r1'));
 select t.login(:'st1'); set role authenticated;
 update public.restaurant_kitchen set prices = jsonb_set(prices, '{items}', '{}') where restaurant_id = :'r1';
 reset role;
@@ -304,11 +307,30 @@ select t.login(:'admin_id'); set role authenticated;
 update public.restaurant_kitchen set prices = jsonb_set(prices, '{items,flour}', '{"p": 0.6, "per": "lb"}') where restaurant_id = :'r1';
 reset role;
 select t.expect('the admin keeps their prices for them', (select prices #>> '{items,flour,p}' from public.restaurant_kitchen where restaurant_id = :'r1') = '0.6');
+-- the Small business package: 50 recipes of the team's own (add_restaurant_packages.sql)
+update public.restaurants set package = 'small' where id = :'r1';
+insert into public.recipes(owner_id, restaurant_id, scope, title, body)
+  select :'c1', :'r1', 'restaurant', 'Truck ' || g, '{}' from generate_series(1, 50 - (select count(*) from public.recipes r
+    where r.restaurant_id = :'r1' and r.scope = 'restaurant' and not public.is_admin_user(r.owner_id))) g;
+select t.login(:'c1'); set role authenticated;
+select t.denied('Small business holds 50 recipes of their own', format($$ insert into public.recipes(owner_id, restaurant_id, scope, title, body) values (%L, %L, 'restaurant', 'One too many', '{}') $$, :'c1', :'r1'));
+reset role;
+select t.login(:'admin_id'); set role authenticated;
+insert into public.recipes(owner_id, restaurant_id, scope, title, body) values (:'admin_id', :'r1', 'restaurant', 'Chef extra', '{}');
+reset role;
+select t.expect('the chef can still add to it', t.n($$ select count(*) from public.recipes where title = 'Chef extra' $$) = 1);
+update public.restaurants set package = 'self_service' where id = :'r1';
+select t.login(:'c1'); set role authenticated;
+insert into public.recipes(owner_id, restaurant_id, scope, title, body) values (:'c1', :'r1', 'restaurant', 'Room to grow', '{}');
+reset role;
+select t.expect('moving up to Self-service lifts the cap', t.n($$ select count(*) from public.recipes where title = 'Room to grow' $$) = 1);
+delete from public.recipes where restaurant_id = :'r1' and (title like 'Truck %' or title in ('Chef extra', 'Room to grow'));
+update public.restaurants set package = 'managed' where id = :'r2';
 select t.login(:'c2'); set role authenticated;
 insert into public.restaurant_kitchen(restaurant_id, prices) values (:'r2', '{"items": {"salt": {"p": 1, "per": "lb"}}, "target": 30}');
 reset role;
 select t.expect('a managed restaurant starting its price book starts with no prices of its own',
-  coalesce((select prices -> 'items' = '{}'::jsonb and prices ->> 'target' = '30' from public.restaurant_kitchen where restaurant_id = :'r2'), true));
+  (select prices -> 'items' = '{}'::jsonb and prices ->> 'target' = '30' from public.restaurant_kitchen where restaurant_id = :'r2'));
 select t.login(:'c1'); set role authenticated;
 select t.expect('owner can list the team', t.n($$ select count(*) from public.restaurant_members $$) = 2);
 select t.denied('last owner cannot be removed', format($$ select public.remove_member(%L, %L) $$, :'r1', :'c1'));

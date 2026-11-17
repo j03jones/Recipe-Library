@@ -17,7 +17,7 @@
 // they added, owners any the team added. Costing is the owner's: each staff member has none, view or edit.
 import * as cloud from '../js/cloud.js';
 import { detect } from '../js/allergens.js';
-import { restaurantPlan } from '../js/clientcore.js';
+import { PACKAGES, packageOf, restaurantPlan } from '../js/clientcore.js';
 import { toRecord, fromRecord } from '../js/model.js';
 import { PRICE_UNITS, costing, defaultPriceUnit, foodCostPct, nutrition, suggestedPrice } from '../js/nutrition.js';
 import { macroDetails, nutrientTiles } from '../js/nutritionui.js';
@@ -144,6 +144,16 @@ function rights(m, plan) {
     prices: (deps.preview || plan.on) && costingLevel(m) === 'edit' && (deps.preview || selfService(m)),
   };
 }
+/** The package's cap on recipes the team adds itself (Small business: 50), and how many they have: { cap, ours, full }. */
+function recipeRoom(m, data) {
+  const cap = PACKAGES[packageOf(m.restaurant)].recipes;
+  const ours = data.recipes.filter((x) => x.ours).length;
+  return { cap, ours, full: !!cap && ours >= cap && !deps.preview };
+}
+/** Said on a Small business list: how many of the 50 are used, and what to do when they're full. */
+const roomNote = (m, room) => room.cap && h('p', { class: `note${room.full ? ' jrk-newnote' : ''}` },
+  room.full ? h('strong', null, `You have ${room.cap} recipes of your own, the most on the ${PACKAGES[packageOf(m.restaurant)].label} plan. `) : `${room.ours} of ${room.cap} recipes of your own on the ${PACKAGES[packageOf(m.restaurant)].label} plan (recipes from Jones Ridge Kitchen don’t count). `,
+  room.full ? ['To add more, move to Self-service: ', h('a', { href: `#kitchen/${m.restaurant.id}/help` }, 'ask Joseph'), '.'] : '');
 /** Costing tiers (add_costing_tiers.sql): 'managed' (Jones Ridge Kitchen keeps the ingredient prices) or 'self_service'. */
 const selfService = (m) => m.restaurant.costing_tier === 'self_service';
 /** A price, read only: "$2.50 / lb", or a dash. */
@@ -225,6 +235,7 @@ async function viewList(m) {
   const key = `kitchen/${r.id}`;
   const can = rights(m, restaurantPlan(r));
   const list = data.recipes;
+  const room = recipeRoom(m, data);   // Small business: 50 recipes of their own
   const fresh = list.filter((x) => x.isNew);
   const cats = [...new Set(list.flatMap((x) => x.categories))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   let q = '';
@@ -256,7 +267,8 @@ async function viewList(m) {
   frame(m, '',
     fresh.length > 0 && h('p', { class: 'jrk-newnote', role: 'status' }, h('strong', null, `${plural(fresh.length, 'new recipe')} from Jones Ridge Kitchen`), ' since your last visit. ',
       h('button', { class: 'jrk-link', type: 'button', onclick: () => { if (whose) { whose.value = 'new'; paint(); } } }, 'Show them')),
-    can.add && h('div', { class: 'jrk-row jrk-actions' }, h('a', { class: 'btn', href: `#${key}/new` }, '+ Add a recipe')),
+    can.add && !room.full && h('div', { class: 'jrk-row jrk-actions' }, h('a', { class: 'btn', href: `#${key}/new` }, '+ Add a recipe')),
+    can.add && roomNote(m, room),
     list.length
       ? [h('div', { class: 'jrk-row jrk-find' }, search, cat, whose), count, out]
       : h('div', { class: 'jrk-card' }, h('h2', null, 'No recipes yet'),
@@ -384,7 +396,7 @@ async function viewRecipe(m, recipeId) {
         h('button', { class: 'btn', type: 'button', onclick: () => window.print() }, 'Print'),
         h('button', { class: 'btn line', type: 'button', onclick: () => { addToPrep(r.id, base.id, 1); toast('On the prep list'); } }, 'Add to prep list'),
         can.edit(base) && h('a', { class: 'btn line', href: `#${key}/edit/${enc(base.id)}` }, 'Edit'),
-        !base.ours && can.add && h('a', { class: 'btn line', href: `#${key}/new/${enc(base.id)}` }, 'Make our own version'),
+        !base.ours && can.add && !recipeRoom(m, data).full && h('a', { class: 'btn line', href: `#${key}/new/${enc(base.id)}` }, 'Make our own version'),
         del)));
   deps.root.scrollIntoView({ block: 'start' });
 }
@@ -409,6 +421,11 @@ async function viewEditor(m, recipeId, copyOf = null) {
   const can = rights(m, restaurantPlan(r));
   const existing = recipeId ? data.recipes.find((x) => x.id === recipeId) : null;
   const from = copyOf ? data.recipes.find((x) => x.id === copyOf) : null;
+  if (!recipeId && can.add && recipeRoom(m, data).full) {
+    frame(m, '', h('div', { class: 'jrk-card' }, h('h2', null, 'Your recipe book is full'), roomNote(m, recipeRoom(m, data)),
+      h('p', null, h('a', { href: `#${key}` }, '← All recipes'))));
+    return;
+  }
   if ((recipeId && (!existing || !can.edit(existing))) || (!recipeId && !can.add)) {
     frame(m, '', h('div', { class: 'jrk-card' }, h('h2', null, 'You can’t change this recipe'),
       h('p', null, existing && !existing.ours ? 'Recipes from Jones Ridge Kitchen are kept by Joseph. Use “Make our own version” to start your own from it.' : 'Ask your restaurant’s owner, or contact Jones Ridge Kitchen.'),
@@ -1079,7 +1096,7 @@ async function viewTeam(m) {
     try { team = await cloud.restaurantTeam(r.id); } catch (err) { fill(list, h('p', { class: 'jrk-msg' }, `Could not load the team: ${err.message}`)); return; }
     if (mine !== screen.id) return;
     fill(list,
-      h('p', { class: 'note' }, `${team.length} of ${r.seat_limit} logins in use.`),
+      h('p', { class: 'note' }, `${PACKAGES[packageOf(r)].label} package · ${team.length} of ${r.seat_limit} logins in use. To change your package, `, h('a', { href: `#kitchen/${r.id}/help` }, 'ask Joseph'), '.'),
       h('ul', { class: 'jrk-list jrk-teamlist' }, team.map((p) => {
         const me = p.user_id === deps.me.id;
         const level = p.member_role === 'owner' ? null : h('select', { 'aria-label': `Costing for ${p.display_name || p.email}` },
