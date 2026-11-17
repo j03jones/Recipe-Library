@@ -393,6 +393,10 @@ class Fake:
                         body.get("owner_id") == user["id"] and self.member_of(user, body.get("restaurant_id"))
                         and self.on_plan(self.restaurants[body["restaurant_id"]])):
                     return await ok({"message": "new row violates row-level security policy"}, 403)
+                if body.get("scope") == "restaurant" and user["role"] != "admin" and self.restaurants[body["restaurant_id"]].get("package") == "small" and sum(
+                        1 for r in self.recipes.values() if r["scope"] == "restaurant" and r["restaurant_id"] == body["restaurant_id"]
+                        and not any(u["id"] == r["owner_id"] and u["role"] == "admin" for u in self.users.values())) >= 50:
+                    return await ok({"message": "The Small business plan holds 50 recipes of your own. To add more, move to Self-service: ask Joseph."}, 400)
                 private = [r for r in self.recipes.values() if r["owner_id"] == user["id"] and r["scope"] == "private"]
                 if user["role"] != "admin" and len(private) >= 2 and not any(m["user_id"] == user["id"] for m in self.members):
                     return await ok({"message": "Free plan limit reached (2 recipes)"}, 400)
@@ -1653,6 +1657,31 @@ async def run():
         await joe.click("dialog.jrk-dialog button:has-text('Delete')")
         await joe.wait_for_selector(".jrk-recipes")
         check("and delete the one they added", not any(x["title"] == "Line Slaw" for x in fake.recipes.values()))
+
+        # the Small business package (v0.36): 50 recipes of the team's own, then the book is full
+        fake.restaurants[rid]["package"] = "small"
+        await rae.goto(K); await rae.reload()
+        await rae.wait_for_selector(".jrk-recipes")
+        check("Small business shows how many of its 50 recipes are used", "of 50 recipes of your own" in await rae.inner_text("#jrk-portal"))
+        rae_id = fake.users["rae@maple.test"]["id"]
+        filler = []
+        while sum(1 for x in fake.recipes.values() if x["scope"] == "restaurant" and x["restaurant_id"] == rid and x["owner_id"] != fake.users["chef@example.com"]["id"]) < 50:
+            fid = str(uuid.uuid4()); filler.append(fid)
+            fake.recipes[fid] = dict(id=fid, owner_id=rae_id, scope="restaurant", status="approved", restaurant_id=rid, title=f"Truck {len(filler)}",
+                                     categories=[], body={"ings": [], "dir": ""}, author_name=None, review_note=None, source_recipe_id=None)
+        await rae.goto(K + "/costing"); await rae.goto(K); await rae.reload()
+        await rae.wait_for_selector(".jrk-recipes")
+        ptext = await rae.inner_text("#jrk-portal")
+        check("a full Small business book says so and hides Add a recipe", "the most on the Small business plan" in ptext
+              and await rae.locator("a:has-text('+ Add a recipe')").count() == 0, ptext[:300])
+        await rae.goto(K + "/new")
+        await rae.wait_for_selector("h2:has-text('Your recipe book is full')")
+        await rae.screenshot(path="/tmp/portal_small_full.png", full_page=True)
+        for fid in filler:
+            fake.recipes.pop(fid, None)
+        fake.restaurants[rid]["package"] = "self_service"
+        await rae.goto(K + "/costing"); await rae.goto(K); await rae.reload()
+        await rae.wait_for_selector(".jrk-recipes")
 
         # costing tiers (v0.35): on managed costing the team sees costs, sets its target, can't change prices
         check("a new restaurant starts on the Self-service package", fake.restaurants[rid]["package"] == "self_service" and fake.restaurants[rid]["costing_tier"] == "self_service")

@@ -307,6 +307,24 @@ select t.login(:'admin_id'); set role authenticated;
 update public.restaurant_kitchen set prices = jsonb_set(prices, '{items,flour}', '{"p": 0.6, "per": "lb"}') where restaurant_id = :'r1';
 reset role;
 select t.expect('the admin keeps their prices for them', (select prices #>> '{items,flour,p}' from public.restaurant_kitchen where restaurant_id = :'r1') = '0.6');
+-- the Small business package: 50 recipes of the team's own (add_restaurant_packages.sql)
+update public.restaurants set package = 'small' where id = :'r1';
+insert into public.recipes(owner_id, restaurant_id, scope, title, body)
+  select :'c1', :'r1', 'restaurant', 'Truck ' || g, '{}' from generate_series(1, 50 - (select count(*) from public.recipes r
+    where r.restaurant_id = :'r1' and r.scope = 'restaurant' and not public.is_admin_user(r.owner_id))) g;
+select t.login(:'c1'); set role authenticated;
+select t.denied('Small business holds 50 recipes of their own', format($$ insert into public.recipes(owner_id, restaurant_id, scope, title, body) values (%L, %L, 'restaurant', 'One too many', '{}') $$, :'c1', :'r1'));
+reset role;
+select t.login(:'admin_id'); set role authenticated;
+insert into public.recipes(owner_id, restaurant_id, scope, title, body) values (:'admin_id', :'r1', 'restaurant', 'Chef extra', '{}');
+reset role;
+select t.expect('the chef can still add to it', t.n($$ select count(*) from public.recipes where title = 'Chef extra' $$) = 1);
+update public.restaurants set package = 'self_service' where id = :'r1';
+select t.login(:'c1'); set role authenticated;
+insert into public.recipes(owner_id, restaurant_id, scope, title, body) values (:'c1', :'r1', 'restaurant', 'Room to grow', '{}');
+reset role;
+select t.expect('moving up to Self-service lifts the cap', t.n($$ select count(*) from public.recipes where title = 'Room to grow' $$) = 1);
+delete from public.recipes where restaurant_id = :'r1' and (title like 'Truck %' or title in ('Chef extra', 'Room to grow'));
 update public.restaurants set package = 'managed' where id = :'r2';
 select t.login(:'c2'); set role authenticated;
 insert into public.restaurant_kitchen(restaurant_id, prices) values (:'r2', '{"items": {"salt": {"p": 1, "per": "lb"}}, "target": 30}');

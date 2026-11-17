@@ -111,12 +111,13 @@ export function labelFor(meal, client, madeOn) {
  */
 /**
  * The packages restaurants sign up for (jonesridgekitchen.com/restaurant-app/, supabase/add_restaurant_packages.sql).
- * Only Managed has Jones Ridge Kitchen keep the ingredient prices; seats are the logins each comes with.
+ * Only Managed has Jones Ridge Kitchen keep the ingredient prices; seats are the logins each comes with; recipes caps the
+ * recipes the team adds itself (the chef's don't count; null: no cap but the database's 2,000).
  */
 export const PACKAGES = {
-  small: { label: 'Small business', price: 59, seats: 2, costing: 'self_service', blurb: 'Food trucks and small vendors: recipes and costing they keep themselves.' },
-  self_service: { label: 'Self-service', price: 129, seats: 3, costing: 'self_service', blurb: 'Recipes and costing the team keeps itself.' },
-  managed: { label: 'Managed', price: 249, seats: 5, costing: 'managed', blurb: 'You keep their ingredient prices; they see the costs and set their target %.' },
+  small: { label: 'Small business', price: 59, seats: 1, recipes: 50, costing: 'self_service', blurb: 'Food trucks and small vendors: one login, up to 50 recipes of their own, costing they keep themselves.' },
+  self_service: { label: 'Self-service', price: 129, seats: 3, recipes: null, costing: 'self_service', blurb: 'Recipes and costing the team keeps itself.' },
+  managed: { label: 'Managed', price: 249, seats: 5, recipes: null, costing: 'managed', blurb: 'You keep their ingredient prices; they see the costs and set their target %.' },
 };
 /** A restaurant's package key (older rows without one: from its costing). */
 export const packageOf = (r) => (PACKAGES[r?.package] ? r.package : r?.costing_tier === 'managed' ? 'managed' : 'self_service');

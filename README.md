@@ -53,13 +53,15 @@ Restaurants now sign up for a package, sold on jonesridgekitchen.com/restaurant-
 
 | Package | Price | Logins | Costing |
 |---|---|---|---|
-| Small business (food trucks, small vendors) | $59/mo | 2 | self-service |
+| Small business (food trucks, small vendors) | $59/mo | 1, and up to 50 recipes of their own | self-service |
 | Self-service | $129/mo | 3 | self-service |
 | Managed (premium) | $249/mo | 5 | Jones Ridge Kitchen keeps the ingredient prices |
 
 The model is flipped from v0.35: self-service is the default, and Managed is the premium package because it's the
 admin's time. The admin sets the package on each restaurant card (and when adding one); it sets the costing tier and
-the logins, and asks first. Owners see their package on the portal's Team tab. Payments aren't taken yet: the
+the logins, and asks first. Owners see their package on the portal's Team tab.
+Small business holds 50 recipes the team adds itself (the chef’s don’t count), enforced by the database; the portal
+shows the count and, when full, points them to Self-service. Payments aren't taken yet: the
 website's sign-up asks for a free trial, which the admin starts from Admin tools.
 
 Database change: `supabase/add_restaurant_packages.sql` (`restaurants.package`, a trigger that keeps
