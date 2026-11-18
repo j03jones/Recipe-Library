@@ -1923,6 +1923,30 @@ async def run():
         check("the imported price is saved for the restaurant, with its supplier",
               fake.kitchens[rid]["items"].get("cilantro", {}).get("p") == 0.5 and fake.kitchens[rid]["items"]["cilantro"].get("src", "").endswith("#5")
               and await rae.input_value("input[aria-label='Price of Cilantro']") == "0.5", fake.kitchens[rid]["items"].get("cilantro"))
+        # an item imported under another name is linked to the recipe ingredient it is for, from either side
+        sup2 = Path(tempfile.mkdtemp()) / "purveyor2.csv"
+        sup2.write_text("Item,Description,Pack,Size,Case Price\n7,BEEF FLAT CHOICE,1,40 LB,$200.00\n")
+        await rae.set_input_files(".jrk-supimport input[type=file]", str(sup2))
+        await rae.wait_for_selector("#jrk-portal .supplier .suprow")
+        await rae.click("#jrk-portal .suptools button.primary")
+        await rae.wait_for_selector("#jrk-portal .supplier", state="detached")
+        await rae.wait_for_selector("details.jrk-prices select[aria-label='Use the price of beef for']")
+        await rae.select_option("select[aria-label='Use the price of beef for']", label="Brisket")
+        await rae.wait_for_selector("table.jrk-sheet tr.linked:has-text('Brisket')")
+        linked = await rae.inner_text("table.jrk-sheet tr.linked:has-text('Brisket')")
+        check("a price list item can be chosen for a recipe ingredient", "$5.00" in linked and "price of “beef”" in linked
+              and fake.kitchens[rid].get("links") == {"brisket": "beef"}, [linked, fake.kitchens[rid].get("links")])
+        await rae.goto(K + "/costing"); await rae.wait_for_selector("table.jrk-cost")
+        check("and the recipes are costed at that price", "$" in await rae.inner_text("table.jrk-cost tr:has-text('Smoked Brisket')"))
+        await rae.goto(K + "/sheet"); await rae.wait_for_selector("table.jrk-sheet tr.linked")
+        await rae.click("button[aria-label='Unlink Brisket from beef']")
+        await rae.wait_for_selector("input[aria-label='Match Brisket to a price list item']")
+        check("and unlinked again", fake.kitchens[rid].get("links") == {}, fake.kitchens[rid].get("links"))
+        await rae.fill("input[aria-label='Match Brisket to a price list item']", "beef")
+        await rae.dispatch_event("input[aria-label='Match Brisket to a price list item']", "change")
+        await rae.wait_for_selector("table.jrk-sheet tr.linked:has-text('Brisket')")
+        check("or matched by typing a price list item next to the ingredient", fake.kitchens[rid].get("links") == {"brisket": "beef"})
+        await rae.screenshot(path="/tmp/portal_links.png", full_page=True)
 
         # ---- a photo on one of the team's recipes
         import base64

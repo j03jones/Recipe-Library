@@ -400,6 +400,10 @@ price list exported as CSV from Sysco, SGC, Ben E. Keith, US Foods or any other 
   "VINEGAR RED WINE" is not red wine. On a restaurant's costing sheet, its own ingredient names are matched first
   ("Butter Solid Unsalted" to its "butter"), and the food chosen for each product is remembered for the whole team,
   so the next order from that purveyor matches itself.
+- Matching recipe ingredients to the price list (v0.39): on a restaurant's Ingredient prices sheet, an ingredient with
+  no price can be matched to any item on the price list (type it under the price, or pick the ingredient from
+  "Prices not used in any recipe"), and every recipe and plate is costed at that item's price, shown as
+  "price of …" with an Unlink. A price typed for the ingredient itself replaces its link.
 - You review everything before anything is saved. Saved prices remember the supplier, item number and date, shown
   in the price book.
 

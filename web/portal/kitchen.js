@@ -69,10 +69,28 @@ function toRecipe(row) {
   } catch { return null; }
 }
 
+/**
+ * The prices costing uses: the kitchen's own, plus a recipe ingredient linked to a price list item taking that
+ * item's price ({ ...price, via: item }). A price typed for the ingredient itself wins over its link.
+ * Kept on the price book as `priced`, not saved (not enumerable).
+ */
+function setPriced(k) {
+  const priced = { ...k.items };
+  for (const [key, target] of Object.entries(k.links || {})) if (!priced[key] && k.items[target]) priced[key] = { ...k.items[target], via: target };
+  Object.defineProperty(k, 'priced', { value: priced, enumerable: false, configurable: true, writable: true });
+  return k;
+}
+
 /** The kitchen's price book, tidied: prices.js's shape, plus portions per recipe and plates. */
 function cleanKitchen(v) {
   const out = cleanPrices(v);
   const obj = v && typeof v === 'object' ? v : {};
+  out.links = {};
+  if (obj.links && typeof obj.links === 'object' && !Array.isArray(obj.links)) {
+    for (const [key, target] of Object.entries(obj.links).slice(0, 3000)) {
+      if (key && key.length <= 80 && typeof target === 'string' && target && target.length <= 80 && target !== key) out.links[key] = target;
+    }
+  }
   out.portions = {};
   if (obj.portions && typeof obj.portions === 'object' && !Array.isArray(obj.portions)) {
     for (const [id, n] of Object.entries(obj.portions).slice(0, 5000)) { const x = Number(n); if (Number.isFinite(x) && x > 0 && x < 100000) out.portions[id] = Math.round(x * 100) / 100; }
@@ -97,7 +115,7 @@ function cleanKitchen(v) {
         .filter((x) => ('t' in x ? !!x.t : x.id && Number.isFinite(x.n) && x.n > 0 && x.n < 1000)),
     });
   }
-  return out;
+  return setPriced(out);
 }
 
 async function load(m, fresh = false) {
@@ -127,6 +145,7 @@ async function changeKitchen(m, fn) {
   const rid = m.restaurant.id;
   const latest = cleanKitchen(await cloud.loadKitchen(rid));
   fn(latest);
+  setPriced(latest);
   await cloud.saveKitchen(rid, latest);
   const data = cache.get(rid);
   if (data) data.kitchen = latest;
@@ -373,7 +392,7 @@ async function viewRecipe(m, recipeId) {
     } }, 'Remove photo'));
   const credit = [creditLine(base), adaptedLine(base)].filter(Boolean).join(' · ');
   const allergens = allergensOf(base);
-  const c = can.costView ? costing(base, data.kitchen.items) : null;
+  const c = can.costView ? costing(base, data.kitchen.priced) : null;
   const portions = c ? data.kitchen.portions[base.id] || c.servings || 0 : 0;
   const perPortion = c && portions ? c.total / portions : null;
 
@@ -543,7 +562,7 @@ async function viewPrep(m) {
       for (const [recipe, f] of picks) {
         let scaled = recipe;
         try { scaled = scaleRecipe(recipe, f).recipe; } catch { /* as written */ }
-        const c = costing(scaled, data.kitchen.items);
+        const c = costing(scaled, data.kitchen.priced);
         total += c.total; missing += c.missing;
       }
     }
@@ -572,7 +591,7 @@ async function viewPrep(m) {
 
 // ------------------------------------------------------------------ Costing (the owner decides who sees it)
 function costRow(recipe, kitchen) {
-  const c = costing(recipe, kitchen.items);
+  const c = costing(recipe, kitchen.priced);
   const portions = kitchen.portions[recipe.id] || c.servings || 0;
   const per = portions && c.total > 0 ? c.total / portions : null;
   const menu = kitchen.menu[recipe.id] || null;
@@ -583,7 +602,7 @@ function costRow(recipe, kitchen) {
 function plateLine(text, kitchen) {
   const ing = parseIngredientLine(text);
   if (!ing) return null;
-  return costing({ ings: [{ ...ing, group: '' }], yq: null }, kitchen.items).lines[0] || null;
+  return costing({ ings: [{ ...ing, group: '' }], yq: null }, kitchen.priced).lines[0] || null;
 }
 
 /** A plate's cost: its recipes' portion costs times how many portions of each, plus its single ingredients. */
@@ -693,7 +712,7 @@ async function viewCosting(m) {
 function ingredientSheet(recipes, kitchen) {
   const rows = new Map();
   const sources = [
-    ...recipes.map((recipe) => [recipe.title, costing(recipe, kitchen.items).lines]),
+    ...recipes.map((recipe) => [recipe.title, costing(recipe, kitchen.priced).lines]),
     ...(kitchen.plates || []).map((p) => [`${p.name} (plate)`, p.parts.filter((x) => 't' in x).map((x) => plateLine(x.t, kitchen)).filter(Boolean)]),
   ];
   for (const [title, lines] of sources) {
@@ -710,7 +729,7 @@ function ingredientSheet(recipes, kitchen) {
       if (l.state === 'noconvert') row.mismatch.add(formatIngredient(l.ing));
     }
   }
-  return [...rows.values()].map((r) => ({ ...r, price: kitchen.items[r.key] || null }))
+  return [...rows.values()].map((r) => ({ ...r, price: kitchen.priced[r.key] || null }))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }
 
@@ -758,12 +777,30 @@ async function viewSheet(m) {
     const v = String(value).trim();
     const p = parseFloat(v);
     try {
-      await changeKitchen(m, (d) => { if (v === '' || !(p >= 0)) delete d.items[key]; else d.items[key] = { p: Math.round(p * 10000) / 10000, per }; });
+      await changeKitchen(m, (d) => {
+        if (v === '' || !(p >= 0)) delete d.items[key];
+        else { d.items[key] = { p: Math.round(p * 10000) / 10000, per }; delete d.links[key]; }   // its own price replaces a link
+      });
       rows = ingredientSheet(data.recipes, cache.get(r.id).kitchen);
       toast(v === '' ? 'Price removed' : 'Price saved');
       paint(key);
     } catch (err) { toast(err.message); }
   }
+
+  /** Cost a recipe ingredient at a price list item's price ("roma tomato" at the "tomato" price), or unlink it. */
+  async function setLink(key, target) {
+    try {
+      await changeKitchen(m, (d) => {
+        if (target) { d.links[key] = target; delete d.items[key]; } else delete d.links[key];
+      });
+      rows = ingredientSheet(data.recipes, cache.get(r.id).kitchen);
+      const name = rows.find((x) => x.key === key)?.name || key;
+      toast(target ? `${name} now uses the price of ${target}` : `${name} unlinked`);
+      paint();
+    } catch (err) { toast(err.message); }
+  }
+  const listId = `jrk-pricelist-${r.id}`;
+  const priceList = h('datalist', { id: listId });
 
   function paint(focusKey = null) {
     const q = search.value.trim().toLowerCase();
@@ -772,8 +809,25 @@ async function viewSheet(m) {
     const costable = rows.filter((x) => !x.free);
     const priced = costable.filter((x) => x.price).length;
     summary.textContent = `${plural(costable.length, 'ingredient')} in your recipes · ${priced} priced · ${costable.length - priced} ${can.prices ? 'to go' : 'without a price yet'}`;
+    const items = cache.get(r.id)?.kitchen.items || {};
+    fill(priceList, Object.keys(items).sort().map((key) => h('option', { value: key }, `${money(items[key].p)} / ${PRICE_UNITS[items[key].per]?.label || items[key].per}${items[key].src ? ` · ${items[key].src}` : ''}`)));
     fill(body, shown.length ? shown.map((x) => {
       const disabled = !can.prices || x.free;
+      // linked to a price list item: show that price and where it comes from
+      if (x.price?.via) {
+        return h('tr', { 'data-key': x.key, class: 'priced linked' },
+          h('th', { scope: 'row' }, x.name, h('span', { class: 'note jrk-missing' }, `${[...x.recipes].slice(0, 3).join(', ')}${x.recipes.size > 3 ? '…' : ''}`)),
+          h('td', { 'data-label': 'Price' }, priceText(x.price), h('span', { class: 'note jrk-missing jrk-via' }, `price of “${x.price.via}”${x.price.src ? ` · ${x.price.src}` : ''}`)),
+          h('td', { 'data-label': '' }, can.prices && h('button', { class: 'jrk-link', type: 'button', 'aria-label': `Unlink ${x.name} from ${x.price.via}`,
+            onclick: () => setLink(x.key, '') }, 'Unlink')));
+      }
+      const match = !x.free && !x.price && can.prices && Object.keys(items).length > 0
+        && h('input', { type: 'text', list: listId, autocomplete: 'off', class: 'jrk-match', placeholder: 'or match to a price list item',
+          'aria-label': `Match ${x.name} to a price list item`, onchange: (e) => {
+            const v = e.target.value.trim().toLowerCase();
+            if (Object.hasOwn(items, v)) setLink(x.key, v);
+            else if (v) toast('Pick an item from your price list');
+          } });
       const price = h('input', { type: 'number', min: '0', step: '0.01', inputmode: 'decimal', value: x.price ? String(x.price.p) : '', placeholder: x.free ? '' : '$',
         disabled, 'aria-label': `Price of ${x.name}` });
       const unit = h('select', { 'aria-label': `Price unit for ${x.name}`, disabled },
@@ -788,16 +842,22 @@ async function viewSheet(m) {
             + (x.units.size ? ` · used in ${[...x.units].join(', ')}` : '')),
           x.free && h('span', { class: 'note jrk-missing' }, 'not counted (water, salt…)'),
           x.mismatch.size > 0 && h('span', { class: 'note jrk-missing jrk-over' }, `can’t cost “${[...x.mismatch][0]}” at this unit: try another`)),
-        h('td', { 'data-label': 'Price' }, can.prices ? h('span', { class: 'jrk-row jrk-pricein' }, price, unit) : priceText(x.price)),
+        h('td', { 'data-label': 'Price' }, can.prices ? h('span', { class: 'jrk-row jrk-pricein' }, price, unit) : priceText(x.price), match),
         h('td', { 'data-label': '' }, x.price && can.prices && h('button', { class: 'jrk-link', type: 'button', 'aria-label': `Remove the price of ${x.name}`,
           onclick: () => setPrice(x.key, '', unit.value) }, 'Remove')));
     }) : h('tr', null, h('td', { colspan: '3', class: 'note' }, rows.length ? 'Nothing matches.' : 'Add recipes first: their ingredients appear here.')));
     // prices kept for ingredients no recipe uses any more
-    const used = new Set(rows.map((x) => x.key));
-    const unused = Object.entries(cache.get(r.id)?.kitchen.items || {}).filter(([key]) => !used.has(key));
-    fill(extra, unused.length > 0 && h('details', { class: 'jrk-card jrk-prices' }, h('summary', null, h('strong', null, `Prices not used in any recipe (${unused.length})`)),
-      h('ul', { class: 'jrk-list' }, unused.map(([key, p]) => h('li', null, h('span', null, key),
+    // a price list item a recipe ingredient is linked to is in use too
+    const used = new Set([...rows.map((x) => x.key), ...rows.map((x) => x.price?.via).filter(Boolean)]);
+    const unused = Object.entries(items).filter(([key]) => !used.has(key));
+    const missing = rows.filter((x) => !x.free && !x.price);
+    fill(extra, unused.length > 0 && h('details', { class: 'jrk-card jrk-prices', open: missing.length > 0 && can.prices },
+      h('summary', null, h('strong', null, `Prices not used in any recipe (${unused.length})`)),
+      can.prices && missing.length > 0 && h('p', { class: 'note' }, 'Imported under a different name? Choose which recipe ingredient each one is for, and that ingredient is costed at this price.'),
+      h('ul', { class: 'jrk-list' }, unused.map(([key, p]) => h('li', null, h('span', null, key, p.src && h('span', { class: 'note jrk-missing' }, p.src)),
         h('span', { class: 'jrk-row' }, `${money(p.p)} / ${PRICE_UNITS[p.per]?.label || p.per}`,
+          can.prices && missing.length > 0 && h('select', { 'aria-label': `Use the price of ${key} for`, onchange: (e) => { if (e.target.value) setLink(e.target.value, key); } },
+            h('option', { value: '' }, 'Use for…'), missing.map((x) => h('option', { value: x.key }, x.name))),
           can.prices && h('button', { class: 'jrk-link', type: 'button', onclick: () => setPrice(key, '', p.per) }, 'Remove')))))));
     if (focusKey) {
       const next = body.querySelector(`tr[data-key="${CSS.escape(focusKey)}"]`)?.nextElementSibling?.querySelector('input:not([disabled])');
@@ -821,6 +881,7 @@ async function viewSheet(m) {
     summary,
     h('div', { class: 'jrk-tablewrap' }, h('table', { class: 'jrk-cost jrk-sheet' },
       h('thead', null, h('tr', null, ['Ingredient', 'Price', ''].map((t) => h('th', { scope: 'col' }, t)))), body)),
+    priceList,
     extra,
     viewOnly(can));
 }
