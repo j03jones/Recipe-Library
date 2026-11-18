@@ -4,9 +4,11 @@
 import { FOODS } from './nutridata.js';
 import { identify, PRICE_UNITS } from './nutrition.js';
 import * as prices from './prices.js';
-import { ROLES, defaultPicks, guessSupplier, headingKey, readSupplierFile, roleLabel, toPrices } from './supplier.js';
+import { ROLES, defaultPicks, guessSupplier, headingKey, matchKey, readSupplierFile, roleLabel, toPrices } from './supplier.js';
+import { readTable } from './xlsx.js';
 
 const MAP_KEY = 'recipelib.supplierColumns';      // { [headingKey]: { role: column } }, remembered per file layout
+const MATCH_KEY = 'recipelib.supplierMatches';    // { [product description]: food }, what you chose last time
 const PAGE = 150;
 const usd = (v) => `$${v < 1 ? v.toFixed(3).replace(/0$/, '') : v.toFixed(2)}`;
 const loadMaps = () => { try { return JSON.parse(localStorage.getItem(MAP_KEY) || '{}') || {}; } catch { return {}; } };
@@ -15,12 +17,26 @@ const today = () => new Date().toISOString().slice(0, 10);
 /** How a food is shown: its readable name ("half and half"), not the key prices are filed under. */
 const label = (key) => identify(key).entry?.name || key;
 
+const loadMatches = () => { try { return JSON.parse(localStorage.getItem(MATCH_KEY) || '{}') || {}; } catch { return {}; } };
+/** Your own price book's save: the prices, and the matches to remember on this device. */
+function saveOwn(items, matches) {
+  try { localStorage.setItem(MATCH_KEY, JSON.stringify({ ...loadMatches(), ...matches })); } catch { /* private mode */ }
+  return prices.addMany(items);
+}
+
+/** The file types the import accepts, for <input type=file accept>. */
+export const ACCEPT = '.csv,.txt,.tsv,.xlsx,text/csv,text/plain,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+/** A chosen file as the importer takes it: rows (Excel) or text (CSV). Throws with a message to show. */
+export const readImportFile = (file) => readTable(file);
+
 /**
  * The import panel. `onDone(n, supplier)` is called after prices are added (or with 0 when cancelled).
  * `book` and `save` default to your own price book; a restaurant's kitchen passes its shared one
- * (`save(items)` may be async and returns how many were saved).
+ * (`save(items, matches)` may be async and returns how many were saved). `text` is a CSV's text or an
+ * Excel sheet's rows. `ingredients` are the names on the costing sheet: a product matches one of those
+ * before anything else. `matches` are the choices made in earlier imports ({ description: food }).
  */
-export function supplierImport({ h, fill, toast, file, text, onDone, book: bookIn, save = prices.addMany }) {
+export function supplierImport({ h, fill, toast, file, text, onDone, book: bookIn, save = saveOwn, ingredients = [], matches: matchesIn }) {
   const root = h('section', { class: 'card supplier', 'aria-label': 'Import a supplier price list' });
   let override = null;
   let read;
@@ -30,16 +46,20 @@ export function supplierImport({ h, fill, toast, file, text, onDone, book: bookI
   let shown = PAGE;
   const supplierIn = h('input', { type: 'text', maxlength: '40', value: guessSupplier(file?.name, text), placeholder: 'Sysco, SGC, Ben E. Keith…', 'aria-label': 'Supplier' });
   const book = bookIn || prices.load().items;
-  const known = [...new Set([...FOODS.map((f) => f[0]), ...Object.keys(book)])].sort();
+  const matches = matchesIn || loadMatches();
+  const ownNames = [...new Set([...ingredients, ...Object.keys(book)])];
+  const ours = new Set(ownNames);
+  // your own ingredients first in the suggestions, then the food table
+  const known = [...ownNames.sort(), ...[...new Set(FOODS.map((f) => f[0]))].filter((f) => !ours.has(f)).sort()];
   const listId = `foods-${Math.random().toString(36).slice(2, 8)}`;
 
   function load() {
     const saved = override || null;
-    read = readSupplierFile(text, { map: saved });
+    read = readSupplierFile(text, { map: saved, extraNames: ownNames, matches });
     // a layout seen before: use the columns chosen last time
     if (!override) {
       const remembered = loadMaps()[headingKey(read.headings)];
-      if (remembered) { override = remembered; read = readSupplierFile(text, { map: remembered }); }
+      if (remembered) { override = remembered; read = readSupplierFile(text, { map: remembered, extraNames: ownNames, matches }); }
     }
     picks = defaultPicks(read.rows);
     foods = read.rows.map((r) => r.food || '');
@@ -78,8 +98,11 @@ export function supplierImport({ h, fill, toast, file, text, onDone, book: bookI
       const supplier = supplierIn.value.trim();
       const items = toPrices(rows.map((r, i) => ({ ...r, food: foods[i] })), new Set(tickedRows), supplier, today());
       e.target.disabled = true;
+      // remember what each ticked product was matched to, so the next order from this supplier matches itself
+      const learned = {};
+      for (const i of tickedRows) if (rows[i].description && foods[i]) learned[matchKey(rows[i].description)] = foods[i];
       let n;
-      try { n = await save(items); } catch (err) { e.target.disabled = false; toast(err?.message || 'Could not save the prices'); return; }
+      try { n = await save(items, learned); } catch (err) { e.target.disabled = false; toast(err?.message || 'Could not save the prices'); return; }
       toast(`Added ${n} price${n === 1 ? '' : 's'}${supplier ? ` from ${supplier}` : ''}`);
       onDone?.(n, supplier);
     } }, `Add ${tickedRows.length} price${tickedRows.length === 1 ? '' : 's'}`);
@@ -91,6 +114,8 @@ export function supplierImport({ h, fill, toast, file, text, onDone, book: bookI
         ? h('p', { class: 'muted small', role: 'status' }, `${rows.length} products: ${matched} matched to a food, ${needFood} need a food chosen, ${noPrice} could not be priced. `,
           'Where several products match one food, the cheapest per pound (or gallon, or piece) is ticked.')
         : h('p', { class: 'note' }, 'No products were found in this file. Check the columns below, or export the order guide again as CSV with prices included.'),
+      read.noPrices && h('p', { class: 'note' }, 'This file lists products but no prices (a Sysco purchase history leaves its Case $ column empty). '
+        + 'Export an order guide or an invoice with prices, or choose the price column below if it has another name.'),
       columns(),
       rows.length > 0 && h('div', { class: 'chips', role: 'group', 'aria-label': 'Show' },
         chip('all', 'All', rows.length), chip('ticked', 'Ticked', tickedRows.length), chip('matched', 'Matched', matched), chip('food', 'Need a food', needFood), chip('noprice', 'Not priced', noPrice)),
@@ -114,10 +139,14 @@ export function supplierImport({ h, fill, toast, file, text, onDone, book: bookI
           h('label', { class: 'supbox' }, box),
           h('div', { class: 'supwhat' },
             h('strong', null, r.description || '(no description)'),
-            h('span', { class: 'muted small' }, [r.brand, r.item && `#${r.item}`, r.packText, r.casePrice != null && `${usd(r.casePrice)} case`].filter(Boolean).join(' · ')),
-            r.price ? h('span', { class: 'supprice' }, priceText(r), now && h('span', { class: 'muted small' }, `  (now ${per(now)}${now.src ? `, ${now.src}` : ''})`))
+            h('span', { class: 'muted small' }, [r.brand, r.item && `#${r.item}`, r.packText, r.casePrice != null && `${usd(r.casePrice)} ${!r.price || r.price.from === 'case' ? 'case' : 'listed'}`].filter(Boolean).join(' · ')),
+            r.price ? h('span', { class: 'supprice' }, priceText(r), r.price.from === 'catch weight' && h('span', { class: 'muted small' }, ' (priced by the pound)'),
+              r.price.from === 'each unit' && h('span', { class: 'muted small' }, ' (price for one, not the case)'),
+              now && h('span', { class: 'muted small' }, `  (now ${per(now)}${now.src ? `, ${now.src}` : ''})`))
               : h('span', { class: 'note small' }, r.why === 'pack size not understood' ? `Pack size “${r.packText}” not understood` : 'No price')),
-          h('div', { class: 'supfood' }, foodIn));
+          h('div', { class: 'supfood' }, foodIn,
+            foods[i] && (foods[i] === r.food && r.remembered ? h('span', { class: 'muted small suptag' }, 'as you chose last time')
+              : ours.has(foods[i]) ? h('span', { class: 'muted small suptag' }, 'on your costing sheet') : null)));
       })),
       visible.length > shown && h('button', { class: 'more', type: 'button', onclick: () => { shown += PAGE; paint(); } }, `Show more (${visible.length - shown})`),
       h('div', { class: 'row grow suptools' }, add, h('button', { type: 'button', onclick: () => onDone?.(0) }, 'Cancel')),
