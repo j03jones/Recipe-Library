@@ -390,6 +390,16 @@ price list exported as CSV from Sysco, SGC, Ben E. Keith, US Foods or any other 
 - Each description is matched to the food it is, reading distributor shorthand ("CHEESE CHDR SHRD" is cheddar
   cheese, "OIL CNLA" canola oil). Where several products match one food, the cheapest per unit is ticked. Products
   with no match are listed under their own name to tick, or you type the food.
+- Learned from real purveyor exports (v0.38): Excel order and history files (.xlsx) are read as well as CSV; a Y in an
+  "Each" column prices one unit of the pack (one 5 lb tub, one gallon), and a Y in Sysco's "Per Lb" column means the
+  price is per pound; catch-weight meat listed at its price per pound is recognised from the line total, or from a
+  price that would otherwise be cents a pound; ounces of milk, juice or syrup are fluid ounces; packs like `15/DZ`,
+  `9/.5 GAL`, `1/4/1 LT` and `12/2.4 0Z` are read; a line listed twice is shown once. A file with no prices at all
+  (Sysco's purchase history) says so.
+- Matching follows the way distributors write: the first word is the item, so "PICKLE DILL" is not dill and
+  "VINEGAR RED WINE" is not red wine. On a restaurant's costing sheet, its own ingredient names are matched first
+  ("Butter Solid Unsalted" to its "butter"), and the food chosen for each product is remembered for the whole team,
+  so the next order from that purveyor matches itself.
 - You review everything before anything is saved. Saved prices remember the supplier, item number and date, shown
   in the price book.
 

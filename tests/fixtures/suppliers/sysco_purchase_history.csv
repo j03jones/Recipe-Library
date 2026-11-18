@@ -1,0 +1,4 @@
+"H","L0601","000","000000","Purchase History","2",,,,,,,,,,,,,,,,,,,,,,
+"F","SUPC","Case Qty","Split Qty","Code","Item Status","Replaced Item","Pack","Size","Unit","Brand","Mfr #","Desc","Cat","Case $","Split $","Per Lb","Market","Splittable","Splits","Min Split","Net Wt","Lead Time","Stock","Substitute","Agr",,
+"P","3000001",,,,,,"1","20 LB","LB","TEST CLASSIC","T1","Bean Black Turtle Dried","Canned & Dry",,,"N",,false,,0,20,,"STOCKED",,,,
+"P","3000002",,,,,,"4","10#AVG","LB","TEST FARMS","T2","Beef Ground Fine 73% Lean Bulk Chubs","Meats",,,"Y",,false,,0,40,,"STOCKED",,,,

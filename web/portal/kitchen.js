@@ -26,7 +26,7 @@ import { clean as cleanPrices, DEFAULT_TARGET } from '../js/prices.js';
 import { byAisle, itemName, shoppingList } from '../js/shopping.js';
 import { fromPlainText } from '../js/transfer.js';
 import { parseIngredientLine } from '../js/webimport.js';
-import { supplierImport } from '../js/supplierui.js';
+import { ACCEPT, readImportFile, supplierImport } from '../js/supplierui.js';
 import { Frac, adaptedLine, creditLine, formatIngredient, formatYield, scaleRecipe } from '../js/units.js';
 import { busy, confirmBox, field, fill, h, screen, toast } from './ui.js';
 
@@ -76,6 +76,12 @@ function cleanKitchen(v) {
   out.portions = {};
   if (obj.portions && typeof obj.portions === 'object' && !Array.isArray(obj.portions)) {
     for (const [id, n] of Object.entries(obj.portions).slice(0, 5000)) { const x = Number(n); if (Number.isFinite(x) && x > 0 && x < 100000) out.portions[id] = Math.round(x * 100) / 100; }
+  }
+  out.matches = {};
+  if (obj.matches && typeof obj.matches === 'object' && !Array.isArray(obj.matches)) {
+    for (const [desc, food] of Object.entries(obj.matches).slice(-3000)) {
+      if (typeof food === 'string' && food.trim() && desc.length <= 120) out.matches[desc] = food.trim().slice(0, 80);
+    }
   }
   out.plates = [];
   for (const p of (Array.isArray(obj.plates) ? obj.plates : []).slice(0, 500)) {
@@ -724,15 +730,21 @@ async function viewSheet(m) {
 
   // a purveyor's order guide or price list (Sysco, SGC, Ben E. Keith...): reviewed, then added to the kitchen's prices
   const supPanel = h('div');
-  const supIn = h('input', { type: 'file', accept: '.csv,.txt,text/csv,text/plain,text/tab-separated-values', hidden: true, 'aria-label': 'Supplier price list file' });
+  const supIn = h('input', { type: 'file', accept: ACCEPT, hidden: true, 'aria-label': 'Supplier price list file' });
   supIn.addEventListener('change', async () => {
     const f = supIn.files[0];
     supIn.value = '';
     if (!f) return;
     let text;
-    try { text = await f.text(); } catch { toast('Could not read that file'); return; }
-    fill(supPanel, supplierImport({ h, fill, toast, file: f, text, book: cache.get(r.id)?.kitchen.items || {},
-      save: async (items) => { await changeKitchen(m, (d) => { Object.assign(d.items, items); }); return Object.keys(items).length; },
+    try { text = await readImportFile(f); } catch (err) { toast(err?.message || 'Could not read that file'); return; }
+    const kitchen = cache.get(r.id)?.kitchen || {};
+    fill(supPanel, supplierImport({ h, fill, toast, file: f, text, book: kitchen.items || {},
+      // the costing sheet's ingredients come first when matching, and choices are remembered for the whole team
+      ingredients: rows.filter((x) => !x.free).map((x) => x.key), matches: kitchen.matches || {},
+      save: async (items, learned) => {
+        await changeKitchen(m, (d) => { Object.assign(d.items, items); d.matches = { ...(d.matches || {}), ...learned }; });
+        return Object.keys(items).length;
+      },
       onDone: () => {
         fill(supPanel);
         rows = ingredientSheet(data.recipes, cache.get(r.id).kitchen);

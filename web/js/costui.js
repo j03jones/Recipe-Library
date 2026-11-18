@@ -4,7 +4,7 @@ import { NUTRIENTS, PRICE_UNITS, costing, defaultPriceUnit, foodCostPct, identif
 import { macroDetails } from './nutritionui.js';
 import { formatIngredient } from './units.js';
 import * as prices from './prices.js';
-import { supplierImport } from './supplierui.js';
+import { ACCEPT, readImportFile, supplierImport } from './supplierui.js';
 
 const usd = (v) => `$${v.toFixed(2)}`;
 const n0 = (v) => Math.round(v).toLocaleString();
@@ -23,13 +23,13 @@ export function recipeCosting({ h, fill, scaled, recipeId, toast = () => {} }) {
 
   // importing a purveyor's price list right from the card; kept outside paintCost so rescaling keeps it open
   const supPanel = h('div', { class: 'cardimport' });
-  const supIn = h('input', { type: 'file', accept: '.csv,.txt,text/csv,text/plain,text/tab-separated-values', hidden: true, 'aria-label': 'Supplier price list file' });
+  const supIn = h('input', { type: 'file', accept: ACCEPT, hidden: true, 'aria-label': 'Supplier price list file' });
   supIn.addEventListener('change', async () => {
     const f = supIn.files[0];
     supIn.value = '';
     if (!f) return;
     let text;
-    try { text = await f.text(); } catch { toast('Could not read that file'); return; }
+    try { text = await readImportFile(f); } catch (err) { toast(err?.message || 'Could not read that file'); return; }
     fill(supPanel, supplierImport({ h, fill, toast, file: f, text, onDone: () => {
       fill(supPanel);
       paintCost(scaled());                 // the new prices fill in this recipe's lines
@@ -162,7 +162,7 @@ export function priceBook({ h, fill, toast }) {
   const search = h('input', { class: 'full', type: 'search', placeholder: 'Search your prices', 'aria-label': 'Search your prices', autocomplete: 'off' });
   const list = h('ul', { class: 'costlines' });
   const fileIn = h('input', { type: 'file', accept: '.csv,text/csv,text/plain', hidden: true });
-  const supIn = h('input', { type: 'file', accept: '.csv,.txt,text/csv,text/plain,text/tab-separated-values', hidden: true });
+  const supIn = h('input', { type: 'file', accept: ACCEPT, hidden: true });
   const panel = h('div');
   const status = h('p', { class: 'muted small', role: 'status' });
 
@@ -211,7 +211,7 @@ export function priceBook({ h, fill, toast }) {
     supIn.value = '';
     if (!f) return;
     let text;
-    try { text = await f.text(); } catch { toast('Could not read that file'); return; }
+    try { text = await readImportFile(f); } catch (err) { toast(err?.message || 'Could not read that file'); return; }
     fill(panel, supplierImport({ h, fill, toast, file: f, text, onDone: (n, supplier) => {
       fill(panel);
       if (n) status.textContent = `Added or updated ${n} price${n === 1 ? '' : 's'}${supplier ? ` from ${supplier}` : ''}.`;

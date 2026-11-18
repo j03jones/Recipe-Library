@@ -2,6 +2,9 @@
 import json
 import shutil
 import subprocess
+import tempfile
+import zipfile
+from xml.sax.saxutils import escape
 import unittest
 from pathlib import Path
 
@@ -15,10 +18,61 @@ PACKS = [
     {"pack": "4", "size": "1", "unit": "GAL"}, {"pack": "15", "size": "DZ"}, {"pack": "6", "size": "#10"}, {"pack": "4", "size": "5 LB"},
     {"packsize": "ASSORTED"}, {"packsize": ""},
 ]
+PACKS += [{"packsize": t} for t in ("15/DZ", "9/.5 GAL", "1/4/1 LT", "12/2.4 0Z", "8 / 2 LB", "1 / 1 ROLL", "4/10# AVG")]
 DESCS = ["CHEESE CHEDDAR SHRD MILD YELLOW", "OIL CANOLA FRY CLEAR", "CHICKEN BREAST BNLS SKLS 6 OZ", "BUTTER SOLID UNSALTED AA",
          "SAUCE BBQ HICKORY", "CHEESE CREAM LOAF", "BEEF GROUND 80/20 FINE", "TORTILLA FLOUR 12IN", "BREAD CRUMB PANKO",
          "PEANUT BUTTER CREAMY", "PEPPER BLACK GROUND TABLE", "POTATO SWEET FRESH", "ONION GREEN", "JUICE LEMON",
-         "SYS CLS CHEESE AMERICAN SLICED", "IQF CORN KERNEL", "DONUT GLAZED YEAST", "CORN ON COB FRZN", "WIDGET MYSTERY"]
+         "SYS CLS CHEESE AMERICAN SLICED", "IQF CORN KERNEL", "DONUT GLAZED YEAST", "CORN ON COB FRZN", "WIDGET MYSTERY",
+         "PICKLE DILL HAMBURGER SMOOTH", "VINEGAR RED WINE", "SYRUP RASPBERRY FLAVOR", "PEPPER JALAPENO GREEN BUSHEL",
+         "MILK BUTTERMILK CULTURED", "BASE BEEF FLAVORED PASTE", "Oil Canola Olive Blend 90/10", "Seasoning Dill Weed"]
+
+
+# what a restaurant's costing sheet calls things, for matching an order to it
+OWN = [["Butter Solid Unsalted", ["butter", "sour cream"]], ["Bun Hamburger 4.25in W/shine", ["hamburger bun", "bread"]],
+       ["Pork Belly Skinless Cryovac", ["pork belly", "pork"]], ["Cheese Mont Jack Sliced", ["monterey jack cheese", "cheese"]],
+       ["French Fries Tin Roof", ["french fries"]], ["Pickle Dill Slice Smooth", ["dill"]]]
+
+
+def write_xlsx(path, rows):
+    """A small Excel workbook like a distributor's order export: shared strings, numbers, one sheet."""
+    strings, index = [], {}
+    def ref(c, r):
+        name = ""
+        c += 1
+        while c:
+            c, rem = divmod(c - 1, 26)
+            name = chr(65 + rem) + name
+        return f"{name}{r}"
+    body = []
+    for r, row in enumerate(rows, 1):
+        cells = []
+        for c, v in enumerate(row):
+            if v == "":
+                continue
+            if isinstance(v, (int, float)):
+                cells.append(f'<c r="{ref(c, r)}"><v>{v}</v></c>')
+            else:
+                if v not in index:
+                    index[v] = len(strings)
+                    strings.append(v)
+                cells.append(f'<c r="{ref(c, r)}" t="s"><v>{index[v]}</v></c>')
+        body.append(f'<row r="{r}">{"".join(cells)}</row>')
+    ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
+        z.writestr("xl/workbook.xml", f'<?xml version="1.0"?><workbook {ns} xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Order" sheetId="1" r:id="rId1"/></sheets></workbook>')
+        z.writestr("xl/_rels/workbook.xml.rels", '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="worksheet" Target="worksheets/sheet1.xml"/></Relationships>')
+        z.writestr("xl/sharedStrings.xml", f'<?xml version="1.0"?><sst {ns}>' + "".join(f"<si><t>{escape(x)}</t></si>" for x in strings) + "</sst>")
+        z.writestr("xl/worksheets/sheet1.xml", f'<?xml version="1.0"?><worksheet {ns}><sheetData>{"".join(body)}</sheetData></worksheet>')
+
+
+# a Ben E. Keith order export (.xlsx): Each = Y is a price for one unit; catch-weight meat at its price per pound,
+# which the line total gives away ($2.00 a pound, 33 lb shipped)
+BEK_ORDER = [["Item#", "Pack / Size", "Brand", "Item Name", "Manufacturer Id", "", "Ordered", "Each", "Price", "Deviated Price", "Confirmed", "Total Price", "Status"],
+             ["400001", "1 / 30 LB", "Test Pork", "Pork Belly Skinless Cryovac", "1", "Refrigeration.", 1, "N", "$2.00", "N", 1, "$66.00", "Filled"],
+             ["400002", "4 / 5 LB", "Test Dairy", "Sour Cream Cultured", "2", "Refrigeration.", 1, "Y", "$7.50", "N", 1, "$7.50", "Filled"],
+             ["400003", "2 / 5 LB", "Test Farms", "Cheese Cheddar Jack Shred Fcy", "3", "Refrigeration.", 2, "N", 25.0, "N", 2, 50.0, "Filled"],
+             ["400004", "6 / 1 GAL", "Test Oil", "Oil Canola Olive Blend 90/10", "4", "Dry.", 1, "N", "$108.00", "N", 1, "$108.00", "Filled"]]
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
@@ -28,12 +82,25 @@ class SupplierPriceLists(unittest.TestCase):
         files = [["sysco", str(FIX / "sysco_order_guide.csv")], ["bek", str(FIX / "bek_order_guide.csv")],
                  ["sgc", str(FIX / "sgc_invoice.txt")],
                  # a file read with its description column chosen by hand (SGC file, "Item Number" taken as the name)
-                 ["remapped", str(FIX / "sgc_invoice.txt"), {"description": 0}]]
+                 ["remapped", str(FIX / "sgc_invoice.txt"), {"description": 0}],
+                 ["bek_history", str(FIX / "bek_history_list.csv")], ["sgc_history", str(FIX / "sgc_history.csv")],
+                 ["sysco_history", str(FIX / "sysco_purchase_history.csv")], ["sysco_perlb", str(FIX / "sysco_per_lb_flag.csv")]]
+        cls.tmp = tempfile.TemporaryDirectory()
+        order = Path(cls.tmp.name) / "Order 0001.xlsx"
+        write_xlsx(order, BEK_ORDER)
+        files.append(["bek_order", str(order)])
+        # matched to a restaurant's costing sheet, with a choice remembered from an earlier import
+        files.append(["bek_sheet", str(FIX / "bek_history_list.csv"), None,
+                      {"ingredients": ["butter", "hamburger bun", "dill pickle", "pork belly"], "matches": {"film 18x2000 clear wrap": "plastic wrap"}}])
         proc = subprocess.run(["node", str(ROOT / "tools" / "supplier_js.mjs")], capture_output=True, text=True,
-                              input=json.dumps({"files": files, "packs": PACKS, "descs": DESCS}))
+                              input=json.dumps({"files": files, "packs": PACKS, "descs": DESCS, "own": OWN}))
         if proc.returncode != 0:
             raise AssertionError(proc.stderr)
         cls.out = json.loads(proc.stdout)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
 
     def rows(self, name):
         return {r[1]: r for r in self.out["files"][name]["rows"]}
@@ -50,6 +117,10 @@ class SupplierPriceLists(unittest.TestCase):
         self.assertEqual(got['{"pack":"6","size":"#10"}'], ["g", 18600])
         self.assertEqual(got['{"pack":"4","size":"5 LB"}'], ["g", 9072])
         self.assertIsNone(got['{"packsize":"ASSORTED"}'])
+        # shapes seen in real exports
+        for text, value in {"15/DZ": ["n", 180], "9/.5 GAL": ["ml", 17034], "1/4/1 LT": ["ml", 4000], "12/2.4 0Z": ["g", 816],
+                            "8 / 2 LB": ["g", 7257], "1 / 1 ROLL": ["n", 1], "4/10# AVG": ["g", 18144]}.items():
+            self.assertEqual(got[json.dumps({"packsize": text}, separators=(",", ":"))], value, text)
         self.assertIsNone(got['{"packsize":""}'])
 
     def test_descriptions_match_foods(self):
@@ -59,7 +130,11 @@ class SupplierPriceLists(unittest.TestCase):
                 "TORTILLA FLOUR 12IN": "tortilla", "BREAD CRUMB PANKO": "breadcrumb", "PEANUT BUTTER CREAMY": "peanut butter",
                 "PEPPER BLACK GROUND TABLE": "black pepper", "POTATO SWEET FRESH": "sweet potato", "ONION GREEN": "green onion",
                 "JUICE LEMON": "lemon juice", "SYS CLS CHEESE AMERICAN SLICED": "cheese", "IQF CORN KERNEL": "corn",
-                "DONUT GLAZED YEAST": "", "CORN ON COB FRZN": "corn", "WIDGET MYSTERY": ""}
+                "DONUT GLAZED YEAST": "", "CORN ON COB FRZN": "corn", "WIDGET MYSTERY": "",
+                # the first word is the item: a pickle is not dill, red wine vinegar is not red wine
+                "PICKLE DILL HAMBURGER SMOOTH": "", "VINEGAR RED WINE": "vinegar", "SYRUP RASPBERRY FLAVOR": "",
+                "PEPPER JALAPENO GREEN BUSHEL": "jalapeno pepper", "MILK BUTTERMILK CULTURED": "buttermilk",
+                "BASE BEEF FLAVORED PASTE": "", "Oil Canola Olive Blend 90/10": "canola oil", "Seasoning Dill Weed": "dill weed"}
         self.assertEqual(self.out["descs"], want)
 
     def test_sysco_order_guide(self):
@@ -102,6 +177,69 @@ class SupplierPriceLists(unittest.TestCase):
     def test_columns_can_be_chosen_by_hand(self):
         f = self.out["files"]["remapped"]
         self.assertEqual([r[1] for r in f["rows"]], ["SG7781", "SG7782", "SG7783", "SG7784"])
+
+
+    def test_ben_e_keith_history_list(self):
+        rows = self.rows("bek_history")
+        self.assertEqual(rows["Butter Solid Unsalted"][2:4], [2.0, "lb"])                       # 36 x 1 lb, $72
+        # Each = Y: the price is for one unit of the pack, not the case
+        self.assertEqual(rows["Sour Cream Cultured"][2:4], [1.5, "lb"])                         # one 5 lb tub, $7.50
+        self.assertEqual(rows["Milk Whole 3.25%"][2:4], [6.0, "gallon"])                       # one gallon, $6
+        self.assertEqual(rows["Milk Buttermilk 3.25%"][2:5], [8.0, "gallon", "buttermilk"])     # 64 fluid oz, $4
+        self.assertEqual(rows["Milk Buttermilk 3.25%"][8], "each unit")
+        self.assertEqual(rows["Pickle Dill Slice Smooth 3/16"][4:6], ["", "dill pickle"])      # not "dill"
+        self.assertEqual(rows["Bun Hamburger 4.25in W/shine"][5], "hamburger bun")
+        self.assertEqual(rows["Pork Belly Skinless Cryovac"][6], "no price")
+        self.assertEqual(rows["Film 18x2000 Clear Wrap"][2:4], [30.0, "each"])
+
+    def test_sgc_history(self):
+        f = self.out["files"]["sgc_history"]
+        rows = self.rows("sgc_history")
+        self.assertEqual(len(f["rows"]), 8, "a line listed twice is shown once")
+        # catch weight: $4.00 for 40 lb of beef would be 10 cents a pound, so it is the price per pound
+        self.assertEqual(rows["BEEF GROUND BULK FRESH 80/20 FINE"][2:5] + [rows["BEEF GROUND BULK FRESH 80/20 FINE"][8]],
+                         [4.0, "lb", "ground beef", "catch weight"])
+        self.assertEqual(rows["EGG LARGE GRADE A USDA"][2:4], [0.1, "each"])                   # 15 dozen, $18
+        self.assertEqual(rows["MILK BUTTERMILK CULTURED"][2:4], [8.0, "gallon"])               # 9 half gallons, $36
+        self.assertEqual(rows["SYRUP RUBY RED GRAPEFRUIT"][2:4], [37.8541, "gallon"])          # 4 liters, $40
+        self.assertEqual(rows["SPICE CHIVES DRIED LRG BTL"][2:5], [66.6667, "lb", "chive"])    # 12 x 2.4 oz, $120
+        self.assertEqual(rows["PEPPER JALAPENO GREEN BUSHEL"][4], "jalapeno pepper")
+        self.assertEqual(rows["VINEGAR RED WINE"][4], "vinegar")
+        self.assertEqual(rows["SYRUP RASPBERRY FLAVOR"][4:6], ["", "raspberry syrup"])
+
+    def test_sysco_purchase_history_has_no_prices(self):
+        f = self.out["files"]["sysco_history"]
+        self.assertTrue(f["typed"])
+        self.assertTrue(f["noPrices"], "the file is flagged so the review can say to export prices")
+        self.assertEqual(self.rows("sysco_history")["Bean Black Turtle Dried"][4], "black bean")
+
+    def test_sysco_per_lb_flag(self):
+        rows = self.rows("sysco_perlb")
+        self.assertEqual(rows["Beef Ground Fine 73% Lean Bulk Chubs"][2:4], [3.5, "lb"])       # Per Lb = Y: the price is per pound
+        self.assertEqual(rows["Bean Black Turtle Dried"][2:4], [1.2, "lb"])                    # Per Lb = N: a case of 20 lb
+
+    def test_excel_order_with_line_totals(self):
+        rows = self.rows("bek_order")
+        self.assertEqual(len(rows), 4)
+        # $2.00 but $66.00 for one case: the price is per pound (33 lb)
+        self.assertEqual(rows["Pork Belly Skinless Cryovac"][2:4] + [rows["Pork Belly Skinless Cryovac"][8]], [2.0, "lb", "catch weight"])
+        self.assertEqual(rows["Sour Cream Cultured"][2:4], [1.5, "lb"])
+        self.assertEqual(rows["Cheese Cheddar Jack Shred Fcy"][2:5], [2.5, "lb", "cheddar cheese"])   # numbers, not text, in the sheet
+        self.assertEqual(rows["Oil Canola Olive Blend 90/10"][2:5], [18.0, "gallon", "canola oil"])
+
+    def test_matching_the_costing_sheet(self):
+        # a restaurant's own ingredient names are used first
+        self.assertEqual(self.out["own"], {"Butter Solid Unsalted": "butter", "Bun Hamburger 4.25in W/shine": "hamburger bun",
+                                           "Pork Belly Skinless Cryovac": "pork belly", "Cheese Mont Jack Sliced": "monterey jack cheese",
+                                           "French Fries Tin Roof": "french fry", "Pickle Dill Slice Smooth": ""})
+        rows = self.rows("bek_sheet")
+        self.assertEqual(rows["Butter Solid Unsalted"][4], "butter")
+        self.assertTrue(rows["Butter Solid Unsalted"][9], "marked as on the costing sheet")
+        self.assertEqual(rows["Bun Hamburger 4.25in W/shine"][4], "hamburger bun")
+        self.assertEqual(rows["Pickle Dill Slice Smooth 3/16"][4], "dill pickle")
+        # a choice made in an earlier import is used again
+        self.assertEqual(rows["Film 18x2000 Clear Wrap"][4], "plastic wrap")
+        self.assertTrue(rows["Film 18x2000 Clear Wrap"][10])
 
 
 if __name__ == "__main__":
