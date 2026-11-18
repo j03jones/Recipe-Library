@@ -272,3 +272,9 @@
 #jrk-portal .jrk-pricetext { white-space: nowrap; font-variant-numeric: tabular-nums; }
 #jrk-portal .jrk-managed { margin: .25rem 0 .75rem; }
 #jrk-portal .jrk-managed a { color: inherit; text-decoration: underline; }
+
+/* matching a recipe ingredient to a price list item on the Ingredient prices sheet */
+#jrk-portal .jrk-match { display: block; margin-top: .4rem; width: 15rem; max-width: calc(100vw - 4rem); box-sizing: border-box; font: inherit; font-size: .9rem; padding: .35rem .5rem;
+  border: 1px dashed var(--jrk-line); border-radius: 6px; background: transparent; color: inherit; }
+#jrk-portal .jrk-via { display: block; }
+#jrk-portal .jrk-prices select { font: inherit; font-size: .9rem; max-width: 12rem; }
