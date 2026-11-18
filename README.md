@@ -404,6 +404,12 @@ price list exported as CSV from Sysco, SGC, Ben E. Keith, US Foods or any other 
   no price can be matched to any item on the price list (type it under the price, or pick the ingredient from
   "Prices not used in any recipe"), and every recipe and plate is costed at that item's price, shown as
   "price of …" with an Unlink. A price typed for the ingredient itself replaces its link.
+- Invoices and dates (v0.40): a distributor's **PDF invoice** can be imported (useful where the website export has no
+  prices, as with Sysco). It is read on the device (`web/js/invoice.js` over pdfread.js): each product line's
+  quantity, pack, description, item number, unit and extended price, a catch weight, and the invoice date and
+  supplier. Every price is dated (the invoice or order date, or "Prices as of" in the review; a price typed by
+  hand is dated that day) and **the newest price is kept**: within a file the most recent row for a food is ticked,
+  and an import never replaces a saved price that is newer.
 - You review everything before anything is saved. Saved prices remember the supplier, item number and date, shown
   in the price book.
 

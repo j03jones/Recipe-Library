@@ -27,6 +27,10 @@ DESCS = ["CHEESE CHEDDAR SHRD MILD YELLOW", "OIL CANOLA FRY CLEAR", "CHICKEN BRE
          "MILK BUTTERMILK CULTURED", "BASE BEEF FLAVORED PASTE", "Oil Canola Olive Blend 90/10", "Seasoning Dill Weed"]
 
 
+DATES = ["11/17/2026", "11/17/26", "2026-11-17", "Nov 17, 2026", "November 7, 2026", "17-Nov-26", "46343", "13/45/2026", "soon"]
+MERGE = [{"butter": {"p": 3, "per": "lb", "at": "2026-11-10"}, "milk": {"p": 6, "per": "gallon", "at": "2026-10-01"}, "egg": {"p": 0.2, "per": "each"}},
+         {"butter": {"p": 2, "per": "lb", "at": "2026-11-01"}, "milk": {"p": 7, "per": "gallon", "at": "2026-11-01"}, "egg": {"p": 0.3, "per": "each", "at": "2026-11-01"}}]
+
 # what a restaurant's costing sheet calls things, for matching an order to it
 OWN = [["Butter Solid Unsalted", ["butter", "sour cream"]], ["Bun Hamburger 4.25in W/shine", ["hamburger bun", "bread"]],
        ["Pork Belly Skinless Cryovac", ["pork belly", "pork"]], ["Cheese Mont Jack Sliced", ["monterey jack cheese", "cheese"]],
@@ -89,11 +93,15 @@ class SupplierPriceLists(unittest.TestCase):
         order = Path(cls.tmp.name) / "Order 0001.xlsx"
         write_xlsx(order, BEK_ORDER)
         files.append(["bek_order", str(order)])
+        files.append(["invoice", str(FIX / "sysco_invoice_text.txt"), None, {"invoice": True}])
+        files.append(["dated", str(FIX / "dated_history.csv")])
+        # a price typed by hand on 11/10 is newer than the history's 11/01 onion: it is not ticked
+        files.append(["dated_book", str(FIX / "dated_history.csv"), None, {"book": {"onion": {"p": 1, "per": "lb", "at": "2026-11-10"}}}])
         # matched to a restaurant's costing sheet, with a choice remembered from an earlier import
         files.append(["bek_sheet", str(FIX / "bek_history_list.csv"), None,
                       {"ingredients": ["butter", "hamburger bun", "dill pickle", "pork belly"], "matches": {"film 18x2000 clear wrap": "plastic wrap"}}])
         proc = subprocess.run(["node", str(ROOT / "tools" / "supplier_js.mjs")], capture_output=True, text=True,
-                              input=json.dumps({"files": files, "packs": PACKS, "descs": DESCS, "own": OWN}))
+                              input=json.dumps({"files": files, "packs": PACKS, "descs": DESCS, "own": OWN, "dates": DATES, "merge": MERGE}))
         if proc.returncode != 0:
             raise AssertionError(proc.stderr)
         cls.out = json.loads(proc.stdout)
@@ -240,6 +248,44 @@ class SupplierPriceLists(unittest.TestCase):
         # a choice made in an earlier import is used again
         self.assertEqual(rows["Film 18x2000 Clear Wrap"][4], "plastic wrap")
         self.assertTrue(rows["Film 18x2000 Clear Wrap"][10])
+
+
+    def test_dates(self):
+        self.assertEqual(self.out["dates"], {"11/17/2026": "2026-11-17", "11/17/26": "2026-11-17", "2026-11-17": "2026-11-17",
+                                             "Nov 17, 2026": "2026-11-17", "November 7, 2026": "2026-11-07", "17-Nov-26": "2026-11-17",
+                                             "46343": "2026-11-17", "13/45/2026": "", "soon": ""})
+
+    def test_newest_price_wins(self):
+        f = self.out["files"]["dated"]
+        self.assertEqual(f["date"], "2026-11-01", "the file's date is its latest order date")
+        # the same butter on two dates: the later one is ticked, whatever it costs
+        rows = f["rows"]
+        self.assertEqual([r[2] for r in rows if r[1] == "Butter Solid Unsalted" and r[7]], [2.2222])
+        self.assertEqual(f["prices"]["butter"]["at"] if "butter" in f["prices"] else f["prices"]["unsalted butter"]["at"], "2026-11-01")
+        # two onions: the more recent (11/01, $0.60/lb) over the cheaper but older (10/15, $0.56/lb)
+        self.assertEqual(f["prices"]["onion"], {"p": 0.6, "per": "lb", "src": "Test #100009", "at": "2026-11-01"})
+        # a saved price newer than the file's is kept: that food is not ticked
+        self.assertNotIn("onion", self.out["files"]["dated_book"]["prices"])
+        # saving: an older price never replaces a newer one; one with no date replaces one with a date only when it has none
+        merged = self.out["merge"]
+        self.assertEqual(merged["items"]["butter"]["p"], 3)
+        self.assertEqual(merged["items"]["milk"]["p"], 7)
+        self.assertEqual(merged["items"]["egg"]["p"], 0.3)
+        self.assertEqual((merged["added"], merged["kept"]), (2, ["butter"]))
+
+    def test_pdf_invoice_lines(self):
+        f = self.out["files"]["invoice"]
+        self.assertEqual((f["supplier"], f["date"]), ("Sysco", "2026-11-12"))
+        rows = self.rows("invoice")
+        self.assertEqual(len(rows), 5, "only the product lines: not the subtotal, surcharge, tax, total or remit-to")
+        self.assertEqual(rows["SYS CLS CHEESE AMERICAN YEL LOAF"][0], "1234567")
+        self.assertEqual(rows["SYS CLS CHEESE AMERICAN YEL LOAF"][2:4], [2.909, "lb"])            # 6 x 5 lb, $87.27
+        beef = rows["FIRE RIVER BEEF GROUND 80/20 FINE"]
+        self.assertEqual(beef[2:5] + [beef[8]], [3.39, "lb", "ground beef", "catch weight"])   # 41.2 lb at $3.39, $139.67 for 2 cases
+        self.assertEqual(rows["WHLFCLS BUTTER SOLID UNSALTED"][2:5], [2.1972, "lb", "unsalted butter"])   # brand first, then the item
+        self.assertEqual(rows["WHLFARM EGG SHELL LARGE GRADE AA"][2:5], [0.2292, "each", "egg"])          # 15 dozen, $41.25
+        self.assertEqual(rows["SYS CLS MILK WHOLE"][2:5], [7.6, "gallon", "milk"])
+        self.assertEqual(f["prices"]["milk"]["at"], "2026-11-12", "dated by the invoice")
 
 
 if __name__ == "__main__":

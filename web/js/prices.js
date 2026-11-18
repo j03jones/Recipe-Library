@@ -54,7 +54,7 @@ function change(fn) {
 export const setPrice = (key, p, per) => change((d) => {
   const v = money(typeof p === 'string' ? parseFloat(p) : p);
   if (v == null || p === '' || p == null) delete d.items[key];
-  else d.items[key] = { p: v, per };          // typed by hand: no longer the supplier's price
+  else d.items[key] = { p: v, per, at: today() };   // typed by hand: no longer the supplier's price, and the newest
 });
 export const removePrice = (key) => change((d) => { delete d.items[key]; });
 export const setMenuPrice = (id, p) => change((d) => {
@@ -63,12 +63,32 @@ export const setMenuPrice = (id, p) => change((d) => {
 });
 export const setTarget = (pct) => change((d) => { d.target = clean({ target: pct }).target; });
 
-/** Add many prices at once (a supplier price list): { food: { p, per, src, at } }. Returns how many. */
+export const today = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * `incoming` prices laid over `current` ones, the newest winning: a price is not replaced by one dated earlier
+ * (an old invoice imported after a newer one). Returns { items, added, kept: [foods whose newer price stayed] }.
+ */
+export function mergeNewest(current, incoming) {
+  const items = { ...current };
+  let added = 0;
+  const kept = [];
+  for (const [food, e] of Object.entries(incoming)) {
+    const have = items[food];
+    if (have?.at && e.at && have.at > e.at) { kept.push(food); continue; }
+    items[food] = e;
+    added++;
+  }
+  return { items, added, kept };
+}
+
+/** Add many prices at once (a supplier price list): { food: { p, per, src, at } }. Returns how many were added
+ *  (prices newer than these are kept). */
 export function addMany(items) {
   const d = load();
-  const n = Object.keys(items).length;
-  if (n) save({ ...d, items: { ...d.items, ...items } });
-  return n;
+  const r = mergeNewest(d.items, items);
+  if (r.added) save({ ...d, items: r.items });
+  return r.added;
 }
 
 /** Two price books combined (first sign-in on a device that already has one): this device's prices win ties. */

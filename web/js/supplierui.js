@@ -4,7 +4,7 @@
 import { FOODS } from './nutridata.js';
 import { identify, PRICE_UNITS } from './nutrition.js';
 import * as prices from './prices.js';
-import { ROLES, defaultPicks, guessSupplier, headingKey, matchKey, readSupplierFile, roleLabel, toPrices } from './supplier.js';
+import { ROLES, defaultPicks, guessSupplier, headingKey, isOlder, matchKey, readSupplierFile, roleLabel, toPrices } from './supplier.js';
 import { readTable } from './xlsx.js';
 
 const MAP_KEY = 'recipelib.supplierColumns';      // { [headingKey]: { role: column } }, remembered per file layout
@@ -25,7 +25,7 @@ function saveOwn(items, matches) {
 }
 
 /** The file types the import accepts, for <input type=file accept>. */
-export const ACCEPT = '.csv,.txt,.tsv,.xlsx,text/csv,text/plain,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+export const ACCEPT = '.csv,.txt,.tsv,.xlsx,.pdf,application/pdf,text/csv,text/plain,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 /** A chosen file as the importer takes it: rows (Excel) or text (CSV). Throws with a message to show. */
 export const readImportFile = (file) => readTable(file);
 
@@ -44,7 +44,7 @@ export function supplierImport({ h, fill, toast, file, text, onDone, book: bookI
   let foods;                                      // row index -> food key chosen (from the match, or typed)
   let filter = 'all';
   let shown = PAGE;
-  const supplierIn = h('input', { type: 'text', maxlength: '40', value: guessSupplier(file?.name, text), placeholder: 'Sysco, SGC, Ben E. Keith…', 'aria-label': 'Supplier' });
+  const supplierIn = h('input', { type: 'text', maxlength: '40', value: (Array.isArray(text) && text.supplier) || guessSupplier(file?.name, text), placeholder: 'Sysco, SGC, Ben E. Keith…', 'aria-label': 'Supplier' });
   const book = bookIn || prices.load().items;
   const matches = matchesIn || loadMatches();
   const ownNames = [...new Set([...ingredients, ...Object.keys(book)])];
@@ -52,6 +52,15 @@ export function supplierImport({ h, fill, toast, file, text, onDone, book: bookI
   // your own ingredients first in the suggestions, then the food table
   const known = [...ownNames.sort(), ...[...new Set(FOODS.map((f) => f[0]))].filter((f) => !ours.has(f)).sort()];
   const listId = `foods-${Math.random().toString(36).slice(2, 8)}`;
+
+  // the date these prices are from: the invoice's or order's when the file says, else today. A saved price newer
+  // than this is kept.
+  const dateIn = h('input', { type: 'date', 'aria-label': 'Prices as of', max: today(), onchange: () => {
+    picks = defaultPicks(read.rows, { book, date: dateIn.value || today() });
+    paint();
+  } });
+  const when = (r) => r.date || dateIn.value || today();
+  const fmtDate = (d) => { const [y, m, dd] = String(d).split('-').map(Number); return y ? new Date(y, m - 1, dd).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : d; };
 
   function load() {
     const saved = override || null;
@@ -61,7 +70,8 @@ export function supplierImport({ h, fill, toast, file, text, onDone, book: bookI
       const remembered = loadMaps()[headingKey(read.headings)];
       if (remembered) { override = remembered; read = readSupplierFile(text, { map: remembered, extraNames: ownNames, matches }); }
     }
-    picks = defaultPicks(read.rows);
+    if (!dateIn.value) dateIn.value = read.date || today();
+    picks = defaultPicks(read.rows, { book, date: dateIn.value });
     foods = read.rows.map((r) => r.food || '');
     shown = PAGE;
   }
@@ -96,23 +106,26 @@ export function supplierImport({ h, fill, toast, file, text, onDone, book: bookI
     const chip = (key, text, n) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(filter === key), onclick: () => { filter = key; shown = PAGE; paint(); } }, `${text} ${n}`);
     const add = h('button', { class: 'primary', type: 'button', disabled: !tickedRows.length, onclick: async (e) => {
       const supplier = supplierIn.value.trim();
-      const items = toPrices(rows.map((r, i) => ({ ...r, food: foods[i] })), new Set(tickedRows), supplier, today());
+      const items = toPrices(rows.map((r, i) => ({ ...r, food: foods[i] })), new Set(tickedRows), supplier, dateIn.value || today());
       e.target.disabled = true;
       // remember what each ticked product was matched to, so the next order from this supplier matches itself
       const learned = {};
       for (const i of tickedRows) if (rows[i].description && foods[i]) learned[matchKey(rows[i].description)] = foods[i];
       let n;
       try { n = await save(items, learned); } catch (err) { e.target.disabled = false; toast(err?.message || 'Could not save the prices'); return; }
-      toast(`Added ${n} price${n === 1 ? '' : 's'}${supplier ? ` from ${supplier}` : ''}`);
+      const kept = tickedRows.length - n;
+      toast(`Added ${n} price${n === 1 ? '' : 's'}${supplier ? ` from ${supplier}` : ''}${kept > 0 ? `; ${kept} newer price${kept === 1 ? '' : 's'} kept` : ''}`);
       onDone?.(n, supplier);
     } }, `Add ${tickedRows.length} price${tickedRows.length === 1 ? '' : 's'}`);
 
     fill(root,
       h('h2', null, 'Import a supplier price list'),
       h('label', { class: 'supname' }, 'Supplier ', supplierIn),
+      h('label', { class: 'supname' }, 'Prices as of ', dateIn),
+      Array.isArray(text) && text.invoice && h('p', { class: 'muted small' }, 'Read from the invoice. Check each line: invoices are laid out differently, so a line can be missed or misread.'),
       rows.length
         ? h('p', { class: 'muted small', role: 'status' }, `${rows.length} products: ${matched} matched to a food, ${needFood} need a food chosen, ${noPrice} could not be priced. `,
-          'Where several products match one food, the cheapest per pound (or gallon, or piece) is ticked.')
+          'Where several products match one food, the most recent price is ticked (on the same date, the cheapest per pound, gallon or piece). A price you already have that is newer is kept.')
         : h('p', { class: 'note' }, 'No products were found in this file. Check the columns below, or export the order guide again as CSV with prices included.'),
       read.noPrices && h('p', { class: 'note' }, 'This file lists products but no prices (a Sysco purchase history leaves its Case $ column empty). '
         + 'Export an order guide or an invoice with prices, or choose the price column below if it has another name.'),
@@ -135,14 +148,16 @@ export function supplierImport({ h, fill, toast, file, text, onDone, book: bookI
           paint();
         });
         const now = foods[i] && book[foods[i]];
+        const newer = now && isOlder(when(r), now);
         return h('li', { class: `suprow${r.price ? '' : ' off'}` },
           h('label', { class: 'supbox' }, box),
           h('div', { class: 'supwhat' },
             h('strong', null, r.description || '(no description)'),
-            h('span', { class: 'muted small' }, [r.brand, r.item && `#${r.item}`, r.packText, r.casePrice != null && `${usd(r.casePrice)} ${!r.price || r.price.from === 'case' ? 'case' : 'listed'}`].filter(Boolean).join(' · ')),
+            h('span', { class: 'muted small' }, [r.brand, r.item && `#${r.item}`, r.packText, r.date && fmtDate(r.date), r.casePrice != null && `${usd(r.casePrice)} ${!r.price || r.price.from === 'case' ? 'case' : 'listed'}`].filter(Boolean).join(' · ')),
             r.price ? h('span', { class: 'supprice' }, priceText(r), r.price.from === 'catch weight' && h('span', { class: 'muted small' }, ' (priced by the pound)'),
               r.price.from === 'each unit' && h('span', { class: 'muted small' }, ' (price for one, not the case)'),
-              now && h('span', { class: 'muted small' }, `  (now ${per(now)}${now.src ? `, ${now.src}` : ''})`))
+              now && h('span', { class: newer ? 'note small' : 'muted small' }, newer ? `  Your price from ${fmtDate(now.at)} (${per(now)}) is newer and is kept`
+                : `  (now ${per(now)}${now.src ? `, ${now.src}` : ''}${now.at ? `, ${fmtDate(now.at)}` : ''})`))
               : h('span', { class: 'note small' }, r.why === 'pack size not understood' ? `Pack size “${r.packText}” not understood` : 'No price')),
           h('div', { class: 'supfood' }, foodIn,
             foods[i] && (foods[i] === r.food && r.remembered ? h('span', { class: 'muted small suptag' }, 'as you chose last time')
