@@ -46,11 +46,12 @@ export function parseCsv(text) {
 
 const norm = (h) => String(h || '').toLowerCase().replace(/[^a-z0-9$#/%]+/g, ' ').trim();
 // What a column is, from its heading. Earlier patterns win when a heading could be two things.
-export const ROLES = ['description', 'item', 'brand', 'packsize', 'pack', 'size', 'unit', 'price', 'perlb', 'each', 'shipped', 'qty', 'total'];
+export const ROLES = ['description', 'item', 'brand', 'packsize', 'pack', 'size', 'unit', 'price', 'perlb', 'each', 'shipped', 'qty', 'total', 'date'];
 const ROLE_LABEL = { description: 'Description', item: 'Item number', brand: 'Brand', packsize: 'Pack and size together', pack: 'Pack (how many)',
-  size: 'Size (of each)', unit: 'Unit of the size', price: 'Case price', perlb: 'Price per pound (or Y/N)', each: 'Price per piece, or Y/N split', shipped: 'Quantity shipped', qty: 'Quantity ordered', total: 'Line total' };
+  size: 'Size (of each)', unit: 'Unit of the size', price: 'Case price', perlb: 'Price per pound (or Y/N)', each: 'Price per piece, or Y/N split', shipped: 'Quantity shipped', qty: 'Quantity ordered', total: 'Line total', date: 'Order or invoice date' };
 export const roleLabel = (r) => ROLE_LABEL[r] || r;
 const HEADINGS = [
+  ['date', /^((invoice|order|delivery|ship|shipped|purchase|last order|last ordered|last purchase|last purchased|price|po) )?date$|^date (ordered|shipped|delivered|invoiced)$|^inv date$/],
   ['total', /^(total|extended|ext|line)( price| \$| amount| total| cost)?$|^total \$$|^amount due$/],
   ['shipped', /^(confirmed|shipped|qty shipped|delivered|filled|ship qty|qty delivered|qty confirmed)$/],
   ['qty', /^(ordered|qty|quantity|qty ordered|order qty|cases|cases ordered|qty ord)$/],
@@ -97,6 +98,45 @@ export function findTable(rows) {
 
 /** A short fingerprint of a file's headings, so a column choice made once is remembered for that supplier. */
 export const headingKey = (headings) => headings.map(norm).filter(Boolean).join('|').slice(0, 300);
+
+// ------------------------------------------------------------------ dates
+
+const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 };
+const iso = (y, m, d) => {
+  if (y < 100) y += 2000;
+  const t = new Date(Date.UTC(y, m - 1, d));
+  return y >= 2000 && y < 2100 && t.getUTCMonth() === m - 1 && t.getUTCDate() === d ? t.toISOString().slice(0, 10) : '';
+};
+/** A date as YYYY-MM-DD, or '': "11/17/2026", "11/17/26", "2026-11-17", "Nov 17, 2026", "17-Nov-26",
+ *  or an Excel date number (46343). */
+export function parseDate(v) {
+  const t = String(v ?? '').trim();
+  let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return iso(+m[1], +m[2], +m[3]);
+  m = t.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2}|\d{4})\b/);
+  if (m) return iso(+m[3], +m[1], +m[2]);
+  m = t.match(/^([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})/);
+  const mon = m && (MONTHS[m[1].slice(0, 4).toLowerCase()] || MONTHS[m[1].slice(0, 3).toLowerCase()]);
+  if (mon) return iso(+m[3], mon, +m[2]);
+  m = t.match(/^(\d{1,2})[\s-]([A-Za-z]{3})[a-z]*[\s-](\d{2}|\d{4})$/);
+  if (m && MONTHS[m[2].toLowerCase()]) return iso(+m[3], MONTHS[m[2].toLowerCase()], +m[1]);
+  if (/^\d{5}(\.\d+)?$/.test(t) && +t > 36000 && +t < 73000) {              // Excel counts days from 1899-12-30
+    return new Date(Date.UTC(1899, 11, 30) + Math.floor(+t) * 86400000).toISOString().slice(0, 10);
+  }
+  return '';
+}
+
+/** The date an invoice or order is for, from its text: a labelled one ("Invoice Date: 11/17/2026") first, else the first date. */
+export function documentDate(text) {
+  const s = String(text || '').slice(0, 20000);
+  const DATE = '(\\d{4}-\\d{1,2}-\\d{1,2}|\\d{1,2}[\\/.-]\\d{1,2}[\\/.-]\\d{2,4}|[A-Za-z]{3,9}\\.?\\s+\\d{1,2},?\\s+\\d{4})';
+  for (const label of ['invoice', 'order', 'delivery', 'deliver', 'ship', 'del']) {
+    const m = s.match(new RegExp(`\\b${label}\\w*\\.?\\s*(?:date|dt)\\b[^\\d\\n]{0,12}[\\s\\S]{0,40}?${DATE}`, 'i'));
+    if (m && parseDate(m[1])) return parseDate(m[1]);
+  }
+  const any = s.match(new RegExp(DATE));
+  return any ? parseDate(any[1]) : '';
+}
 
 // ------------------------------------------------------------------ pack and size
 
@@ -294,12 +334,19 @@ function bestName(words, names, keyOf) {
 /** The price-book food for a description ("OIL CANOLA FRY" -> "canola oil"), or '' when there is no good match.
  *  `extra` is the kitchen's own ingredient names (its costing sheet and price book): one of those that fits
  *  is used before any name from the food table, so "BUTTER SOLID UNSALTED" goes to your "butter". */
-export function matchFood(desc, extra = []) {
-  const words = expand(desc).split(' ').map(single);
-  const own = extra.length ? bestName(words, extra, itemKey) : null;
-  if (own) return itemKey(own);
-  const food = bestName(words, candidateNames(), itemKey);
-  return food ? identify(food).key : '';
+export function matchFood(desc, extra = [], { brandFirst = false } = {}) {
+  const all = expand(desc).split(' ').map(single);
+  // an invoice line has the brand in front ("WHLFCLS BUTTER SOLID", "FIRE RIVER BEEF GROUND"): with nothing
+  // found, try again without the first word, then the first two
+  for (let skip = 0; skip <= (brandFirst ? 2 : 0); skip++) {
+    const words = all.slice(skip);
+    if (!words.length) break;
+    const own = extra.length ? bestName(words, extra, itemKey) : null;
+    if (own) return itemKey(own);
+    const food = bestName(words, candidateNames(), itemKey);
+    if (food) return identify(food).key;
+  }
+  return '';
 }
 
 /** How a product is remembered between imports: its description, tidied. */
@@ -339,6 +386,7 @@ const candidateNames = () => (names ||= [...new Set(FOODS.map((f) => f[0]))]);
  * `map` overrides the columns found by name ({ role: column index }).
  */
 export function readSupplierFile(text, { map: override = null, extraNames = [], matches = null } = {}) {
+  const fileDate = Array.isArray(text) ? (text.date || '') : documentDate(String(text || '').slice(0, 3000));
   const rows = Array.isArray(text) ? text.map((r) => (Array.isArray(r) ? r : []).map((c) => String(c ?? '').trim())) : parseCsv(text);
   const own = [...new Set(extraNames.map((n) => itemKey(String(n || ''))).filter(Boolean))];
   const ownSet = new Set(own);
@@ -359,30 +407,38 @@ export function readSupplierFile(text, { map: override = null, extraNames = [], 
     const price = unitPrice({ price: cell(r, 'price'), perlb: cell(r, 'perlb'), each: cell(r, 'each'), total: cell(r, 'total'),
       qty: cell(r, 'shipped') || cell(r, 'qty') }, pk);
     const remembered = description && matches ? matches[matchKey(description)] : '';
-    const food = remembered || (description ? matchFood(description, own) : '');
+    const food = remembered || (description ? matchFood(description, own, { brandFirst: !!text?.invoice }) : '');
     const why = !description ? 'no description' : !price ? (money(cell(r, 'price')) == null ? 'no price' : 'pack size not understood') : !food ? 'no matching food' : '';
     out.push({ line: table.headIndex + i + 2, item: cell(r, 'item'), description, brand: cell(r, 'brand'), pack: pk, packText, casePrice: money(cell(r, 'price')),
       price, food, suggest: food || (description ? plainName(description) : ''), why,
-      remembered: !!remembered, ours: !!food && ownSet.has(food) });
+      remembered: !!remembered, ours: !!food && ownSet.has(food), date: parseDate(cell(r, 'date')) });
   });
   return { rows: out, headings: table.headings, map, found: table.map, typed: table.typed,
     // a file with products but not one price (Sysco's purchase history leaves "Case $" empty)
-    noPrices: out.length > 0 && out.every((x) => x.casePrice == null && !x.price) };
+    noPrices: out.length > 0 && out.every((x) => x.casePrice == null && !x.price),
+    // the date the prices are from: the invoice's, or the latest order date in the file
+    date: out.reduce((a, x) => (x.date > a ? x.date : a), '') || fileDate };
 }
 
 /**
- * Which rows to add: for each food, the cheapest per unit among the rows that matched it (others are
- * still listed, unticked). Returns the row indexes to tick.
+ * Which rows to add: for each food, the most recent price (by order date); on the same date, the cheapest per
+ * unit. Others are still listed, unticked. A food whose saved price (`book`) is newer than this file's is not
+ * ticked: the newest price is the one kept. `date` is the file's own date, for rows with none.
  */
-export function defaultPicks(rows) {
+export function defaultPicks(rows, { book = {}, date = '' } = {}) {
   const bestFor = new Map();
+  const when = (r) => r.date || date || '';
   rows.forEach((r, i) => {
     if (!r.price || !r.food) return;
+    if (isOlder(when(r), book[r.food])) return;
     const cur = bestFor.get(r.food);
-    if (cur == null || (rows[cur].price.per === r.price.per && r.price.p < rows[cur].price.p)) bestFor.set(r.food, i);
+    const c = cur == null ? null : rows[cur];
+    if (c == null || when(r) > when(c) || (when(r) === when(c) && c.price.per === r.price.per && r.price.p < c.price.p)) bestFor.set(r.food, i);
   });
   return new Set(bestFor.values());
 }
+/** True when a price dated `date` is older than the saved price `saved` ({ at }): it should not replace it. */
+export const isOlder = (date, saved) => !!(date && saved?.at && saved.at > date);
 
 /** What goes into the price book for the picked rows: { food: { p, per, src, at } }. */
 export function toPrices(rows, picks, supplier, today) {
@@ -390,7 +446,7 @@ export function toPrices(rows, picks, supplier, today) {
   for (const i of picks) {
     const r = rows[i];
     if (!r || !r.price || !r.food) continue;
-    items[r.food] = { p: r.price.p, per: r.price.per, src: [supplier, r.item && `#${r.item}`].filter(Boolean).join(' ').slice(0, 60), at: today };
+    items[r.food] = { p: r.price.p, per: r.price.per, src: [supplier, r.item && `#${r.item}`].filter(Boolean).join(' ').slice(0, 60), at: r.date || today };
   }
   return items;
 }

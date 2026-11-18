@@ -22,7 +22,7 @@ import { toRecord, fromRecord } from '../js/model.js';
 import { PRICE_UNITS, costing, defaultPriceUnit, foodCostPct, nutrition, suggestedPrice } from '../js/nutrition.js';
 import { macroDetails, nutrientTiles } from '../js/nutritionui.js';
 import * as photos from '../js/photos.js';
-import { clean as cleanPrices, DEFAULT_TARGET } from '../js/prices.js';
+import { clean as cleanPrices, DEFAULT_TARGET, mergeNewest, today } from '../js/prices.js';
 import { byAisle, itemName, shoppingList } from '../js/shopping.js';
 import { fromPlainText } from '../js/transfer.js';
 import { parseIngredientLine } from '../js/webimport.js';
@@ -761,8 +761,9 @@ async function viewSheet(m) {
       // the costing sheet's ingredients come first when matching, and choices are remembered for the whole team
       ingredients: rows.filter((x) => !x.free).map((x) => x.key), matches: kitchen.matches || {},
       save: async (items, learned) => {
-        await changeKitchen(m, (d) => { Object.assign(d.items, items); d.matches = { ...(d.matches || {}), ...learned }; });
-        return Object.keys(items).length;
+        let added = 0;
+        await changeKitchen(m, (d) => { const r = mergeNewest(d.items, items); d.items = r.items; added = r.added; d.matches = { ...(d.matches || {}), ...learned }; });
+        return added;
       },
       onDone: () => {
         fill(supPanel);
@@ -779,7 +780,7 @@ async function viewSheet(m) {
     try {
       await changeKitchen(m, (d) => {
         if (v === '' || !(p >= 0)) delete d.items[key];
-        else { d.items[key] = { p: Math.round(p * 10000) / 10000, per }; delete d.links[key]; }   // its own price replaces a link
+        else { d.items[key] = { p: Math.round(p * 10000) / 10000, per, at: today() }; delete d.links[key]; }   // its own price replaces a link
       });
       rows = ingredientSheet(data.recipes, cache.get(r.id).kitchen);
       toast(v === '' ? 'Price removed' : 'Price saved');
@@ -909,7 +910,7 @@ async function viewCostDetail(m, recipeId) {
     const commit = () => {
       const v = price.value.trim();
       if (v === '' && !l.price) return;
-      save((d) => { const p = parseFloat(v); if (v === '' || !(p >= 0)) delete d.items[l.key]; else d.items[l.key] = { p: Math.round(p * 10000) / 10000, per: unit.value }; }, 'Price saved');
+      save((d) => { const p = parseFloat(v); if (v === '' || !(p >= 0)) delete d.items[l.key]; else d.items[l.key] = { p: Math.round(p * 10000) / 10000, per: unit.value, at: today() }; }, 'Price saved');
     };
     price.addEventListener('change', commit);
     unit.addEventListener('change', () => { if (price.value.trim()) commit(); });
@@ -991,7 +992,7 @@ async function viewPlate(m, plateId) {
       const v = price.value.trim(); const p = parseFloat(v);
       if (v === '' && !l.price) return;
       try {
-        await changeKitchen(m, (d) => { if (v === '' || !(p >= 0)) delete d.items[l.key]; else d.items[l.key] = { p: Math.round(p * 10000) / 10000, per: unit.value }; });
+        await changeKitchen(m, (d) => { if (v === '' || !(p >= 0)) delete d.items[l.key]; else d.items[l.key] = { p: Math.round(p * 10000) / 10000, per: unit.value, at: today() }; });
         toast('Price saved'); paint();
       } catch (err) { toast(err.message); }
     };

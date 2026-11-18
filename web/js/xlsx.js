@@ -87,10 +87,17 @@ export async function readXlsx(buffer) {
   return rows;
 }
 
-/** A chosen file as what the supplier reader takes: rows for a workbook, text for anything else. */
+/** A chosen file as what the supplier reader takes: rows for a workbook or an invoice PDF, text for anything else. */
 export async function readTable(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (isXlsx(bytes)) return readXlsx(bytes);
+  // a PDF invoice: its text, read on the device, then its product lines
+  if (bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) {
+    const [{ pdfToText }, { invoiceRows }] = await Promise.all([import('./pdfread.js'), import('./invoice.js')]);
+    const text = await pdfToText(bytes);
+    if (!text.replace(/\s/g, '')) throw new Error('This PDF has no text in it (a scan or photo). Download the invoice as a PDF from the supplier’s site instead.');
+    return invoiceRows(text);
+  }
   if (bytes[0] === 0xd0 && bytes[1] === 0xcf) throw new Error('This is an older Excel file (.xls). Open it in Excel and save it as .xlsx or CSV, then import that.');
   return td.decode(bytes);
 }

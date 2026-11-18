@@ -626,6 +626,15 @@ async def run():
         await page.wait_for_function("document.querySelector(\"input[aria-label='Price of butter']\").value === '3'")
         check("and the imported price fills in the recipe's line", await row.inner_text() == "$1.00"
               and await page.locator("details.costcard .supplier").count() == 0, await row.inner_text())
+        # an older invoice never replaces a newer price
+        old_csv = Path(tempfile.mkdtemp()) / "old_invoice.csv"
+        old_csv.write_text("Item,Description,Pack,Size,Case Price,Invoice Date\n100,BUTTER SOLID GRADE AA,36,1 LB,$36.00,01/05/2026\n")
+        await page.set_input_files("details.costcard input[type=file]", str(old_csv))
+        await page.wait_for_selector("details.costcard .supplier .suprow")
+        sup_text = await page.inner_text("details.costcard .supplier")
+        check("an older price shows the newer one is kept, and is not ticked",
+              "is newer and is kept" in sup_text and "Add 0 prices" in await page.inner_text("details.costcard .suptools button.primary"), sup_text[:400])
+        await page.click("details.costcard .suptools button:has-text('Cancel')")
         await page.fill("input[aria-label='Price of butter']", "4")
         # the printed costing sheet: title, costed lines and totals, nothing else
         check("the card offers a costing sheet to print", await page.locator("details.costcard button:has-text('Print costing sheet')").count() == 1)

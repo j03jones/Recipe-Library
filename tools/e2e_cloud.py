@@ -984,7 +984,7 @@ async def run():
         await st.fill("input[aria-label='Price of butter']", "4.5")
         await st.wait_for_timeout(1800)
         doc = fake.user_data.get(sam_id, {}).get("planner", {})
-        check("prices are saved to the account", doc.get("prices", {}).get("items", {}).get("butter") == {"p": 4.5, "per": "lb"}, doc.get("prices"))
+        check("prices are saved to the account", doc.get("prices", {}).get("items", {}).get("butter", {}).get("p") == 4.5 and doc["prices"]["items"]["butter"].get("per") == "lb" and bool(doc["prices"]["items"]["butter"].get("at")), doc.get("prices"))
         check("saving prices keeps the plan", len(doc.get("plan", {}).get("days", {})) == 1)
         await dev2.goto(URL + "#/prices")
         await dev2.reload()
@@ -1881,7 +1881,7 @@ async def run():
         await rae.fill("input[aria-label='Price of Monterey Jack cheese']", "0.30")
         await rae.press("input[aria-label='Price of Monterey Jack cheese']", "Tab")
         await rae.wait_for_selector(".jrk-plateing >> nth=1 >> text=$0.30")
-        check("and can be priced on the plate, into the price book", fake.kitchens[rid]["items"].get("monterey jack cheese") == {"p": 0.3, "per": "each"},
+        check("and can be priced on the plate, into the price book", fake.kitchens[rid]["items"].get("monterey jack cheese", {}).get("p") == 0.3 and fake.kitchens[rid]["items"]["monterey jack cheese"].get("per") == "each",
               fake.kitchens[rid]["items"])
         await rae.screenshot(path="/tmp/portal_plate.png", full_page=True)
         check("the plate cost adds the ingredients to the recipes", "$1.4" in await rae.inner_text(".jrk-summary"), await rae.inner_text(".jrk-summary"))
@@ -1908,7 +1908,7 @@ async def run():
         await rae.fill("input[aria-label='Price of Onion']", "0.75")
         await rae.press("input[aria-label='Price of Onion']", "Tab")
         await rae.wait_for_timeout(700)
-        check("a price entered on the sheet is saved for every recipe", any(v == {"p": 0.75, "per": "each"} for v in fake.kitchens[rid]["items"].values()), fake.kitchens[rid]["items"])
+        check("a price entered on the sheet is saved for every recipe", any(v.get("p") == 0.75 and v.get("per") == "each" and v.get("at") for v in fake.kitchens[rid]["items"].values()), fake.kitchens[rid]["items"])
         await rae.screenshot(path="/tmp/portal_sheet.png", full_page=True)
         # a purveyor's price list imported straight into the restaurant's prices
         await rae.select_option("select[aria-label='Show']", "all")
