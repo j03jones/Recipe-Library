@@ -44,6 +44,16 @@ class Finder(unittest.TestCase):
         g = [g for g in D.find_duplicate_groups(self.recipes) if 1 in g.ids][0]
         self.assertEqual(g.keep_id, 2)    # longer directions
 
+    def test_levels_filter_stops_loose_chains(self):
+        # a sure copy pair plus a loose variation of it: by default the group is only as sure as its weakest pair
+        a = mk("Leek Soup", SOUP, SOUP_DIR); a.id = 1
+        b = mk("Leek Soup", SOUP, SOUP_DIR); b.id = 2
+        c = mk("Leek Soup", SOUP[:6] + ["bacon"], "Fry the bacon, then make a different soup entirely."); c.id = 3
+        everything = D.find_duplicate_groups([a, b, c])
+        self.assertEqual([(sorted(g.ids), g.level) for g in everything], [([1, 2, 3], D.POSSIBLE)])
+        sure = D.find_duplicate_groups([a, b, c], levels=(D.HIGH, D.LIKELY))
+        self.assertEqual([(sorted(g.ids), g.level) for g in sure], [([1, 2], D.HIGH)])
+
     def test_ignored_pairs(self):
         self.assertEqual([sorted(g.ids) for g in D.find_duplicate_groups(self.recipes, ignored=[(2, 1)])], [[3, 4]])
 
