@@ -278,3 +278,18 @@
   border: 1px dashed var(--jrk-line); border-radius: 6px; background: transparent; color: inherit; }
 #jrk-portal .jrk-via { display: block; }
 #jrk-portal .jrk-prices select { font: inherit; font-size: .9rem; max-width: 12rem; }
+
+/* Par list (kitchen.js: #kitchen/<id>/par) */
+#jrk-portal .jrk-parsum { margin: .2rem 0 .8rem; }
+#jrk-portal .jrk-parlist li.jrk-pardone > span:first-child { opacity: .6; }
+#jrk-portal .jrk-parmake { font-weight: 600; white-space: nowrap; }
+#jrk-portal .jrk-parlist input, #jrk-portal .jrk-parcount input, #jrk-portal .jrk-pardays input { width: 5.5rem; font: inherit; padding: .45rem .5rem; border: 1px solid #aeb7b1; border-radius: 6px; }
+#jrk-portal .jrk-parcount input { font-size: 1.1rem; }
+#jrk-portal .jrk-pardays { border: 1px solid var(--jrk-line); border-radius: 8px; padding: .6rem .8rem; margin: 0 0 1rem; }
+#jrk-portal .jrk-parday { display: inline-flex; flex-direction: column; gap: .2rem; font-size: .9rem; }
+#jrk-portal .jrk-pardays .jrk-parday input { width: 4.2rem; }
+#jrk-portal table.jrk-partable td, #jrk-portal table.jrk-partable thead th { text-align: right; }
+#jrk-portal table.jrk-partable td:first-child, #jrk-portal table.jrk-partable thead th:first-child, #jrk-portal table.jrk-partable .jrk-station { text-align: left; }
+#jrk-portal .jrk-partable .jrk-station { background: #f4f6f4; }
+#jrk-portal .jrk-partable tr.jrk-off { opacity: .55; }
+@media print { #jrk-portal .jrk-parlist button, #jrk-portal .jrk-parmark { display: none !important; } }

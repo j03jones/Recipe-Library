@@ -222,6 +222,72 @@ class Fake:
                 out.append(r)
         return out
 
+    async def par_api(self, req, path, q, body, user, ok, eq):
+        """add_par_list.sql: owners (and the admin) set the items; the team counts and marks prep while the plan is on."""
+        items = self.__dict__.setdefault("par_items", {})
+        days = self.__dict__.setdefault("prep_days", {})
+        admin = user["role"] == "admin"
+        can_prep = lambda rid: admin or (self.member_of(user, rid) and self.on_plan(self.restaurants[rid]))
+        can_set = lambda rid: admin or (self.member_of(user, rid, "owner") and self.on_plan(self.restaurants[rid]))
+        deny = {"message": "new row violates row-level security policy"}
+        name = lambda: user.get("name") or user["email"].split("@")[0]
+        from datetime import date as _date, datetime as _dt, timezone as _tz
+        dow = lambda iso: (_date.fromisoformat(iso).weekday() + 1) % 7
+        if path == "/rest/v1/restaurant_par_items":
+            if req.method == "GET":
+                rid_ = eq("restaurant_id")
+                if not (admin or self.member_of(user, rid_)):
+                    return await ok([])
+                return await ok(sorted([x for x in items.values() if x["restaurant_id"] == rid_], key=lambda x: (x["sort"], x["name"])))
+            if req.method == "POST":
+                if not can_set(body["restaurant_id"]):
+                    return await ok(deny, 403)
+                iid = str(uuid.uuid4())
+                items[iid] = dict(body, id=iid)
+                return await ok([items[iid]], 201)
+            it = items.get(eq("id"))
+            if not it or not can_set(it["restaurant_id"]):
+                return await ok([])
+            if req.method == "DELETE":
+                del items[it["id"]]
+                for k in [k for k in days if k[0] == it["id"]]:
+                    del days[k]
+                return await ok([it])
+            it.update({k: v for k, v in body.items() if k not in ("id", "restaurant_id")})
+            return await ok([it])
+        if path == "/rest/v1/restaurant_prep_days":
+            rid_ = eq("restaurant_id")
+            want = q.get("for_date", [""])[0].removeprefix("in.(").removesuffix(")").split(",")
+            if not (admin or self.member_of(user, rid_)):
+                return await ok([])
+            return await ok([d for d in days.values() if d["restaurant_id"] == rid_ and d["for_date"] in want])
+
+        def day_row(it, iso):
+            return days.setdefault((it["id"], iso), dict(item_id=it["id"], for_date=iso, restaurant_id=it["restaurant_id"],
+                                                         par=it["pars"][dow(iso)], on_hand=None, counted_at=None, counted_name="",
+                                                         made=0, made_log=[]))
+        now = _dt.now(_tz.utc).isoformat()
+        if path == "/rest/v1/rpc/save_par_count":
+            rid_ = body["p_restaurant"]
+            if not can_prep(rid_):
+                return await ok({"message": "Only this restaurant's team can count, while the plan is on."}, 400)
+            n = 0
+            for c in body["p_counts"]:
+                it = items.get(c["item"])
+                if not it or it["restaurant_id"] != rid_:
+                    continue
+                d = day_row(it, body["p_date"])
+                d.update(par=it["pars"][dow(body["p_date"])], on_hand=c["on_hand"], counted_at=now, counted_name=name())
+                n += 1
+            return await ok(n)
+        it = items.get(body["p_item"])
+        if not it or not can_prep(it["restaurant_id"]):
+            return await ok({"message": "Only this restaurant's team can mark prep, while the plan is on."}, 400)
+        d = day_row(it, body["p_date"])
+        d["made"] = max(0, d["made"] + body["p_qty"])
+        d["made_log"].append({"qty": body["p_qty"], "by": name(), "at": now})
+        return await ok(d["made"])
+
     async def handle(self, route):
         req = route.request
         if req.method == "OPTIONS":
@@ -370,6 +436,8 @@ class Fake:
             if eq("restaurant_id"):
                 rows = [x for x in rows if x["restaurant_id"] == eq("restaurant_id")]
             return await ok(sorted(rows, key=lambda x: x["created_at"], reverse=True))
+        if path in ("/rest/v1/restaurant_par_items", "/rest/v1/restaurant_prep_days", "/rest/v1/rpc/save_par_count", "/rest/v1/rpc/record_prep"):
+            return await self.par_api(req, path, q, body, user, ok, eq)
         if path == "/rest/v1/restaurant_kitchen":   # a restaurant's shared price book (add_restaurant_kitchen.sql)
             kit = self.__dict__.setdefault("kitchens", {})
             if req.method == "GET":
@@ -1602,8 +1670,8 @@ async def run():
         K = PORTAL + f"#kitchen/{rid}"
         await rae.goto(K); await rae.reload()
         await rae.wait_for_selector(".jrk-subnav")
-        check("a restaurant's page has Recipes, Prep list, Costing and Help tabs, and Team for owners",
-              await rae.locator(".jrk-subnav a").all_inner_texts() == ["Recipes", "Prep list", "Costing", "Help", "Team"])
+        check("a restaurant's page has Recipes, Par list, Prep list, Costing and Help tabs, and Team for owners",
+              await rae.locator(".jrk-subnav a").all_inner_texts() == ["Recipes", "Par list", "Prep list", "Costing", "Help", "Team"])
         await rae.click("a:has-text('+ Add a recipe')")
         await rae.wait_for_selector(".jrk-editor")
         await rae.screenshot(path="/tmp/portal_editor.png", full_page=True)
@@ -1852,6 +1920,66 @@ async def run():
         check("the prep list adds up the ingredients for every batch", "8 lb" in prep.lower() and "tomato" in prep.lower() and "5 lb" in prep, prep[:300])
         check("and shows its food cost to people who see costing", "Estimated food cost: $16.00" in prep, prep[-200:])
         await rae.screenshot(path="/tmp/portal_prep.png", full_page=True)
+
+        # ---- par list (v0.42): the owner sets pars; at close a cook counts; the next day's list is par - on hand
+        await rae.goto(K + "/par")
+        await rae.wait_for_selector("text=No par list yet")
+        await rae.click("a:has-text('Add the first item')")
+        await rae.wait_for_selector("select[aria-label=Recipe]")
+        await rae.select_option("select[aria-label=Recipe]", label="House Salsa Roja")
+        check("choosing a recipe names the par item", await rae.input_value("input[aria-label='Item name']") == "House Salsa Roja")
+        await rae.fill("input[aria-label=Unit]", "qt")
+        await rae.fill("input[aria-label='One batch makes']", "2")
+        await rae.fill("input[aria-label=Station]", "Line")
+        await rae.fill("input[aria-label='Same par every day']", "4")
+        await rae.fill("input[aria-label='Par for Saturday']", "6")
+        await rae.click("button:has-text('Add to the par list')")
+        await rae.wait_for_selector(".jrk-partable")
+        await rae.click("a:has-text('Add an item')")
+        await rae.wait_for_selector("input[aria-label='Item name']")
+        await rae.fill("input[aria-label='Item name']", "Lemons, cut")
+        await rae.fill("input[aria-label=Unit]", "each")
+        await rae.fill("input[aria-label='Same par every day']", "10")
+        await rae.click("button:has-text('Add to the par list')")
+        await rae.wait_for_selector(".jrk-partable td:has-text('Lemons, cut')")
+        salsa_par = next(x for x in fake.par_items.values() if x["name"] == "House Salsa Roja")
+        check("the owner sets a par for each day of the week",
+              salsa_par["pars"] == [4, 4, 4, 4, 4, 4, 6] and salsa_par["unit"] == "qt" and salsa_par["per_batch"] == 2 and salsa_par["recipe_id"], salsa_par)
+        check("the pars table shows each item's cost to those who see costing", "/ qt" in await rae.inner_text(".jrk-partable"))
+        await rae.screenshot(path="/tmp/portal_pars.png", full_page=True)
+        await joe.goto(K + "/par/count"); await joe.reload()
+        await joe.wait_for_selector("input[aria-label='On hand: House Salsa Roja, in qt']")
+        check("staff count, but don't set pars", "Set pars" not in await joe.inner_text(".jrk-costswitch"))
+        await joe.fill("input[aria-label='On hand: House Salsa Roja, in qt']", "1.5")
+        await joe.fill("input[aria-label='On hand: Lemons, cut, in each']", "-2")
+        await joe.click("button:has-text('Save the count')")
+        await joe.wait_for_timeout(300)
+        check("a count that isn't a number is not saved", not fake.prep_days)
+        await joe.fill("input[aria-label='On hand: Lemons, cut, in each']", "")
+        await joe.click("button:has-text('Save the count')")
+        await joe.wait_for_selector("text=Count saved")
+        counted = next(d for d in fake.prep_days.values() if d["item_id"] == salsa_par["id"])
+        check("the count is kept with the day it is for, and who counted", counted["on_hand"] == 1.5 and counted["counted_name"] == "Joe Line", counted)
+        await joe.screenshot(path="/tmp/portal_parcount.png", full_page=True)
+        await joe.click("a:has-text('See that prep list')")
+        await joe.wait_for_selector(".jrk-parlist")
+        day = await joe.inner_text("#jrk-portal")
+        want = 6 - 1.5 if (datetime.fromisoformat(counted["for_date"]).weekday() + 1) % 7 == 6 else 4 - 1.5
+        check("the next day's list is the par less what was counted", f"Make 0 / {want:g} qt" in day and "Make 0 / 10 each" in day and "not counted" in day, day[:600])
+        check("and says who counted", "Counted by Joe Line" in day, day[:300])
+        await joe.click(".jrk-parlist li:has-text('House Salsa Roja') button:has-text('Made')")
+        await joe.wait_for_selector("input[aria-label='How much House Salsa Roja was made']")
+        check("marking prep offers what is left to make", await joe.input_value("input[aria-label='How much House Salsa Roja was made']") == f"{want:g}")
+        await joe.click(".jrk-parmark button:has-text('Save')")
+        await joe.wait_for_selector("text=1 of 2 items done")
+        check("what is made is kept, with who made it", counted["made"] == want and counted["made_log"][-1]["by"] == "Joe Line", counted)
+        check("finished items drop off the list", await joe.locator(".jrk-parlist li:has-text('House Salsa Roja')").count() == 0)
+        await joe.check("text=Show items that are done or at par")
+        check("and come back to look at", "Done" in await joe.inner_text(".jrk-parlist li:has-text('House Salsa Roja')"))
+        await joe.screenshot(path="/tmp/portal_parday.png", full_page=True)
+        await joe.goto(K + "/par/pars")
+        await joe.wait_for_function("!location.hash.endsWith('/par/pars')", timeout=10000)
+        check("staff are sent from the pars page to the prep list", "/par/pars" not in joe.url, joe.url)
 
         # ---- plates: several recipes in one menu item
         await rae.goto(K + "/plate/new")

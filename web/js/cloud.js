@@ -284,6 +284,34 @@ export const listHelpMessages = (restaurantId = null) =>
 export const setHelpMessageStatus = (id, status) => authed(`/rest/v1/restaurant_messages?id=eq.${enc(id)}`, { method: 'PATCH', body: { status } });
 export const saveKitchen = (restaurantId, prices) => authed('/rest/v1/restaurant_kitchen', {
   method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: { restaurant_id: restaurantId, prices } });
+/** Par list (supabase/add_par_list.sql): a restaurant's par items, in order. */
+export const parItems = (restaurantId) => authed(`/rest/v1/restaurant_par_items?restaurant_id=eq.${enc(restaurantId)}&select=*&order=sort,name`)
+  .catch((err) => { throw parError(err); });
+/** Owners and the admin add or change a par item (fields: name, recipe_id, unit, per_batch, station, pars, sort, active). */
+export async function saveParItem(restaurantId, id, fields) {
+  const rows = id
+    ? await authed(`/rest/v1/restaurant_par_items?id=eq.${enc(id)}`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: fields })
+    : await authed('/rest/v1/restaurant_par_items', { method: 'POST', headers: { Prefer: 'return=representation' }, body: { ...fields, restaurant_id: restaurantId } });
+  if (!rows || !rows.length) throw new CloudError('That par item could not be saved. Only the restaurant’s owners set the pars.', 403);
+  return rows[0];
+}
+export async function deleteParItem(id) {
+  const rows = await authed(`/rest/v1/restaurant_par_items?id=eq.${enc(id)}`, { method: 'DELETE', headers: { Prefer: 'return=representation' } });
+  if (!rows || !rows.length) throw new CloudError('That par item could not be deleted. Only the restaurant’s owners set the pars.', 403);
+}
+/** The prep kept for some days (YYYY-MM-DD): the night's count and what was made. */
+export const prepDays = (restaurantId, dates) =>
+  authed(`/rest/v1/restaurant_prep_days?restaurant_id=eq.${enc(restaurantId)}&for_date=in.(${dates.map(enc).join(',')})&select=*`)
+    .catch((err) => { throw parError(err); });
+/** The count at close, for `date` (tomorrow): [{ item, on_hand }]. Returns how many items were saved. */
+export const saveParCount = (restaurantId, date, counts) =>
+  authed('/rest/v1/rpc/save_par_count', { method: 'POST', body: { p_restaurant: restaurantId, p_date: date, p_counts: counts } });
+/** Mark some of an item made on `date` (a negative amount takes it back). Returns the day's total made. */
+export const recordPrep = (itemId, date, qty) =>
+  authed('/rest/v1/rpc/record_prep', { method: 'POST', body: { p_item: itemId, p_date: date, p_qty: qty } });
+/** The database has no par list yet: say which file adds it. */
+const parError = (err) => (/restaurant_par_items|restaurant_prep_days/.test(err.message) && /exist|schema cache|not find/i.test(err.message)
+  ? new CloudError('The par list needs a database update: run supabase/add_par_list.sql in Supabase > SQL Editor.', err.status) : err);
 export const createInvite = (kind, restaurantId = null, memberRole = 'staff', maxUses = 1, days = 14) =>
   authed('/rest/v1/rpc/create_invite', { method: 'POST', body: { p_kind: kind, p_restaurant: restaurantId, p_member_role: memberRole, p_max_uses: maxUses, p_days: days } });
 export const removeMember = (restaurantId, userId) =>

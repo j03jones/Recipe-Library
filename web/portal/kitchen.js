@@ -4,6 +4,10 @@
 //   #kitchen/<id>/<recipe id>     one recipe: scale, print, photo, allergens, cost per portion; edit or delete if the team's
 //   #kitchen/<id>/new             add a recipe (or /new/<recipe id>: start from a copy of one)
 //   #kitchen/<id>/edit/<id>       change one of the team's recipes
+//   #kitchen/<id>/par             par list: today's prep (par - last night's count), marked off as it is made
+//   #kitchen/<id>/par/day/<date>  another day's prep list
+//   #kitchen/<id>/par/count       the count at close, for tomorrow's list
+//   #kitchen/<id>/par/pars        owners: the par items, a par for each day of the week (/par/item/<id|new>)
 //   #kitchen/<id>/prep            prep list: recipes and batches, one combined ingredient list by aisle
 //   #kitchen/<id>/costing         food cost: recipes and plates, menu prices, food cost % (if the owner allows)
 //   #kitchen/<id>/cost/<id>       one recipe's costing: a price for each ingredient
@@ -28,7 +32,8 @@ import { fromPlainText } from '../js/transfer.js';
 import { parseIngredientLine } from '../js/webimport.js';
 import { ACCEPT, readImportFile, supplierImport } from '../js/supplierui.js';
 import { Frac, adaptedLine, creditLine, formatIngredient, formatYield, scaleRecipe } from '../js/units.js';
-import { busy, confirmBox, field, fill, h, screen, toast } from './ui.js';
+import { askText, busy, confirmBox, field, fill, h, screen, toast } from './ui.js';
+import * as par from '../js/par.js';
 
 const APP = 'https://recipes.jonesridgekitchen.com/';
 const CONTACT_ANY = 'https://jonesridgekitchen.com/contact/';
@@ -196,7 +201,7 @@ function frame(m, tab, ...body) {
   const r = m.restaurant;
   const key = `kitchen/${r.id}`;
   const plan = restaurantPlan(r);
-  const tabs = [['', 'Recipes'], ['prep', 'Prep list']];
+  const tabs = [['', 'Recipes'], ['par', 'Par list'], ['prep', 'Prep list']];
   if (seesCosting(m)) tabs.push(['costing', 'Costing']);
   tabs.push(['help', 'Help']);
   if (m.member_role === 'owner' && !deps.preview) tabs.push(['team', 'Team']);
@@ -247,6 +252,12 @@ export function show(m, sub = '', arg = '', arg2 = '') {
   if (sub === 'sheet') return viewSheet(m);
   if (sub === 'cost' && arg) return viewCostDetail(m, arg);
   if (sub === 'plate' && arg) return viewPlate(m, arg);
+  if (sub === 'par') {
+    if (arg === 'count') return viewParCount(m);
+    if (arg === 'pars') return viewPars(m);
+    if (arg === 'item' && arg2) return viewParItem(m, arg2);
+    return viewParDay(m, arg === 'day' ? arg2 : '');
+  }
   if (sub === 'prep') return viewPrep(m);
   if (sub === 'help') return viewHelp(m);
   if (sub === 'team') return viewTeam(m);
@@ -587,6 +598,281 @@ async function viewPrep(m) {
     h('p', null, 'Pick what you are making this shift or this week; the ingredients are scaled and added up. The list is kept on this device.'),
     h('div', { class: 'jrk-row jrk-find jrk-noprint' }, pick),
     chosen, result);
+}
+
+// ------------------------------------------------------------------ Par list (kept in the database for the team)
+// At close a cook counts what is on hand; tomorrow's list is par - on hand. The next day the cooks mark what they
+// make. Owners (and the admin) set the items and pars. See web/js/par.js and supabase/add_par_list.sql.
+const parTabs = (m, here, can) => h('div', { class: 'jrk-costswitch jrk-noprint', role: 'group', 'aria-label': 'Par list' },
+  [['', 'Today’s prep'], ['count', 'Count at close'], can.pars && ['pars', 'Set pars']].filter(Boolean).map(([k, label]) =>
+    h('a', { href: `#kitchen/${m.restaurant.id}/par${k ? `/${k}` : ''}`, 'aria-current': k === here ? 'page' : null }, label)));
+const LONGDAY = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+const dayName = (iso) => {
+  const t = par.localDate();
+  const pre = iso === t ? 'Today, ' : iso === par.addDays(t, 1) ? 'Tomorrow, ' : iso === par.addDays(t, -1) ? 'Yesterday, ' : '';
+  const [y, mo, d] = iso.split('-').map(Number);
+  return pre + LONGDAY.format(new Date(y, mo - 1, d, 12));
+};
+const qtyUnit = (n, item) => `${par.fmtQty(n)} ${item.unit}`;
+
+/** Who may do what on the par list: count and mark prep while the plan is on; owners and the admin set the pars. */
+function parRights(m) {
+  const plan = restaurantPlan(m.restaurant);
+  return { prep: plan.on && !deps.preview, pars: deps.preview || (plan.on && m.member_role === 'owner'), costView: seesCosting(m) };
+}
+
+async function parReady(m, tab, mine) {
+  const data = await ready(m, 'par', mine);
+  if (!data) return null;
+  try {
+    const items = (await cloud.parItems(m.restaurant.id)).map(par.cleanItem).filter(Boolean);
+    return mine === screen.id ? { ...data, items } : null;
+  } catch (err) {
+    if (mine === screen.id) frame(m, 'par', h('p', { class: 'jrk-msg' }, `Could not load the par list: ${err.message}`),
+      h('button', { class: 'btn', type: 'button', onclick: () => show(m, 'par', tab) }, 'Try again'));
+    return null;
+  }
+}
+
+const noItems = (m, can) => h('div', { class: 'jrk-card' }, h('h2', null, 'No par list yet'),
+  can.pars ? h('p', null, 'Add the things your kitchen preps every day, with a par for each day of the week. ',
+    h('a', { href: `#kitchen/${m.restaurant.id}/par/item/new` }, 'Add the first item'), '.')
+    : h('p', null, 'Your owner sets up the par list: the prep items and how much of each to have ready.'));
+
+/** One day's prep: what to make (par - last night's count), marked off as it is made. */
+async function viewParDay(m, iso) {
+  const mine = screen.next();
+  const data = await parReady(m, '', mine);
+  if (!data) return;
+  const r = m.restaurant;
+  const key = `kitchen/${r.id}`;
+  const can = parRights(m);
+  const day = par.isDate(iso) ? iso : par.localDate();
+  const recipesById = new Map(data.recipes.map((x) => [x.id, x]));
+  if (!data.items.length) { frame(m, 'par', parTabs(m, '', can), noItems(m, can)); return; }
+  let rows = [];
+  let showDone = false;
+  const body = h('div', { 'aria-live': 'polite' });
+
+  async function refresh() {
+    try { rows = await cloud.prepDays(r.id, [day]); } catch (err) { toast(err.message); }
+    if (mine === screen.id) paint();
+  }
+  function markForm(x, li) {
+    const amount = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', value: x.left > 0 ? par.fmtQty(x.left) : '', 'aria-label': `How much ${x.item.name} was made` });
+    const save = h('button', { class: 'btn small', type: 'submit' }, 'Save');
+    const form = h('form', { class: 'jrk-row jrk-parmark', onsubmit: async (e) => {
+      e.preventDefault();
+      const n = Number(String(amount.value).replace(',', '.'));
+      if (!Number.isFinite(n) || n <= 0) { amount.focus(); toast(`Enter how many ${x.item.unit} were made`); return; }
+      busy(save, true);
+      try { await cloud.recordPrep(x.item.id, day, n); toast('Saved'); await refresh(); } catch (err) { toast(err.message); busy(save, false); }
+    } }, h('label', { class: 'jrk-row' }, 'Made', amount, x.item.unit), save,
+      h('button', { class: 'jrk-link', type: 'button', onclick: () => paint() }, 'Cancel'));
+    li.append(form);
+    amount.focus();
+    amount.select();
+  }
+  function paint() {
+    const list = par.dayList(data.items, rows, day);
+    const sum = par.summary(list);
+    const counted = list.filter((x) => x.counted).sort((a, b) => String(b.countedAt).localeCompare(String(a.countedAt)))[0];
+    const cost = can.costView ? par.dayCost(list, recipesById, data.kitchen.priced) : null;
+    const shown = showDone ? list : list.filter((x) => x.toMake > 0 && !x.done);
+    const notCounted = sum.items - sum.counted;
+    fill(body,
+      h('h3', null, dayName(day)),
+      counted ? h('p', { class: 'note' }, `Counted ${counted.countedBy ? `by ${counted.countedBy} ` : ''}${WHEN.format(new Date(counted.countedAt))}.`,
+        notCounted ? ` ${plural(notCounted, 'item')} not counted, so ${notCounted === 1 ? 'it shows' : 'they show'} the full par.` : '')
+        : h('p', { class: 'note jrk-newnote' }, 'Nobody counted for this day, so the list shows the full par. ',
+          can.prep && h('a', { href: `#${key}/par/count` }, 'Count now'), can.prep && '.'),
+      h('p', { class: 'jrk-parsum' }, h('strong', null, sum.needed ? `${sum.done} of ${plural(sum.needed, 'item')} done` : 'Nothing to make: everything is at par.'),
+        cost && (cost.planned > 0 || cost.made > 0) && h('span', { class: 'note' }, ` · prep cost ${money(cost.made)} so far of ${money(cost.planned)}`,
+          cost.missing ? ` (${plural(cost.missing, 'item')} without a recipe price)` : '')),
+      par.byStations(shown).map(([station, group]) => [station && h('h4', null, station),
+        h('ul', { class: 'jrk-list jrk-parlist' }, group.map((x) => {
+          const it = x.item;
+          const recipe = it.recipe_id && recipesById.get(it.recipe_id);
+          const per = cost && par.unitCost(it, recipe, data.kitchen.priced).per;
+          const last = x.log[x.log.length - 1];
+          const buttons = h('span', { class: 'jrk-row' },
+            h('span', { class: 'jrk-parmake' }, x.toMake > 0 ? `${x.done ? 'Done' : 'Make'} ${par.fmtQty(x.made)} / ${qtyUnit(x.toMake, it)}` : `At par${x.made ? ` · made ${qtyUnit(x.made, it)}` : ''}`),
+            can.prep && h('button', { class: `btn small${x.done ? ' line' : ''}`, type: 'button', onclick: () => { buttons.remove(); markForm(x, li); } }, x.done ? 'Made more' : 'Made'),
+            can.prep && x.made > 0 && h('button', { class: 'jrk-link', type: 'button', onclick: async () => {
+              const v = await askText(`Take back how many ${it.unit} of ${it.name}? (Made so far: ${par.fmtQty(x.made)}.)`, { value: last ? par.fmtQty(Number(last.qty)) : '', ok: 'Take back' });
+              const n = Number(String(v ?? '').replace(',', '.'));
+              if (!v || !Number.isFinite(n) || n <= 0) return;
+              try { await cloud.recordPrep(it.id, day, -n); toast('Taken back'); refresh(); } catch (err) { toast(err.message); }
+            } }, 'Correct'));
+          const li = h('li', { class: x.done ? 'jrk-pardone' : '' },
+            h('span', null,
+              h('strong', null, recipe ? h('a', { href: `#${key}/${enc(recipe.id)}` }, it.name) : it.name), h('br'),
+              h('span', { class: 'note' }, `Par ${qtyUnit(x.par, it)} · on hand ${x.onHand == null ? 'not counted' : qtyUnit(x.onHand, it)}`,
+                per != null ? ` · ${money(per)} / ${it.unit}` : ''),
+              last && h('span', { class: 'note' }, h('br'), `Made ${qtyUnit(Number(last.qty), it)}${last.by ? ` by ${last.by}` : ''} ${last.at ? WHEN.format(new Date(last.at)) : ''}`)),
+            buttons);
+          return li;
+        }))]),
+      !shown.length && h('p', { class: 'note' }, sum.needed ? 'Everything on the list is made.' : ''),
+      h('div', { class: 'jrk-row jrk-noprint' },
+        h('label', { class: 'jrk-row' }, h('input', { type: 'checkbox', checked: showDone, onchange: (e) => { showDone = e.target.checked; paint(); } }), 'Show items that are done or at par'),
+        h('button', { class: 'btn line small', type: 'button', onclick: () => window.print() }, 'Print'),
+        h('button', { class: 'btn line small', type: 'button', onclick: refresh }, 'Refresh')),
+      h('p', { class: 'note jrk-noprint' },
+        h('a', { href: `#${key}/par/day/${par.addDays(day, -1)}` }, '← Day before'), ' · ',
+        day !== par.localDate() && [h('a', { href: `#${key}/par` }, 'Today'), ' · '],
+        h('a', { href: `#${key}/par/day/${par.addDays(day, 1)}` }, 'Day after →')));
+  }
+  frame(m, 'par', parTabs(m, '', can), body);
+  await refresh();
+  // other cooks' marks come in while the list is open
+  const timer = setInterval(() => { if (mine !== screen.id) clearInterval(timer); else if (document.visibilityState === 'visible' && !body.querySelector('.jrk-parmark')) refresh(); }, 60000);
+}
+
+/** The count at close: what is on hand of each item, for tomorrow's list. */
+async function viewParCount(m) {
+  const mine = screen.next();
+  const data = await parReady(m, 'count', mine);
+  if (!data) return;
+  const r = m.restaurant;
+  const key = `kitchen/${r.id}`;
+  const can = parRights(m);
+  const items = data.items.filter((i) => i.active);
+  if (!items.length) { frame(m, 'par', parTabs(m, 'count', can), noItems(m, can)); return; }
+  const day = par.countDate();
+  let rows = [];
+  try { rows = await cloud.prepDays(r.id, [day]); } catch (err) { toast(err.message); }
+  if (mine !== screen.id) return;
+  const had = new Map(rows.map((x) => [String(x.item_id), x]));
+  const inputs = new Map();
+  const out = h('div', { 'aria-live': 'polite' });
+  const save = h('button', { class: 'btn', type: 'submit', disabled: !can.prep }, 'Save the count');
+  const form = h('form', { onsubmit: async (e) => {
+    e.preventDefault();
+    const typed = Object.fromEntries([...inputs].map(([id, el]) => [id, el.value]));
+    const { counts, bad } = par.countPayload(items, typed);
+    if (bad.length) { toast(`Check the count for ${bad.join(', ')}`); return; }
+    busy(save, true);
+    try {
+      await cloud.saveParCount(r.id, day, counts);
+      const fresh = await cloud.prepDays(r.id, [day]);
+      const sum = par.summary(par.dayList(data.items, fresh, day));
+      fill(out, h('div', { class: 'jrk-card' }, h('h3', null, 'Count saved'),
+        h('p', null, sum.needed ? `${dayName(day)}: ${plural(sum.needed, 'item')} to make.` : `${dayName(day)}: everything is at par.`),
+        h('p', null, h('a', { class: 'btn line small', href: `#${key}/par/day/${day}` }, 'See that prep list'))));
+      toast('Count saved');
+    } catch (err) { toast(err.message); } finally { busy(save, false); }
+  } },
+  par.byStations(items.map((i) => ({ item: i }))).map(([station, group]) => [station && h('h4', null, station),
+    h('ul', { class: 'jrk-list jrk-parcount' }, group.map(({ item: it }) => {
+      const prev = had.get(it.id);
+      const input = h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', disabled: !can.prep,
+        value: prev && prev.on_hand != null ? par.fmtQty(Number(prev.on_hand)) : '', 'aria-label': `On hand: ${it.name}, in ${it.unit}` });
+      inputs.set(it.id, input);
+      return h('li', null, h('span', null, h('strong', null, it.name), h('br'),
+        h('span', { class: 'note' }, `Par for ${par.DAYS[par.dayOfWeek(day)]}: ${qtyUnit(par.parFor(it, day), it)}`)),
+        h('label', { class: 'jrk-row' }, input, it.unit));
+    }))]),
+  h('div', { class: 'jrk-row' }, save));
+  const counted = rows.filter((x) => x.counted_at).sort((a, b) => String(b.counted_at).localeCompare(String(a.counted_at)))[0];
+  frame(m, 'par', parTabs(m, 'count', can),
+    h('h3', null, `Count for ${dayName(day)}`),
+    h('p', null, 'At close, count what is on hand of each item. Tomorrow’s list is the par less what you count. Leave a box empty if you didn’t count it.'),
+    counted && h('p', { class: 'note' }, `Already counted ${counted.counted_name ? `by ${counted.counted_name} ` : ''}${WHEN.format(new Date(counted.counted_at))}. Saving again replaces that count.`),
+    !can.prep && h('p', { class: 'note' }, deps.preview ? 'Preview: counts are for the restaurant’s team.' : 'Counting is open while your plan is on.'),
+    form, out);
+}
+
+/** Owners: the par items, with a par for each day of the week. */
+async function viewPars(m) {
+  const mine = screen.next();
+  const data = await parReady(m, 'pars', mine);
+  if (!data) return;
+  const key = `kitchen/${m.restaurant.id}`;
+  const can = parRights(m);
+  if (!can.pars) { location.hash = `#${key}/par`; return; }
+  const recipesById = new Map(data.recipes.map((x) => [x.id, x]));
+  const cost = can.costView;
+  frame(m, 'par', parTabs(m, 'pars', can),
+    h('p', null, 'The things your kitchen preps, and how much of each to have ready at the start of each day. Fridays and Saturdays can have bigger pars than Mondays.'),
+    h('p', null, data.items.length < par.MAX_ITEMS ? h('a', { class: 'btn', href: `#${key}/par/item/new` }, 'Add an item')
+      : h('span', { class: 'note' }, `The par list is full (${par.MAX_ITEMS} items).`)),
+    data.items.length ? h('div', { class: 'jrk-tablewrap' }, h('table', { class: 'jrk-cost jrk-partable' },
+      h('thead', null, h('tr', null, h('th', null, 'Item'), par.SHORT_DAYS.map((d) => h('th', null, d)), cost && h('th', null, 'Cost'))),
+      h('tbody', null, par.byStations(data.items, (i) => i.station).map(([station, group]) => [
+        station && h('tr', null, h('th', { colspan: String(cost ? 9 : 8), class: 'jrk-station' }, station)),
+        group.map((it) => {
+          const per = cost && par.unitCost(it, recipesById.get(it.recipe_id), data.kitchen.priced).per;
+          return h('tr', { class: it.active ? '' : 'jrk-off' },
+            h('td', null, h('a', { href: `#${key}/par/item/${enc(it.id)}` }, it.name), h('span', { class: 'note' }, ` ${it.unit}${it.active ? '' : ' · off'}`)),
+            it.pars.map((n) => h('td', null, par.fmtQty(n))),
+            cost && h('td', null, per != null ? `${money(per)} / ${it.unit}` : '—'));
+        })])))) : noItems(m, can));
+}
+
+/** Owners: add or change one par item. */
+async function viewParItem(m, itemId) {
+  const mine = screen.next();
+  const data = await parReady(m, 'pars', mine);
+  if (!data) return;
+  const r = m.restaurant;
+  const key = `kitchen/${r.id}`;
+  const can = parRights(m);
+  if (!can.pars) { location.hash = `#${key}/par`; return; }
+  const isNew = itemId === 'new';
+  const it = isNew ? { ...par.cleanItem({ name: 'new' }), name: '' } : data.items.find((x) => x.id === itemId);
+  if (!it) { frame(m, 'par', parTabs(m, 'pars', can), h('p', { class: 'jrk-msg' }, 'That par item isn’t here any more.')); return; }
+  const recipe = h('select', { 'aria-label': 'Recipe' }, h('option', { value: '' }, 'No recipe (something you buy or cut)'),
+    data.recipes.map((x) => h('option', { value: x.id, selected: x.id === it.recipe_id }, x.title)));
+  const name = h('input', { type: 'text', maxlength: '100', required: true, value: it.name, 'aria-label': 'Item name' });
+  const unit = h('input', { type: 'text', maxlength: '30', value: it.unit, list: 'jrk-parunits', 'aria-label': 'Unit' });
+  const units = h('datalist', { id: 'jrk-parunits' }, ['batch', 'qt', 'pt', 'gal', 'lb', 'each', 'pan', 'portion', 'tray', 'case'].map((u) => h('option', { value: u })));
+  const perBatch = h('input', { type: 'number', min: '0.01', step: 'any', value: par.fmtQty(it.per_batch), 'aria-label': 'One batch makes' });
+  const station = h('input', { type: 'text', maxlength: '40', value: it.station, placeholder: 'Line, Pantry, Bakery…', 'aria-label': 'Station' });
+  const days = it.pars.map((n, i) => h('input', { type: 'number', min: '0', step: 'any', value: par.fmtQty(n), 'aria-label': `Par for ${par.DAYS[i]}` }));
+  const same = h('input', { type: 'number', min: '0', step: 'any', 'aria-label': 'Same par every day' });
+  same.addEventListener('input', () => { if (same.value !== '') for (const d of days) d.value = same.value; });
+  const active = h('input', { type: 'checkbox', checked: it.active });
+  const batchField = field('One batch of the recipe makes', h('span', { class: 'jrk-row' }, perBatch, h('span', { class: 'note' }, 'of the unit above')), 'for the cost');
+  const syncRecipe = () => {
+    batchField.hidden = !recipe.value;
+    if (recipe.value && !name.value.trim()) name.value = data.recipes.find((x) => x.id === recipe.value)?.title.slice(0, 100) || '';
+  };
+  recipe.addEventListener('change', syncRecipe);
+  syncRecipe();
+  const save = h('button', { class: 'btn', type: 'submit' }, isNew ? 'Add to the par list' : 'Save');
+  const form = h('form', { class: 'jrk-card', onsubmit: async (e) => {
+    e.preventDefault();
+    const pars = days.map((d) => Number(String(d.value || '0').replace(',', '.')));
+    if (pars.some((n) => !Number.isFinite(n) || n < 0 || n >= 100000)) { toast('Each day’s par is a number, 0 or more'); return; }
+    const clean = par.cleanItem({ name: name.value, recipe_id: recipe.value || null, unit: unit.value, per_batch: perBatch.value, station: station.value, pars, sort: it.sort, active: active.checked });
+    if (!clean) { name.focus(); toast('Give the item a name'); return; }
+    busy(save, true);
+    try {
+      const { id, ...fields } = clean;
+      await cloud.saveParItem(r.id, isNew ? null : it.id, fields);
+      toast('Saved');
+      location.hash = `#${key}/par/pars`;
+    } catch (err) { toast(err.message); busy(save, false); }
+  } },
+  h('h2', null, isNew ? 'Add a par item' : it.name),
+  field('Recipe', recipe, 'optional: links the item to its recipe and cost'),
+  field('Name', name),
+  field('Unit', h('span', null, unit, units), 'what you count in: qt, each, pan…'),
+  batchField,
+  field('Station', station, 'optional: groups the list'),
+  h('fieldset', { class: 'jrk-pardays' }, h('legend', null, 'Par for each day'),
+    h('label', { class: 'jrk-row note' }, 'Same every day:', same),
+    h('div', { class: 'jrk-row' }, days.map((d, i) => h('label', { class: 'jrk-parday' }, par.SHORT_DAYS[i], d)))),
+  h('label', { class: 'jrk-row' }, active, 'On the list (turn off for seasonal items)'),
+  h('div', { class: 'jrk-row' }, save,
+    h('a', { class: 'btn line', href: `#${key}/par/pars` }, 'Cancel'),
+    !isNew && h('button', { class: 'jrk-link', type: 'button', onclick: async () => {
+      if (!await confirmBox(`Delete ${it.name} from the par list? Its past counts and prep go too. To keep them, turn the item off instead.`, 'Delete', true)) return;
+      try { await cloud.deleteParItem(it.id); toast('Deleted'); location.hash = `#${key}/par/pars`; } catch (err) { toast(err.message); }
+    } }, 'Delete')));
+  frame(m, 'par', parTabs(m, 'pars', can), form);
+  (isNew ? recipe : name).focus();
 }
 
 // ------------------------------------------------------------------ Costing (the owner decides who sees it)

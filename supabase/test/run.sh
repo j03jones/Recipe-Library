@@ -3,7 +3,7 @@
 #   bash supabase/test/run.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-BIN="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
+BIN="${PG_BIN:-$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)}"
 DIR="$(mktemp -d)"; PORT=54329
 run() { if [ "$(id -u)" = 0 ]; then chown -R postgres "$DIR"; su postgres -c "$*"; else bash -c "$*"; fi; }
 trap 'run "$BIN/pg_ctl -D $DIR/data stop -m immediate >/dev/null 2>&1 || true"; rm -rf "$DIR"' EXIT
@@ -17,4 +17,5 @@ run "$P -f $SCHEMA postgres"
 run "$P -f \"$HERE/../perf_policies_and_indexes.sql\" postgres"
 run "$P -f \"$HERE/test.sql\" postgres" | tee "$DIR/out.txt" || true
 run "$P -f \"$HERE/clients.sql\" postgres" 2>&1 | tee -a "$DIR/out.txt" || echo "FAIL: clients.sql" >> "$DIR/out.txt"
+run "$P -f \"$HERE/par.sql\" postgres" 2>&1 | tee -a "$DIR/out.txt" || echo "FAIL: par.sql" >> "$DIR/out.txt"
 grep -q "FAIL" "$DIR/out.txt" && { echo "SOME CHECKS FAILED"; exit 1; } || true

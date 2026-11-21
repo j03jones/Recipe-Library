@@ -197,3 +197,13 @@ for its owners and the admin; `set_member_costing()` is how they change access. 
 messages: a member sends, the admin reads and closes, the sender sees their own (20 a day each).
 `test/test.sql` checks it.
 
+
+## Par list and daily prep
+`add_par_list.sql` (run after `add_restaurant_access.sql`, safe to run again) adds `restaurant_par_items` (a
+restaurant's prep items, each with a par for Sunday to Saturday, a unit and an optional recipe) and
+`restaurant_prep_days` (one row per item per day: that day's par, the count taken at close the night before, what was
+made, and a log of who made it and when). Owners and the admin set the items while the plan is on; the team counts with
+`save_par_count()` and marks prep with `record_prep()`, also only while the plan is on (the tables can't be written
+directly, so the par is always copied from the item). Project access reads only; other restaurants see nothing. Both
+tables are added to Supabase Realtime if it is there. `test/par.sql` checks it (`run.sh` runs it; set `PG_BIN` to
+use PostgreSQL binaries from somewhere other than `/usr/lib/postgresql`).

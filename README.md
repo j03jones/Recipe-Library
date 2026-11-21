@@ -46,6 +46,29 @@ rename groups or move a label, then run `regroup` again (it re-derives groups fr
 original labels) and `python3 tools/gen_unitdata.py` plus `python3 tools/export_web.py` for the
 phone app. Regrouping replaces categories you assigned by hand.
 
+## Par list: count at close, the next day's prep, who made what (v0.42)
+
+A **Par list** tab in each restaurant's portal, for the cooks:
+
+- **Set pars** (owners, and the admin from a preview): the things the kitchen preps, each with a par for every day
+  of the week (Fridays can be bigger than Mondays), the unit it's counted in (qt, each, pan…), an optional station
+  to group the list, and optionally its recipe. "One batch makes" (say 4 qt) turns the recipe's cost into a cost
+  per unit. Items can be turned off for the season, keeping their history.
+- **Count at close**: a cook counts what is on hand of each item. The count is for tomorrow (or for today when
+  closing runs past midnight, before 5 in the morning), and tomorrow's list is **par − on hand**, with tomorrow's
+  day-of-week par. An item left blank shows its full par.
+- **Today's prep**: what to make, who counted and when. Cooks tap **Made** (it offers what is left) as they go;
+  each time is kept with who and when, and **Correct** takes some back. Finished items drop off the list. People
+  who see costing also see each item's cost per unit and the day's prep cost so far, from the current price book.
+  The list refreshes itself every minute while it is open, so a second cook's marks show up.
+
+The database (`supabase/add_par_list.sql`) keeps the items and one row per item per day, and decides who may do
+what: owners set pars while the plan is on, the whole team counts and marks prep while the plan is on, project
+access reads only, and other restaurants see nothing. Counts and prep go through `save_par_count` and
+`record_prep`, which copy the day's par from the item and add up two cooks tapping at once. Both tables are added
+to Supabase Realtime for the admin dashboard that comes next. Existing projects run the file once in the SQL Editor
+(safe to run again); new projects get it from `schema.sql`.
+
 ## App access that comes with consulting (v0.37)
 
 Two more packages on each restaurant card, with no app fee:
