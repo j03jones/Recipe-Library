@@ -7,7 +7,8 @@
    the best copy (a built-in one first, then the most descriptive title, then the fullest), which gets the
    copies' categories and labels.
    The app keeps tagged copies out of lists and search; they still open from a saved link.
-2. Titles: no footnote stars or "#", no "<T>" tags, no "#2"/" 2" copy numbers, "W/" -> "with".
+2. Titles: no footnote stars or "#", no "<T>" tags, no "#2"/" 2" copy numbers, "W/" -> "with", no mailing-list
+   tails ("(M_c-Tx)", Prodigy ids like "(Pjxg05a)", posting dates like "05/11/93").
 3. Words: common misspellings fixed ("coarsley", "tumeric", "parmesean"...), and words glued together where
    an old file wrapped a line ("peppersauce" -> "pepper sauce") split, in methods and ingredient names.
 4. Ingredient lines that are the wrapped end of the line above ("Temperature", "Into 8 chops") are joined to it.
@@ -54,8 +55,14 @@ TYPOS = {
     "orignal": "original", "recieve": "receive", "tempature": "temperature", "temperture": "temperature",
     "minuites": "minutes", "mintues": "minutes", "minuts": "minutes", "untl": "until", "mixutre": "mixture",
     "mixure": "mixture", "ingrediants": "ingredients", "ingredents": "ingredients", "sprinke": "sprinkle",
+    "aaparagus": "asparagus", "avacado": "avocado", "avacados": "avocados",
 }
 TYPO_RE = re.compile(r"\b(" + "|".join(sorted(TYPOS, key=len, reverse=True)) + r")\b", re.I)
+
+# title tails left by old mailing lists: "(M_c-Tx)" / "(M_c-Tx2)" list tags, Prodigy member ids such as
+# "(Pjxg05a)" or "Nfxs18B", and posting dates ("05/11/93", "(05/10/93)"); credits in methods are left alone
+TITLE_TAIL = re.compile(r"[\s*+.;@-]*(\([^()]*\b\d{1,2}/\d{1,2}/\d{2,4}\)|\(?\bM_c-Tx\d?\)?|\(?\b[a-z]{4}\d{2}[a-z]\)?|"
+                        r"\b\d{1,2}/\d{1,2}/\d{2,4})[\s*+.;@-]*$", re.I)
 
 # ingredient lines that are the wrapped end of the line above
 # (only words that can't start an ingredient of their own: "Sliced almonds" is an ingredient, "Into 8 chops" isn't)
@@ -166,7 +173,10 @@ class Polisher:
     def title(self, t: str) -> str:
         new = re.sub(r"<[^>]*>", " ", t)
         new = re.sub(r"[*#]+(?=\s*$)|^[*#]+|\s[*#]+\s", " ", new)
-        new = re.sub(r"\s+(#\s*\d{1,2}|\d{1,2})$", "", new)                 # "Arroz con Pollo #2", "Chicken Noodle Soup 2"
+        while TITLE_TAIL.search(new):
+            new = TITLE_TAIL.sub("", new)
+        new = re.sub(r"(?<!\bPg\.)(?<!\bPart)(?<!\bType)(?<!\bNo\.)\s+(#\s*\d{1,2}|\d{1,2})$", "", new,
+                     flags=re.I)                                          # "Arroz con Pollo #2", not "Bread-Pg. 2"
         new = re.sub(r"\bW/\s*", "with ", new)
         new = re.sub(r"\s+", " ", new).strip(" -:")
         new = self.fix_words(new, "title")
@@ -215,7 +225,7 @@ def mark_duplicates(rows, core_ids, pol):
         r = recipe_from_row(rows[n])
         r.id = n
         recs.append(r)
-    groups = [g for g in duplicates.find_duplicate_groups(recs) if g.level in (duplicates.HIGH, duplicates.LIKELY)]
+    groups = duplicates.find_duplicate_groups(recs, levels=(duplicates.HIGH, duplicates.LIKELY))
     for g in groups:
         # keep a built-in copy first (it works offline), then the one whose title says most ("Hearty Russian Beet
         # Soup" over "Borsch"), then the fullest

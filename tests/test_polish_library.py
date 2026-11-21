@@ -20,6 +20,23 @@ class Polish(unittest.TestCase):
         self.assertEqual(self.p.title("Asparagus W/ Cashews"), "Asparagus with Cashews")
         self.assertEqual(self.p.title("7-Up Cake"), "7-Up Cake")                       # a number that belongs
 
+    def test_mailing_list_tails(self):
+        t = self.p.title
+        self.assertEqual(t("Mexican Cake (M_c-Tx)"), "Mexican Cake")
+        self.assertEqual(t("Fruit Salad (M_c-Tx) 05/11/93"), "Fruit Salad")
+        self.assertEqual(t("Zucchini Bread (M_c-Tx) (05/10/93)"), "Zucchini Bread")
+        self.assertEqual(t("Blue Ribbon French Toast (Star 11/23/92)"), "Blue Ribbon French Toast")
+        self.assertEqual(t("Risotto (Dmdg94a)"), "Risotto")
+        self.assertEqual(t("Spring time Chicken Salad Nfxs18B"), "Spring time Chicken Salad")
+        self.assertEqual(t("Royal Toast Triangles****Fjvs25a"), "Royal Toast Triangles")
+        self.assertEqual(t("Potato Casserole #2 (M_c-Tx)"), "Potato Casserole")
+        self.assertEqual(t("Ha'penny Friendship Bread-Pg. 3****Fjvs25a"), "Ha'penny Friendship Bread-Pg. 3")  # a page, not a copy
+        self.assertEqual(t("Aaparagus with Bacon"), "Asparagus with Bacon")
+        self.assertEqual(t("Soup for 4/5 People"), "Soup for 4/5 People")
+        self.assertEqual(t("Chili 2000"), "Chili 2000")
+        for title in ("Mexican Cake (M_c-Tx)", "Ha'penny Friendship Bread-Pg. 3****Fjvs25a"):
+            self.assertEqual(t(t(title)), t(title))                                    # safe to run again
+
     def test_words(self):
         self.assertEqual(self.p.fix_words("Coarsley chop the parsely untill fine", "t"), "Coarsely chop the parsley until fine")
         self.assertEqual(self.p.fix_words("Add hot peppersauce.", "t"), "Add hot pepper sauce.")

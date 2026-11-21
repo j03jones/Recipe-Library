@@ -110,9 +110,13 @@ def _keep_score(r: Recipe) -> Tuple:
             len(r.categories) + len(r.tags))
 
 
-def find_duplicate_groups(recipes: Sequence[Recipe], ignored: Iterable[Tuple[int, int]] = ()) -> List[DuplicateGroup]:
+def find_duplicate_groups(recipes: Sequence[Recipe], ignored: Iterable[Tuple[int, int]] = (),
+                          levels: Optional[Iterable[str]] = None) -> List[DuplicateGroup]:
     """Cluster near-duplicate recipes. ``recipes`` need ids, titles, ingredients and directions.
-    ``ignored`` holds (id, id) pairs the user has said are NOT duplicates."""
+    ``ignored`` holds (id, id) pairs the user has said are NOT duplicates.
+    ``levels`` keeps only pairs of those confidence levels before clustering (default: all), so a sure
+    copy isn't chained into a big "possible" group through loose matches."""
+    keep_levels = set(levels) if levels is not None else None
     ignore = {tuple(sorted(p)) for p in ignored}
     prep = []
     for r in recipes:
@@ -147,7 +151,7 @@ def find_duplicate_groups(recipes: Sequence[Recipe], ignored: Iterable[Tuple[int
             tit = _jaccard(prep[i][0], prep[j][0])
             dire = _jaccard(prep[i][2], prep[j][2])
             level = classify(ing, tit, dire)
-            if level:
+            if level and (keep_levels is None or level in keep_levels):
                 pairs.append(Pair(i, j, ing, tit, dire, level))
 
     # union-find over the flagged pairs
