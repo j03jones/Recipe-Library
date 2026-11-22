@@ -2069,7 +2069,7 @@ function viewShop() {
       return;
     }
     const nameIn = h('input', { class: 'full', maxlength: '60', value: `${firstName() || 'Our'}${firstName() ? '’s' : ''} home`, 'aria-label': 'Household name' });
-    const codeIn = h('input', { class: 'full', maxlength: '12', placeholder: 'ABC234', autocapitalize: 'characters', autocomplete: 'off', 'aria-label': 'Household code' });
+    const codeIn = h('input', { class: 'full', maxlength: '12', placeholder: 'ABCD234567', autocapitalize: 'characters', autocomplete: 'off', 'aria-label': 'Household code' });
     const after = async (fn, done) => {
       try { await fn(); } catch (err) { toast(err.message, 4500); return; }
       await syncHousehold(); toast(done); paint(); paintHousehold();
