@@ -28,6 +28,17 @@ jobs:
       - name: Database rule tests
         run: bash supabase/test/run.sh
 
+  # Server functions: type check, and offline checks of the import-from-a-link safety rules.
+  functions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno check supabase/functions/*/index.ts
+      - run: deno run --allow-read supabase/functions/import-recipe/index_test.ts
+
   # Click through the phone web app in a real (headless) browser: the built-in library, offline use,
   # meal plan, shopping list, What can I make?, collections, the on-demand library, and the
   # signed-in screens against a fake server.

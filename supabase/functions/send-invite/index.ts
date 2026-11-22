@@ -16,7 +16,7 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-const APP_RE = /^https:\/\/(recipes\.jonesridgekitchen\.com|[a-z0-9-]+\.github\.io)(\/[^#?]*)?$/i;
+const APP_RE = /^https:\/\/recipes\.jonesridgekitchen\.com(\/[^#?]*)?$/i;   // the app's own address only
 
 async function rest(path: string, init: RequestInit & { key: string; token?: string }) {
   const res = await fetch(`${URL_}${path}`, {
