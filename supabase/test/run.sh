@@ -18,4 +18,5 @@ run "$P -f \"$HERE/../perf_policies_and_indexes.sql\" postgres"
 run "$P -f \"$HERE/test.sql\" postgres" | tee "$DIR/out.txt" || true
 run "$P -f \"$HERE/clients.sql\" postgres" 2>&1 | tee -a "$DIR/out.txt" || echo "FAIL: clients.sql" >> "$DIR/out.txt"
 run "$P -f \"$HERE/par.sql\" postgres" 2>&1 | tee -a "$DIR/out.txt" || echo "FAIL: par.sql" >> "$DIR/out.txt"
+run "$P -f \"$HERE/security.sql\" postgres" 2>&1 | tee -a "$DIR/out.txt" || echo "FAIL: security.sql" >> "$DIR/out.txt"
 grep -q "FAIL" "$DIR/out.txt" && { echo "SOME CHECKS FAILED"; exit 1; } || true
