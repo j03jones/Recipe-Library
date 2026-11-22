@@ -20,6 +20,14 @@ jobs:
         if: hashFiles('web/data/recipes.json') != ''
         run: python tools/parity_check.py
 
+  # Database rules (security policies, functions, par list) against a throwaway local PostgreSQL.
+  db:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Database rule tests
+        run: bash supabase/test/run.sh
+
   # Click through the phone web app in a real (headless) browser: the built-in library, offline use,
   # meal plan, shopping list, What can I make?, collections, the on-demand library, and the
   # signed-in screens against a fake server.

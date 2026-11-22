@@ -1,9 +1,11 @@
 name: Publish web app
 
+# Publishes only after the Build workflow (unit, database and browser tests) passes on main.
 on:
-  push:
+  workflow_run:
+    workflows: [Build]
+    types: [completed]
     branches: [main]
-    paths: ["web/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -17,14 +19,19 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Stamp the service worker with this commit
-        run: sed -i "s/const VERSION = 'dev'/const VERSION = '${GITHUB_SHA::8}'/" web/sw.js
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: sed -i "s/const VERSION = 'dev'/const VERSION = '${SHA::8}'/" web/sw.js
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
