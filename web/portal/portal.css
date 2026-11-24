@@ -293,3 +293,10 @@
 #jrk-portal .jrk-partable .jrk-station { background: #f4f6f4; }
 #jrk-portal .jrk-partable tr.jrk-off { opacity: .55; }
 @media print { #jrk-portal .jrk-parlist button, #jrk-portal .jrk-parmark { display: none !important; } }
+#jrk-portal table.jrk-partable td input[type=number] { width: 4.2rem; font: inherit; padding: .35rem .4rem; border: 1px solid #aeb7b1; border-radius: 6px; text-align: right; }
+#jrk-portal .jrk-partools .jrk-row { flex-wrap: wrap; align-items: center; gap: .5rem; margin: .3rem 0; }
+#jrk-portal .jrk-partools .jrk-parday { align-items: center; }
+#jrk-portal .jrk-partools input[type=number] { width: 5rem; font: inherit; padding: .4rem .5rem; border: 1px solid #aeb7b1; border-radius: 6px; }
+#jrk-portal .jrk-parpick { max-height: 26rem; overflow-y: auto; border: 1px solid var(--jrk-line); border-radius: 8px; padding: .3rem .6rem; margin: .4rem 0 1rem; }
+#jrk-portal .jrk-parpick li { padding: .3rem 0; }
+#jrk-portal .jrk-parpick .jrk-tag { margin-left: .4rem; }

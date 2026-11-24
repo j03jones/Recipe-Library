@@ -30,6 +30,14 @@ select t.denied('a par item cannot use another restaurant''s recipe',
 select t.denied('pars need all seven days', format($$ insert into public.restaurant_par_items(restaurant_id, name, pars) values (%L, 'Bad', '{1,2}') $$, :'pr'));
 select t.denied('pars cannot be negative', format($$ insert into public.restaurant_par_items(restaurant_id, name, pars) values (%L, 'Bad', '{1,1,1,1,1,1,-1}') $$, :'pr'));
 select t.denied('an owner cannot add items for another restaurant', format($$ insert into public.restaurant_par_items(restaurant_id, name) values (%L, 'Sneaky') $$, :'po'));
+-- many at once (the portal's Add recipes): one insert of several rows, one delete of several ids; still 300 at most
+insert into public.restaurant_par_items(restaurant_id, name, pars) values (:'pr', 'Bulk 1', '{1,1,1,1,1,2,2}'), (:'pr', 'Bulk 2', '{0,0,0,0,0,0,0}'), (:'pr', 'Bulk 3', '{3,3,3,3,3,3,3}');
+select t.expect('an owner adds several par items in one go', t.n($$ select count(*) from public.restaurant_par_items $$) = 5);
+select t.denied('one insert cannot go past 300 par items',
+  format($$ insert into public.restaurant_par_items(restaurant_id, name) select %L, 'Many ' || g from generate_series(1, 296) g $$, :'pr'));
+select t.expect('a refused insert adds none of its rows', t.n($$ select count(*) from public.restaurant_par_items $$) = 5);
+delete from public.restaurant_par_items where name in ('Bulk 1', 'Bulk 2', 'Bulk 3');
+select t.expect('an owner removes several par items in one go', t.n($$ select count(*) from public.restaurant_par_items $$) = 2);
 reset role;
 select id as pitem from public.restaurant_par_items where name='Pico' \gset
 select id as litem from public.restaurant_par_items where name='Lemons, cut' \gset
@@ -40,6 +48,8 @@ select t.expect('staff see the par items', t.n($$ select count(*) from public.re
 update public.restaurant_par_items set pars = '{99,99,99,99,99,99,99}';
 select t.expect('staff cannot change pars', t.n($$ select count(*) from public.restaurant_par_items where 99 = any(pars) $$) = 0);
 select t.denied('staff cannot add par items', format($$ insert into public.restaurant_par_items(restaurant_id, name) values (%L, 'Mine') $$, :'pr'));
+delete from public.restaurant_par_items;
+select t.expect('staff cannot remove par items', t.n($$ select count(*) from public.restaurant_par_items $$) = 2);
 select t.denied('staff cannot write the prep days directly',
   format($$ insert into public.restaurant_prep_days(item_id, for_date, restaurant_id) values (%L, current_date, %L) $$, :'pitem', :'pr'));
 select public.save_par_count(:'pr', current_date + 1, jsonb_build_array(

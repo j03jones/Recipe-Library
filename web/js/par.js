@@ -130,3 +130,54 @@ export function countPayload(items, typed) {
   }
   return { counts, bad };
 }
+
+// ------------------------------------------------------------------ adding many recipes, editing many pars
+/** Par items for recipes picked from the collection, in batches of the recipe; recipes already on the list are skipped. */
+export function itemsForRecipes(recipes, items, pars = [0, 0, 0, 0, 0, 0, 0], station = '') {
+  const have = new Set(items.map((i) => i.recipe_id).filter(Boolean));
+  let sort = items.reduce((n, i) => Math.max(n, i.sort), 0);
+  const out = [];
+  for (const r of recipes) {
+    if (!r || !r.id || have.has(r.id) || items.length + out.length >= MAX_ITEMS) continue;
+    const it = cleanItem({ name: r.title, recipe_id: r.id, unit: 'batch', per_batch: 1, station, pars, sort: sort + 1 });
+    if (!it) continue;
+    have.add(r.id);
+    sort++;
+    out.push(it);
+  }
+  return out;
+}
+
+/** An item's pars with one day's par copied to other days (0 = Sunday .. 6 = Saturday). */
+export const copyDay = (pars, from, to) => pars.map((n, i) => (to.includes(i) ? pars[from] : n));
+/** An item's pars with some days set to one amount. */
+export const setDays = (pars, days, value) => pars.map((n, i) => (days.includes(i) ? value : n));
+export const WEEKDAYS = [1, 2, 3, 4, 5];
+export const WEEKEND = [0, 6];
+
+// ------------------------------------------------------------------ the month, by the pars
+export const isMonth = (s) => typeof s === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(s);
+export const thisMonth = (d = new Date()) => localDate(d).slice(0, 7);
+export const addMonths = (ym, n) => { const [y, m] = ym.split('-').map(Number); return localDate(new Date(y, m - 1 + n, 1, 12)).slice(0, 7); };
+/** How many Sundays .. Saturdays a month ('YYYY-MM') has. */
+export function weekdayCounts(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  const days = new Date(y, m, 0).getDate();
+  const out = [0, 0, 0, 0, 0, 0, 0];
+  for (let d = 1; d <= days; d++) out[new Date(y, m - 1, d, 12).getDay()]++;
+  return out;
+}
+/**
+ * What the pars add up to over a month: each active item with a par, how much of its unit (each day's par times how
+ * many of that weekday the month has), and how many batches of its recipe that is. [{ item, units, batches }]
+ */
+export function monthPlan(items, ym) {
+  const counts = weekdayCounts(ym);
+  const out = [];
+  for (const item of items) {
+    if (!item.active) continue;
+    const units = Math.round(item.pars.reduce((s, n, i) => s + n * counts[i], 0) * 10000) / 10000;
+    if (units > 0) out.push({ item, units, batches: Math.round((units / item.per_batch) * 10000) / 10000 });
+  }
+  return out.sort((a, b) => byStation(a.item, b.item));
+}
