@@ -240,11 +240,25 @@ class Fake:
                     return await ok([])
                 return await ok(sorted([x for x in items.values() if x["restaurant_id"] == rid_], key=lambda x: (x["sort"], x["name"])))
             if req.method == "POST":
-                if not can_set(body["restaurant_id"]):
+                rows = body if isinstance(body, list) else [body]   # one item, or many recipes at once (all or none)
+                if not rows or not all(can_set(x["restaurant_id"]) for x in rows):
                     return await ok(deny, 403)
-                iid = str(uuid.uuid4())
-                items[iid] = dict(body, id=iid)
-                return await ok([items[iid]], 201)
+                if any(sum(1 for y in items.values() if y["restaurant_id"] == x["restaurant_id"]) + len(rows) > 300 for x in rows):
+                    return await ok({"message": "A par list can hold 300 items"}, 400)
+                made = []
+                for x in rows:
+                    iid = str(uuid.uuid4())
+                    items[iid] = dict(x, id=iid)
+                    made.append(items[iid])
+                return await ok(made, 201)
+            ids = q.get("id", [""])[0]
+            if req.method == "DELETE" and ids.startswith("in.("):   # take several items off at once
+                gone = [items[i] for i in ids[4:-1].split(",") if i in items and can_set(items[i]["restaurant_id"])]
+                for it in gone:
+                    del items[it["id"]]
+                    for k in [k for k in days if k[0] == it["id"]]:
+                        del days[k]
+                return await ok(gone)
             it = items.get(eq("id"))
             if not it or not can_set(it["restaurant_id"]):
                 return await ok([])
@@ -1935,7 +1949,7 @@ async def run():
         await rae.fill("input[aria-label='Par for Saturday']", "6")
         await rae.click("button:has-text('Add to the par list')")
         await rae.wait_for_selector(".jrk-partable")
-        await rae.click("a:has-text('Add an item')")
+        await rae.click("a:has-text('Add one item')")
         await rae.wait_for_selector("input[aria-label='Item name']")
         await rae.fill("input[aria-label='Item name']", "Lemons, cut")
         await rae.fill("input[aria-label=Unit]", "each")
@@ -1980,6 +1994,44 @@ async def run():
         await joe.goto(K + "/par/pars")
         await joe.wait_for_function("!location.hash.endsWith('/par/pars')", timeout=10000)
         check("staff are sent from the pars page to the prep list", "/par/pars" not in joe.url, joe.url)
+
+        # ---- par list (v0.43): add every recipe at once, copy a day across the week, see the month, take many off
+        await rae.goto(K + "/par/add")
+        await rae.wait_for_selector("input[aria-label='Search recipes']")
+        check("a recipe already on the par list can't be added twice",
+              await rae.locator("input[type=checkbox][aria-label='House Salsa Roja']").is_disabled())
+        await rae.click("button:has-text('Select all')")
+        await rae.fill("input[aria-label='Same starting par every day']", "3")
+        await rae.click("button[type=submit]:has-text('to the par list')")
+        await rae.wait_for_selector(".jrk-partable td:has-text('Smoked Brisket')")
+        brisket = next(x for x in fake.par_items.values() if x["name"] == "Smoked Brisket")
+        check("select all adds every recipe not yet on the list, with the starting pars",
+              brisket["pars"] == [3] * 7 and brisket["unit"] == "batch" and brisket["recipe_id"]
+              and sum(1 for x in fake.par_items.values() if x["name"] == "House Salsa Roja") == 1, brisket)
+        await rae.fill("input[aria-label='House Salsa Roja: par for Monday']", "5")
+        await rae.check("input[aria-label='Tick House Salsa Roja']")
+        await rae.click("button:has-text('Copy')")
+        await rae.click("button:has-text('Save changes')")
+        await rae.wait_for_selector("text=Saved 1 item")
+        check("one day's par copies to the other weekdays, only on the ticked item",
+              salsa_par["pars"] == [4, 5, 5, 5, 5, 5, 6] and brisket["pars"] == [3] * 7, (salsa_par["pars"], brisket["pars"]))
+        await rae.goto(K + "/par/month/2026-11"); await rae.reload()
+        await rae.wait_for_selector("text=Monthly inventory")
+        month = await rae.inner_text("#jrk-portal")
+        # Nov 2026: 5 Sun, 5 Mon, 4 Tue-Sat; brisket 3 batches a day x 30 days x 5 lb
+        check("the month adds up each day's par through the recipe's ingredients",
+              "Smoked Brisket" in month and "450 lb" in month and "Lemons, cut" in month, month[:900])
+        await rae.screenshot(path="/tmp/portal_parmonth.png", full_page=True)
+        await rae.goto(K + "/par/pars"); await rae.reload()
+        await rae.wait_for_selector(".jrk-partable")
+        keep = {x["id"] for x in fake.par_items.values() if x["name"] in ("House Salsa Roja", "Lemons, cut")}
+        for x in list(fake.par_items.values()):
+            if x["id"] not in keep:
+                await rae.check(f"input[aria-label='Tick {x['name']}']")
+        await rae.click("button:has-text('Remove ticked items')")
+        await rae.click("dialog button:has-text('Remove')")
+        await rae.wait_for_selector("text=Removed")
+        check("ticked items come off the par list together", set(fake.par_items) == keep, [x["name"] for x in fake.par_items.values()])
 
         # ---- plates: several recipes in one menu item
         await rae.goto(K + "/plate/new")
