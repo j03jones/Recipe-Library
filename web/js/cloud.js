@@ -299,6 +299,20 @@ export async function deleteParItem(id) {
   const rows = await authed(`/rest/v1/restaurant_par_items?id=eq.${enc(id)}`, { method: 'DELETE', headers: { Prefer: 'return=representation' } });
   if (!rows || !rows.length) throw new CloudError('That par item could not be deleted. Only the restaurant’s owners set the pars.', 403);
 }
+/** Owners and the admin add many par items at once (each: name, recipe_id, unit, per_batch, station, pars, sort). */
+export async function addParItems(restaurantId, list) {
+  if (!list.length) return [];
+  const rows = await authed('/rest/v1/restaurant_par_items', { method: 'POST', headers: { Prefer: 'return=representation' },
+    body: list.map((f) => ({ ...f, restaurant_id: restaurantId })) });
+  if (!rows || rows.length !== list.length) throw new CloudError('Those par items could not be added. Only the restaurant’s owners set the pars.', 403);
+  return rows;
+}
+/** Owners and the admin take many par items off the list (their past counts and prep go too). Returns how many went. */
+export async function deleteParItems(ids) {
+  if (!ids.length) return 0;
+  const rows = await authed(`/rest/v1/restaurant_par_items?id=in.(${ids.map(enc).join(',')})`, { method: 'DELETE', headers: { Prefer: 'return=representation' } });
+  return rows ? rows.length : 0;
+}
 /** The prep kept for some days (YYYY-MM-DD): the night's count and what was made. */
 export const prepDays = (restaurantId, dates) =>
   authed(`/rest/v1/restaurant_prep_days?restaurant_id=eq.${enc(restaurantId)}&for_date=in.(${dates.map(enc).join(',')})&select=*`)

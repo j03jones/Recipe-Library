@@ -1,4 +1,5 @@
 """The par list's sums (web/js/par.js): dates, pars by weekday, what to make, progress and cost."""
+import calendar
 import json
 import shutil
 import subprocess
@@ -33,6 +34,8 @@ CASES = {
     "recipe": ["g1", "Pico de gallo", [], "4", "cups", "", [["2", "", "lb", "Tomatoes", ""], ["1", "", "", "Onion", ""]], "", []],
     "prices": {"tomato": {"p": 3, "per": "lb"}},
     "typed": {"a": "3", "b": "", "d": "2,5", "f": "-1"},
+    "months": ["2026-11", "2028-02", "2027-01"],
+    "pick": [{"id": "g1", "title": "Pico de gallo"}, {"id": "g2", "title": "Salsa  verde"}, {"id": "g2", "title": "Again"}, {"id": "g3", "title": "  "}],
 }
 
 
@@ -89,6 +92,32 @@ class ParList(unittest.TestCase):
 
     def test_amounts(self):
         self.assertEqual(self.out["fmt"], ["1.5", "2", "0.33", "—", "—"])
+
+
+    def test_weekdays_in_a_month(self):
+        for ym, counts in zip(CASES["months"], self.out["month"]["counts"]):
+            y, m = map(int, ym.split("-"))
+            want = [0] * 7
+            for d in range(1, calendar.monthrange(y, m)[1] + 1):
+                want[(date(y, m, d).weekday() + 1) % 7] += 1
+            self.assertEqual(counts, want, ym)
+        self.assertEqual(self.out["month"]["isMonth"], [True, False, False, False])
+        self.assertEqual(self.out["month"]["next"], ["2027-01", "2025-12"])
+
+    def test_the_month_by_the_pars(self):
+        # November 2026: 5 Sundays and Mondays, 4 of every other day; turned-off items are left out
+        self.assertEqual(self.out["month"]["plan"], [
+            ["Pico de gallo", 142, 35.5],   # 2*5 + 4*5 + 4*4*3 + 8*4*2 qt, 4 qt a batch
+            ["Aioli", 90, 90],
+            ["Lemons, cut", 290, 290],
+        ])
+
+    def test_adding_recipes_skips_ones_already_on_the_list(self):
+        self.assertEqual(self.out["month"]["add"], [["Salsa verde", "g2", "batch", 1, [1, 1, 1, 1, 1, 2, 2], "Line", 1]])
+
+    def test_copying_and_setting_days(self):
+        self.assertEqual(self.out["month"]["copy"], [2, 4, 4, 4, 4, 4, 9])   # Monday to Monday..Friday
+        self.assertEqual(self.out["month"]["set"], [3, 4, 5, 6, 7, 8, 3])
 
 
 if __name__ == "__main__":
