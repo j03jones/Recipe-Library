@@ -1948,19 +1948,25 @@ async def run():
         await rae.fill("input[aria-label='Same par every day']", "4")
         await rae.fill("input[aria-label='Par for Saturday']", "6")
         await rae.click("button:has-text('Add to the par list')")
-        await rae.wait_for_selector(".jrk-partable")
+        await rae.wait_for_selector(".jrk-pargrid")
         await rae.click("a:has-text('Add one item')")
         await rae.wait_for_selector("input[aria-label='Item name']")
         await rae.fill("input[aria-label='Item name']", "Lemons, cut")
         await rae.fill("input[aria-label=Unit]", "each")
         await rae.fill("input[aria-label='Same par every day']", "10")
         await rae.click("button:has-text('Add to the par list')")
-        await rae.wait_for_selector(".jrk-partable td:has-text('Lemons, cut')")
+        await rae.wait_for_selector(".jrk-paritem:has-text('Lemons, cut')")
         salsa_par = next(x for x in fake.par_items.values() if x["name"] == "House Salsa Roja")
         check("the owner sets a par for each day of the week",
               salsa_par["pars"] == [4, 4, 4, 4, 4, 4, 6] and salsa_par["unit"] == "qt" and salsa_par["per_batch"] == 2 and salsa_par["recipe_id"], salsa_par)
-        check("the pars table shows each item's cost to those who see costing", "/ qt" in await rae.inner_text(".jrk-partable"))
+        check("the pars table shows each item's cost to those who see costing", "/ qt" in await rae.inner_text(".jrk-pargrid"))
+        check("every par box is labelled with its day", await rae.locator(".jrk-paritem:has-text('House Salsa Roja') .jrk-dayin:has-text('Sat') input").input_value() == "6"
+              and await rae.locator(".jrk-dayin").count() == 14)
         await rae.screenshot(path="/tmp/portal_pars.png", full_page=True)
+        size = rae.viewport_size
+        await rae.set_viewport_size({"width": 390, "height": 844})
+        await rae.screenshot(path="/tmp/portal_pars_phone.png", full_page=True)
+        await rae.set_viewport_size(size)
         await joe.goto(K + "/par/count"); await joe.reload()
         await joe.wait_for_selector("input[aria-label='On hand: House Salsa Roja, in qt']")
         check("staff count, but don't set pars", "Set pars" not in await joe.inner_text(".jrk-costswitch"))
@@ -2003,7 +2009,7 @@ async def run():
         await rae.click("button:has-text('Select all')")
         await rae.fill("input[aria-label='Same starting par every day']", "3")
         await rae.click("button[type=submit]:has-text('to the par list')")
-        await rae.wait_for_selector(".jrk-partable td:has-text('Smoked Brisket')")
+        await rae.wait_for_selector(".jrk-paritem:has-text('Smoked Brisket')")
         brisket = next(x for x in fake.par_items.values() if x["name"] == "Smoked Brisket")
         check("select all adds every recipe not yet on the list, with the starting pars",
               brisket["pars"] == [3] * 7 and brisket["unit"] == "batch" and brisket["recipe_id"]
@@ -2023,7 +2029,7 @@ async def run():
               "Smoked Brisket" in month and "450 lb" in month and "Lemons, cut" in month, month[:900])
         await rae.screenshot(path="/tmp/portal_parmonth.png", full_page=True)
         await rae.goto(K + "/par/pars"); await rae.reload()
-        await rae.wait_for_selector(".jrk-partable")
+        await rae.wait_for_selector(".jrk-pargrid")
         keep = {x["id"] for x in fake.par_items.values() if x["name"] in ("House Salsa Roja", "Lemons, cut")}
         for x in list(fake.par_items.values()):
             if x["id"] not in keep:

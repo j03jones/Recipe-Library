@@ -300,3 +300,20 @@
 #jrk-portal .jrk-parpick { max-height: 26rem; overflow-y: auto; border: 1px solid var(--jrk-line); border-radius: 8px; padding: .3rem .6rem; margin: .4rem 0 1rem; }
 #jrk-portal .jrk-parpick li { padding: .3rem 0; }
 #jrk-portal .jrk-parpick .jrk-tag { margin-left: .4rem; }
+
+/* Set pars: a card per item, every day's box labelled with its day */
+#jrk-portal .jrk-pargrid { margin: .4rem 0 1rem; }
+#jrk-portal .jrk-pargrid h3.jrk-station { font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; color: var(--jrk-muted); margin: 1.2rem 0 .3rem; }
+#jrk-portal .jrk-paritem { border: 1px solid var(--jrk-line); border-radius: 10px; padding: .6rem .8rem; margin: 0 0 .6rem; background: #fff; }
+#jrk-portal .jrk-paritem.on { border-color: var(--jrk-ridge); box-shadow: 0 0 0 1px var(--jrk-ridge) inset; }
+#jrk-portal .jrk-paritem.jrk-off { opacity: .6; }
+#jrk-portal .jrk-paritemhead { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin-bottom: .5rem; }
+#jrk-portal .jrk-partick input, #jrk-portal .jrk-parall input { width: 1.2rem; height: 1.2rem; }
+#jrk-portal .jrk-parall { display: inline-flex; align-items: center; gap: .4rem; font-weight: 600; }
+#jrk-portal .jrk-parname { flex: 1 1 12rem; font-weight: 600; }
+#jrk-portal .jrk-parname .note { font-weight: 400; }
+#jrk-portal .jrk-daygrid { display: grid; grid-template-columns: repeat(7, minmax(3.2rem, 5rem)); gap: .4rem; }
+#jrk-portal .jrk-dayin { display: flex; flex-direction: column; align-items: center; gap: .2rem; font-size: .78rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--jrk-muted); }
+#jrk-portal .jrk-dayin input { width: 100%; box-sizing: border-box; font: inherit; font-size: 1.05rem; font-weight: 400; color: inherit; text-transform: none; padding: .45rem .3rem; border: 1px solid #aeb7b1; border-radius: 6px; text-align: center; }
+#jrk-portal .jrk-parweek { display: block; margin-top: .4rem; font-size: .85rem; color: var(--jrk-muted); }
+@media (max-width: 420px) { #jrk-portal .jrk-daygrid { grid-template-columns: repeat(4, 1fr); } }
