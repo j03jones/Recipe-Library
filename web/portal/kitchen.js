@@ -814,9 +814,11 @@ async function viewPars(m) {
   const status = h('p', { class: 'note', role: 'status' });
   const save = h('button', { class: 'btn', type: 'button' }, 'Save changes');
   const remove = h('button', { class: 'jrk-link', type: 'button' }, 'Remove ticked items');
-  const all = h('input', { type: 'checkbox', 'aria-label': 'Tick every item' });
-  const tbody = h('tbody');
+  const all = h('input', { type: 'checkbox' });
+  const allLabel = h('label', { class: 'jrk-parall' }, all, ' Tick every item');
+  const list = h('div', { class: 'jrk-pargrid' });
   const targets = () => (ticked.size ? items.filter((it) => ticked.has(it.id)) : items);
+  const num = (v) => Number(String(v || '0').replace(',', '.'));
   function note() {
     const n = changed().length;
     save.disabled = !n;
@@ -826,20 +828,28 @@ async function viewPars(m) {
     all.indeterminate = ticked.size > 0 && ticked.size < items.length;
     status.textContent = `${ticked.size ? `${ticked.size} of ${plural(items.length, 'item')} ticked: copy and set change those.` : `No items ticked: copy and set change all ${plural(items.length, 'item')}.`}${n ? ` ${plural(n, 'item')} not saved yet.` : ''}`;
   }
+  // one card per item: its name and unit, then a box for each day with the day's name on it
   function paint() {
-    fill(tbody, par.byStations(items, (i) => i.station).map(([station, group]) => [
-      station && h('tr', null, h('th', { colspan: String(cost ? 10 : 9), class: 'jrk-station' }, station)),
+    fill(list, par.byStations(items, (i) => i.station).map(([station, group]) => [
+      station && h('h3', { class: 'jrk-station' }, station),
       group.map((it) => {
         const per = cost && par.unitCost(it, recipesById.get(it.recipe_id), data.kitchen.priced).per;
         const tick = h('input', { type: 'checkbox', checked: ticked.has(it.id), 'aria-label': `Tick ${it.name}`,
-          onchange: (e) => { if (e.target.checked) ticked.add(it.id); else ticked.delete(it.id); note(); } });
-        const typed = typedOf(it);
-        return h('tr', { class: it.active ? '' : 'jrk-off' },
-          h('td', null, tick),
-          h('td', null, h('a', { href: `#${key}/par/item/${enc(it.id)}` }, it.name), h('span', { class: 'note' }, ` ${it.unit}${it.active ? '' : ' · off'}`)),
-          typed.map((v, i) => h('td', null, h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', value: v, 'aria-label': `${it.name}: par for ${par.DAYS[i]}`,
-            oninput: (e) => { const t = [...typedOf(it)]; t[i] = e.target.value; edits.set(it.id, t); note(); } }))),
-          cost && h('td', null, per != null ? `${money(per)} / ${it.unit}` : '—'));
+          onchange: (e) => { if (e.target.checked) ticked.add(it.id); else ticked.delete(it.id); card.classList.toggle('on', e.target.checked); note(); } });
+        const week = h('span', { class: 'jrk-parweek' });
+        const sumUp = () => { const t = typedOf(it).reduce((a, v) => a + (Number.isFinite(num(v)) ? num(v) : 0), 0); week.textContent = `Week: ${par.fmtQty(t)} ${it.unit}`; };
+        const boxes = typedOf(it).map((v, i) => h('label', { class: 'jrk-dayin' }, h('span', null, par.SHORT_DAYS[i]),
+          h('input', { type: 'number', min: '0', step: 'any', inputmode: 'decimal', value: v, 'aria-label': `${it.name}: par for ${par.DAYS[i]}`,
+            onfocus: (e) => e.target.select(),
+            oninput: (e) => { const t = [...typedOf(it)]; t[i] = e.target.value; edits.set(it.id, t); sumUp(); note(); } })));
+        sumUp();
+        const card = h('div', { class: `jrk-paritem${it.active ? '' : ' jrk-off'}${ticked.has(it.id) ? ' on' : ''}` },
+          h('div', { class: 'jrk-paritemhead' }, h('label', { class: 'jrk-partick' }, tick),
+            h('div', { class: 'jrk-parname' }, h('a', { href: `#${key}/par/item/${enc(it.id)}` }, it.name),
+              h('span', { class: 'note' }, ` par in ${it.unit}${it.active ? '' : ' · turned off'}`)),
+            cost && h('span', { class: 'jrk-parcost note' }, per != null ? `Cost (est.) ${money(per)} / ${it.unit}` : 'Cost (est.) —')),
+          h('div', { class: 'jrk-daygrid' }, boxes), week);
+        return card;
       })]));
     note();
   }
@@ -898,10 +908,7 @@ async function viewPars(m) {
     catch (err) { toast(err.message); busy(remove, false); }
   });
   paint();
-  frame(m, 'par', parTabs(m, 'pars', can), intro, adds, tools, status,
-    h('div', { class: 'jrk-tablewrap' }, h('table', { class: 'jrk-cost jrk-partable' },
-      h('thead', null, h('tr', null, h('th', null, all), h('th', null, 'Item'), par.SHORT_DAYS.map((d) => h('th', null, d)), cost && h('th', null, 'Cost (est.)'))),
-      tbody)),
+  frame(m, 'par', parTabs(m, 'pars', can), intro, adds, tools, h('div', { class: 'jrk-row jrk-noprint' }, allLabel), status, list,
     h('div', { class: 'jrk-row jrk-noprint' }, save, remove));
 }
 
