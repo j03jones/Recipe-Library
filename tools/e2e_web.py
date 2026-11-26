@@ -162,7 +162,15 @@ async def run():
         # add a new recipe
         await page.click("a[data-tab=new]")
         await page.wait_for_selector("input[aria-label=Title]")
+        check("a skip link leads past the menu to the page", await page.locator("a.skip").count() == 1)
+        await page.locator(".ing-row button.danger").first.click()
+        check("removing the last ingredient row leaves an empty one to type in", await page.locator(".ing-row").count() == 1)
+        await page.click(".formactions button:has-text('Save')")
+        await page.wait_for_selector("#title-err:not([hidden])")
+        check("saving without a title says so under the title",
+              await page.get_attribute("input[aria-label=Title]", "aria-invalid") == "true" and "/new" in page.url)
         await page.fill("input[aria-label=Title]", "Test Chili")
+        check("and the message goes once a title is typed", await page.locator("#title-err").is_hidden())
         await page.fill("input[aria-label=Categories]", "Soups, Test")
         await page.fill("input[aria-label=Yield]", "6 servings")
         r0 = page.locator(".ing-row").first

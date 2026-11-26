@@ -991,3 +991,21 @@ details.macros .tablewrap { overflow-x: auto; }
   body.printcost .costcard input.pin:placeholder-shown { visibility: hidden; }
   body.printcost .costline { break-inside: avoid; }
 }
+
+/* ---- accessibility polish: skip link, readable labels, form feedback */
+.skip { position: fixed; left: .8rem; top: -4rem; z-index: 100; padding: .6rem 1rem; border-radius: 8px;
+  background: var(--cream); color: var(--ridge); font-weight: 700; text-decoration: none; box-shadow: var(--shadow-lift); transition: top .15s ease; }
+.skip:focus { top: calc(.6rem + env(safe-area-inset-top)); }
+.band .rmeta { color: #dfe6e1; }                       /* readable on the green band (was muted grey) */
+main .label:not(.danger):not(.ok) { color: var(--rust); border-color: color-mix(in srgb, var(--rust) 45%, transparent); }
+@media (prefers-color-scheme: dark) { main .label:not(.danger):not(.ok) { color: var(--blush); border-color: rgb(233 201 180 / .5); } }
+.band .label:not(.danger):not(.ok) { color: var(--blush); border-color: rgb(233 201 180 / .6); }
+.planday.past { opacity: 1; }
+.planday.past h2 { color: var(--muted); }
+.weeknav button:disabled { opacity: 1; background: var(--stone); color: var(--muted); border-color: transparent; }
+.ing-row .rowtools button { flex: 0 0 auto; min-width: 3rem; }
+.ing-row .rowtools button.danger { margin-left: auto; }
+.field.invalid input, .field.invalid textarea { border-color: var(--danger); }
+.fielderr { display: block; margin-top: .3rem; color: var(--danger); font-size: .88rem; font-weight: 600; }
+.formactions { position: sticky; bottom: 0; z-index: 4; margin: 1.4rem calc(var(--gx) * -1) 0; padding: .7rem var(--gx) calc(.7rem + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, var(--paper) 92%, transparent); border-top: 1px solid var(--line); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
