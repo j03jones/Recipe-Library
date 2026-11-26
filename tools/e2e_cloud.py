@@ -18,10 +18,12 @@ from urllib.parse import parse_qs, urlparse
 from playwright.async_api import async_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
-PORT = 8792
+PORT = int(__import__("os").environ.get("E2E_PORT", "8792"))
+SLOW = float(__import__("os").environ.get("E2E_SLOW", "0"))
 URL = f"http://127.0.0.1:{PORT}/"
 CORS = {"access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*"}
-results, errors = [], []
+results, errors, pages = [], [], []
+FAKES = []   # the stand-in server, so a failure can show the last requests it answered
 CLIENT_RPCS = ("claim_client", "respond_to_meal", "rate_meal", "set_favorite", "request_meal", "update_my_preferences")
 
 
@@ -630,6 +632,10 @@ async def new_page(b, fake, w=390, h=844):
     ctx = await b.new_context(viewport={"width": w, "height": h}, accept_downloads=True, reduced_motion="reduce")
     await ctx.route(re.compile(r"https://.*\.supabase\.co/.*"), fake.handle)
     page = await ctx.new_page()
+    pages.append(page)
+    if SLOW:   # E2E_SLOW=4: run the page's scripts 4x slower, to shake out timing-dependent steps
+        cdp = await ctx.new_cdp_session(page)
+        await cdp.send("Emulation.setCPUThrottlingRate", {"rate": SLOW})
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
     page.on("pageerror", lambda e: errors.append(str(e)))
     return ctx, page
@@ -652,6 +658,28 @@ async def sign_in(page, email, pw):
     await page.click("button[type=submit]")
     await close_dialog(page, "Welcome back")
     await page.wait_for_selector("text=Sign out")
+
+
+async def fill_sign_up(page, name, email, pw, code=None, pw_sel="input[type=password]"):
+    """Settings > New account: fill the form and submit it. Before submitting it checks the typed
+    values are still in the boxes; if the form was drawn again meanwhile (a slow first load), it
+    says so and fills it once more, instead of submitting an empty form and timing out later."""
+    fields = [("input[aria-label='Your name']", name), ("input[type=email]", email), (pw_sel, pw)]
+    if code is not None:
+        fields.append(("input[aria-label='Invite code']", code))
+    for attempt in range(3):
+        await page.wait_for_selector("button[role=tab]:has-text('New account')")
+        await page.click("button[role=tab]:has-text('New account')")
+        await page.wait_for_selector("input[aria-label='Your name']")
+        for sel, val in fields:
+            await page.fill(sel, val)
+        await page.wait_for_timeout(100)
+        kept = await page.evaluate("""(fs) => fs.every(([s, v]) => { const i = document.querySelector(s); return i && i.value === v; })""", fields)
+        if kept:
+            await page.click("button[type=submit]")
+            return
+        print(f"NOTE sign-up form for {email} was drawn again while filling it (attempt {attempt + 1}); filling it again")
+    raise AssertionError(f"the sign-up form for {email} kept losing what was typed")
 
 
 async def admin_tab(admin, name):
@@ -679,22 +707,52 @@ async def make_link(admin, who="student", restaurant=None):
     return link.rsplit("/", 1)[1], link
 
 
+def wait_for_server(server, log):
+    """Wait (up to 15 s) until the local web server answers, and stop with its error if it could not start
+    (for example because the port is still taken by an earlier run)."""
+    import urllib.request
+    time.sleep(0.3)   # a server that cannot take the port stops within this
+    for _ in range(150):
+        if server.poll() is not None:
+            raise SystemExit(f"the local web server on port {PORT} stopped: {(log.seek(0), log.read())[1].decode()[-400:]}")
+        try:
+            urllib.request.urlopen(URL, timeout=1).close()
+            return
+        except OSError:
+            time.sleep(0.1)
+    raise SystemExit(f"the local web server on port {PORT} did not answer")
+
+
 async def main():
+    import socket
+    with socket.socket() as probe:   # an earlier run's server still on the port would serve stale files
+        if probe.connect_ex(("127.0.0.1", PORT)) == 0:
+            raise SystemExit(f"port {PORT} is already in use (an earlier test run still going?); stop it or set E2E_PORT")
     server = subprocess.Popen([sys.executable, "-m", "http.server", str(PORT), "--bind", "127.0.0.1", "--directory", str(ROOT / "web")],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(1)
+                              stdout=subprocess.DEVNULL, stderr=(log := tempfile.TemporaryFile()))
+    wait_for_server(server, log)
     try:
         return await run()
     except Exception:
-        print("ERRORS:", errors[-8:]); raise
+        print("ERRORS:", errors[-8:])
+        if FAKES:
+            print("LAST REQUESTS:", FAKES[0].log[-12:])
+        for i, pg in enumerate(pages):   # what each open page showed when it stopped
+            try:
+                await pg.screenshot(path=f"/tmp/e2e_cloud_fail_{PORT}_{i}.png")
+                print(f"PAGE {i} {pg.url}:", (await pg.inner_text("body"))[:600].replace("\n", " | "))
+            except Exception:
+                pass
+        raise
     finally:
         server.terminate()
 
 
 async def run():
     fake = Fake()
+    FAKES.append(fake)
     async with async_playwright() as p:
-        b = await p.chromium.launch()
+        b = await p.chromium.launch(args=["--disable-dev-shm-usage"])
 
         # ---- admin
         actx, admin = await new_page(b, fake)
@@ -844,13 +902,7 @@ async def run():
         # ---- student
         sctx, st = await new_page(b, fake)
         await st.goto(URL + "#/settings")
-        await st.wait_for_selector("button[role=tab]:has-text('New account')")
-        await st.click("button[role=tab]:has-text('New account')")
-        await st.fill("input[aria-label='Your name']", "Sam")
-        await st.fill("input[type=email]", "sam@example.com")
-        await st.fill("input[type=password]", "samspass99")
-        await st.fill("input[aria-label='Invite code']", "BADCODE1")
-        await st.click("button[type=submit]")
+        await fill_sign_up(st, "Sam", "sam@example.com", "samspass99", "BADCODE1")
         await st.wait_for_selector(".note:has-text('invite code')")
         check("bad invite code is explained", True)
         # ...then opens the link they were sent
@@ -942,6 +994,7 @@ async def run():
         await s2.fill("input[type=search]", "Sam Second")
         await s2.wait_for_timeout(300)
         check("private recipes of others never listed", await s2.locator(".rc").count() == 0)
+        await s2ctx.close()   # done with this browser; keeps memory down
 
         # ---- restaurant staff
         await admin.reload()
@@ -949,12 +1002,7 @@ async def run():
         code2, link2 = await make_link(admin, "staff", "Maple Street Grill")
         rctx, rs = await new_page(b, fake)
         await rs.goto(URL + "#/settings")
-        await rs.click("button[role=tab]:has-text('New account')")
-        await rs.fill("input[aria-label='Your name']", "Rae")
-        await rs.fill("input[type=email]", "rae@maple.test")
-        await rs.fill("input[type=password]", "raespass99")
-        await rs.fill("input[aria-label='Invite code']", code2)
-        await rs.click("button[type=submit]")
+        await fill_sign_up(rs, "Rae", "rae@maple.test", "raespass99", code2)
         await close_dialog(rs, "Welcome, Rae")
         await rs.wait_for_selector("text=Sign out")
         check("restaurant staff account shows the restaurant and plan", await rs.locator(".stat:has-text('Maple Street Grill')").count() == 1)
@@ -978,6 +1026,7 @@ async def run():
         await rs.fill("input[type=search]", "Vinaigrette")
         await rs.wait_for_timeout(500)
         check("lapsed subscription hides the collection", await rs.locator(".rc:has-text('Maple House')").count() == 0)
+        await rctx.close()   # done with this browser; keeps memory down
 
         # ---- offline: cached account data still opens
         fake.online = False
@@ -1072,6 +1121,7 @@ async def run():
         await dev2.reload()
         await dev2.wait_for_selector(".pricebook .costline:has-text('butter')", timeout=15000)
         check("prices show up on a second device", await dev2.input_value(".pricebook input[aria-label='Price of butter']") == "4.5")
+        await dctx.close()   # done with this browser; keeps memory down
 
         fake.no_planner = True
         await st.goto(URL + "#/plan")
@@ -1098,6 +1148,7 @@ async def run():
         await loc.wait_for_selector("text=Moved 1", timeout=5000) if False else await loc.wait_for_timeout(1200)
         check("on-device recipes move into the account", any(r["title"] == "Offline Only Soup" and r["owner_id"] == fake.users["pat@example.com"]["id"] for r in fake.recipes.values()))
         check("moved recipe card disappears", await loc.locator("button:has-text('Move them to my account')").count() == 0)
+        await lctx.close()   # done with this browser; keeps memory down
 
         # ---- forgot password
         fctx, fp = await new_page(b, fake)
@@ -1107,6 +1158,7 @@ async def run():
         await fp.fill("input[type=email]", "pat@example.com")
         await fp.click("button:has-text('Forgot password?')")
         check("forgot password confirms in a dialog", "reset your password is on its way" in await close_dialog(fp, "Check your email"))
+        await fctx.close()   # done with this browser; keeps memory down
         check("forgot password sends the request", ("POST", "/auth/v1/recover") in fake.log)
         pat = fake.users["pat@example.com"]
         rctx2, rec = await new_page(b, fake)
@@ -1119,6 +1171,7 @@ async def run():
         await rec.wait_for_timeout(500)
         check("new password is saved", pat["pw"] == "brandnew123")
         await close_dialog(rec, "Password changed")
+        await rctx2.close()   # done with this browser; keeps memory down
 
         # ---- arriving from an emailed invite: signed in, asked to choose a password
         kim_id = fake.add_user("kim@example.com", "", "Kim", "student")
@@ -1136,6 +1189,7 @@ async def run():
         await inv.goto(URL + "#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired")
         await inv.reload()
         check("an expired email link is explained", "expired or was already used" in await close_dialog(inv, "didn’t work"))
+        await ictx.close()   # done with this browser; keeps memory down
 
         # ---- withdraw + sign out
         await st.goto(URL + "#/")
@@ -1157,6 +1211,7 @@ async def run():
         check("admin page refuses non-admins", True)
         await st.goto(URL + "#/admin")
         await st.wait_for_selector("text=This page is for the administrator")
+        await sctx.close()   # done with this browser; keeps memory down
 
         # ---- vegan links and import from a web page (admin has no free-plan limit)
         await admin.goto(URL + "#/")
@@ -1258,6 +1313,7 @@ async def run():
         check("the request reaches the admin's list", any(r["email"] == "dee@example.com" and r["note"] == "Tuesday class" for r in fake.requests.values()))
         check("the admin is emailed about a new request", fake.notified == ["dee@example.com"])
         await q.screenshot(path="/tmp/cloud_request.png", full_page=True)
+        await qctx.close()   # done with this browser; keeps memory down
         await admin.goto(URL + "#/admin/invites")
         await admin.wait_for_selector("h2:has-text('Invite requests (1)')")
         check("the Invites tab shows how many are waiting", (await admin.inner_text(".admintab:has-text('Invites') .count")).strip() == "1")
@@ -1394,11 +1450,7 @@ async def run():
         await o.wait_for_function("![...document.querySelectorAll('button[role=tab]')].some(b => b.textContent.includes('Request'))", timeout=15000)
         await o.wait_for_timeout(300)
         check("with open sign-up there is no Request tab", await o.locator("button[role=tab]:has-text('Request')").count() == 0)
-        await o.click("button[role=tab]:has-text('New account')")
-        await o.fill("input[aria-label='Your name']", "Val")
-        await o.fill("input[type=email]", "val@example.com")
-        await o.fill("input[aria-label=Password]", "valspass99")
-        await o.click("button[type=submit]")
+        await fill_sign_up(o, "Val", "val@example.com", "valspass99", pw_sel="input[aria-label=Password]")
         check("with open sign-up anyone can join without a code", "Welcome, Val!" in await close_dialog(o) and "val@example.com" in fake.users)
         await admin.click("input[aria-label='Open sign-up']")
         await admin.click("dialog[open] button:has-text('Close sign-up')")
@@ -1557,6 +1609,7 @@ async def run():
         await olda.goto(URL + "#/meals")
         await olda.wait_for_selector("a:has-text('Go to my meals')")
         check("the old My meals link in the app points to the website", await olda.get_attribute("a:has-text('Go to my meals')", "href") == "https://jonesridgekitchen.com/my-meals/")
+        await bctx.close()   # done with this browser; keeps memory down
 
         await admin.reload()
         await admin.wait_for_selector(".mealcard")
@@ -2167,6 +2220,7 @@ async def run():
         await admin.select_option(".restcard:has-text('Maple Street Grill') select[aria-label='Costing for Joe Line']", "none")
         await admin.wait_for_timeout(600)
         check("and take it away", fake.costing_of(fake.users["joe@maple.test"], rid) == "none")
+        await jctx.close()   # done with this browser; keeps memory down
         check("the card shows the restaurant's package", await admin.input_value(".restcard:has-text('Maple Street Grill') select[aria-label='Package for Maple Street Grill']") == "self_service")
         await admin.select_option(".restcard:has-text('Maple Street Grill') select[aria-label='Package for Maple Street Grill']", "managed")
         await admin.wait_for_selector("dialog[open]")
@@ -2222,6 +2276,7 @@ async def run():
         await rae.reload()
         await rae.wait_for_selector("#jrk-portal .jrk-recipes", timeout=15000)
         check("a preview link does nothing special for anyone but the admin", "Preview." not in await rae.inner_text("#jrk-portal"))
+        await pctx.close()   # done with this browser; keeps memory down
 
         # a login that is both a meal prep client and on a restaurant team gets a switcher
         fake.members.append(dict(user_id=fake.users["anna@example.com"]["id"], restaurant_id=rid, member_role="staff"))
@@ -2235,6 +2290,7 @@ async def run():
         check("the switcher opens the restaurant's recipes", await anna.locator(".jrk-switch a[aria-current=page]:has-text('Maple Street Grill')").count() == 1)
         await anna.click(".jrk-switch a:has-text('My meals')")
         await anna.wait_for_selector("text=Hello, Anna")
+        await actx.close()   # done with this browser; keeps memory down
         check("and back to their meals", True)
         fake.members.pop()
 
