@@ -1638,7 +1638,10 @@ function viewEdit(id, template) {
   if (existing && !canEdit(existing)) { fill($app, pageHead('Read only'), h('p', { class: 'muted' }, 'This recipe belongs to someone else. Open it and use “Save scaled copy” to make your own version.'), h('p', null, h('a', { href: `#/r/${existing.id}` }, 'Back to the recipe'))); return; }
   const r = existing || template || { title: '', categories: [], tags: [], yq: null, yu: '', yr: '', dir: '', ings: [], source: 'mine' };
 
-  const title = h('input', { class: 'full', value: r.title, autocomplete: 'off', 'aria-label': 'Title' });
+  const title = h('input', { class: 'full', value: r.title, autocomplete: 'off', 'aria-label': 'Title', required: true, 'aria-describedby': 'title-err' });
+  const titleErr = h('span', { class: 'fielderr', id: 'title-err', role: 'alert', hidden: true }, 'A title is required.');
+  const titleField = h('label', { class: 'field' }, h('span', null, 'Title *'), title, titleErr);
+  title.addEventListener('input', () => { if (title.value.trim()) { titleField.classList.remove('invalid'); titleErr.hidden = true; title.removeAttribute('aria-invalid'); } });
   const cats = h('input', { class: 'full', value: r.categories.join(', '), placeholder: 'e.g. Soups, Main dish', 'aria-label': 'Categories' });
   const yld = h('input', { class: 'full', value: formatYield(r) || r.yr, placeholder: 'e.g. 4 servings, 24 cookies', 'aria-label': 'Yield' });
   const dir = h('textarea', { 'aria-label': 'Directions', placeholder: 'Directions. Leave a blank line between paragraphs.' });
@@ -1661,7 +1664,7 @@ function viewEdit(id, template) {
       h('div', { class: 'rowtools' },
         h('button', { type: 'button', 'aria-label': 'Move up', onclick: () => row.previousElementSibling && row.previousElementSibling.before(row) }, '↑'),
         h('button', { type: 'button', 'aria-label': 'Move down', onclick: () => row.nextElementSibling && row.nextElementSibling.after(row) }, '↓'),
-        h('button', { type: 'button', class: 'danger', onclick: () => row.remove() }, 'Remove')));
+        h('button', { type: 'button', class: 'danger', 'aria-label': 'Remove this ingredient', onclick: () => { row.remove(); if (!rowsBox.children.length) addRow(undefined, true); } }, 'Remove')));
     row._get = () => [amount.value, unit.value, item.value, grp.value];
     rowsBox.append(row);
     if (focus) amount.focus();
@@ -1670,7 +1673,11 @@ function viewEdit(id, template) {
   if (!r.ings.length) addRow();
 
   async function save() {
-    if (!title.value.trim()) { toast('Please give the recipe a title'); title.focus(); return; }
+    titleField.classList.remove('invalid'); titleErr.hidden = true; title.removeAttribute('aria-invalid');
+    if (!title.value.trim()) {
+      titleField.classList.add('invalid'); titleErr.hidden = false; title.setAttribute('aria-invalid', 'true');
+      toast('Please give the recipe a title'); title.focus(); title.scrollIntoView({ block: 'center' }); return;
+    }
     const ings = [...rowsBox.children].map((row) => ingredientFromFields(...row._get())).filter(Boolean);
     const text = yld.value.trim();
     const [yq, yu] = text ? parseYield(text) : [null, ''];
@@ -1742,7 +1749,7 @@ function viewEdit(id, template) {
     !existing && !template && h('p', { class: 'row grow' }, h('a', { class: 'linkbtn', href: '#/import' }, '⤓ Import from a web page or a photo'),
       h('a', { class: 'linkbtn', href: '#/transfer' }, '⤓ Import files (Paprika, Mealie…)')),
     adapting && h('p', { class: 'muted' }, 'Keep or change the ingredients, then write the method in your own words. Your version can be shared with the Community and will say “Adapted from” with a link to the original.'),
-    h('label', { class: 'field' }, h('span', null, 'Title'), title),
+    titleField,
     h('label', { class: 'field' }, h('span', null, 'Categories'), cats),
     h('label', { class: 'field' }, h('span', null, 'Yield'), yld),
     h('h2', null, 'Ingredients'),
@@ -1763,7 +1770,7 @@ function viewEdit(id, template) {
         h('label', { class: 'field' }, h('span', null, 'Recipe by'), srcAuthor),
         h('label', { class: 'field' }, h('span', null, 'From'), srcName),
         h('label', { class: 'field' }, h('span', null, 'Link to the original'), srcUrl)],
-    h('div', { class: 'row grow' },
+    h('div', { class: 'row grow formactions' },
       h('button', { class: 'primary', onclick: save }, 'Save'),
       h('button', { onclick: () => (template ? route() : goBack(existing ? `#/r/${existing.id}` : '#/')) }, 'Cancel')),
     existing && h('div', { class: 'actions row grow' },
