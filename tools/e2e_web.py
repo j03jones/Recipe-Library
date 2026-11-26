@@ -49,9 +49,21 @@ async def search(page, text):
 
 
 async def main():
+    import socket
+    import urllib.request
+    with socket.socket() as probe:   # an earlier run's server still on the port would serve stale files
+        if probe.connect_ex(("127.0.0.1", PORT)) == 0:
+            raise SystemExit(f"port {PORT} is already in use (an earlier test run still going?); stop it first")
     server = subprocess.Popen([sys.executable, "-m", "http.server", str(PORT), "--bind", "127.0.0.1", "--directory", str(ROOT / "web")],
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(1)
+    for _ in range(150):   # wait until it answers, up to 15 s, instead of hoping 1 s is enough
+        if server.poll() is not None:
+            raise SystemExit(f"the local web server on port {PORT} could not start")
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{PORT}/", timeout=1).close()
+            break
+        except OSError:
+            time.sleep(0.1)
     try:
         return await run()
     finally:
@@ -60,7 +72,7 @@ async def main():
 
 async def run():
     async with async_playwright() as p:
-        b = await p.chromium.launch()
+        b = await p.chromium.launch(args=["--disable-dev-shm-usage"])
         # the functional checks run with "reduce motion" on (no page transitions to wait for); one check below
         # turns motion back on to test the transitions themselves
         plain_new_context = b.new_context
